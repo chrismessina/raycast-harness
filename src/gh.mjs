@@ -1,47 +1,28 @@
-// GitHub CLI access. On Chris's machine `gh` is a shell alias for `op plugin run -- gh`, and an
-// alias does not exist inside execFile: a bare `gh` runs unauthenticated. So when `op` is on PATH
-// and no token is in the environment, go through 1Password first, then plain `gh`.
+// GitHub CLI access. Plain `gh` first. If it reports that it is not authenticated and `op`
+// (1Password CLI) is on PATH, retry through `op plugin run -- gh`: on some machines `gh` is a
+// shell alias for that wrapper, and an alias does not exist inside execFile. The wrapper is
+// never tried first because it can block on a 1Password authorization prompt.
 // Every function here is a network boundary; callers document that in their command contract.
 
 import { run } from "./exec.mjs";
 import { RxError } from "./errors.mjs";
 
-/** @type {string[][] | null} */
-let candidates = null;
-
-/** @returns {Promise<string[][]>} */
-async function ghCommands() {
-  if (candidates) return candidates;
-  const list = [];
-  if (!process.env.GH_TOKEN && !process.env.GITHUB_TOKEN) {
-    const op = await run("op", ["--version"]).catch(() => null);
-    if (op && op.code === 0) list.push(["op", "plugin", "run", "--", "gh"]);
-  }
-  list.push(["gh"]);
-  candidates = list;
-  return list;
-}
+const NOT_AUTHED = /not logged in|You are not logged into any GitHub hosts|To get started with GitHub CLI|gh auth login/i;
 
 /**
  * Run `gh <args>`; resolves on any exit code (read `code`), rejects with RxError when gh cannot
- * be started. Tries the 1Password wrapper first when applicable.
+ * be started.
  * @param {string[]} args
  * @param {{ cwd?: string, input?: string }} [opts]
  */
 export async function gh(args, opts = {}) {
-  let last = null;
-  for (const prefix of await ghCommands()) {
-    try {
-      const r = await run(prefix[0], [...prefix.slice(1), ...args], { cwd: opts.cwd, input: opts.input });
-      // The op wrapper exits non-zero with its own message when the plugin is not configured; fall through.
-      if (prefix[0] === "op" && r.code !== 0 && /op plugin|1Password|not configured|no credential/i.test(r.stderr)) { last = r; continue; }
-      return r;
-    } catch (e) {
-      last = e;
-    }
-  }
-  if (last instanceof Error) throw last;
-  throw new RxError("gh is not installed or not on PATH", { id: "tooling" });
+  const plain = await run("gh", args, { cwd: opts.cwd, input: opts.input });
+  if (plain.code === 0 || !NOT_AUTHED.test(plain.stderr + plain.stdout)) return plain;
+  if (process.env.GH_TOKEN || process.env.GITHUB_TOKEN) return plain;
+  const op = await run("op", ["--version"], { timeoutMs: 5_000 }).catch(() => null);
+  if (!op || op.code !== 0) return plain;
+  const wrapped = await run("op", ["plugin", "run", "--", "gh", ...args], { cwd: opts.cwd, input: opts.input, timeoutMs: 30_000 }).catch(() => null);
+  return wrapped ?? plain;
 }
 
 /**

@@ -68,7 +68,7 @@ Nothing is ever written into the extension's payload (the files `ray publish` co
 
 ### Network
 
-Each command states its boundary. Unless the boundary says so, a command opens no connection and starts no child process that does. `git`, `gh`, `npm`, `npx`, `ray`, `plutil` run through `execFile` with argument arrays; `ls`, `grep`, `find`, `sed` are never run. On this machine `gh` may be a 1Password plugin alias; `rx` tries `op plugin run -- gh` first when `op` is present and no token is in the environment, then plain `gh`.
+Each command states its boundary. Unless the boundary says so, a command opens no connection and starts no child process that does. `git`, `gh`, `npm`, `npx`, `ray`, `plutil` run through `execFile` with argument arrays; `ls`, `grep`, `find`, `sed` are never run. `rx` runs plain `gh`; only when `gh` reports it is not authenticated and `op` (1Password CLI) is on PATH does it retry through `op plugin run -- gh`, because on some machines `gh` is a shell alias for that wrapper and an alias does not exist inside `execFile`.
 
 Two documented exceptions to "network failure is `ERROR`": `guard` speaks the host hook's allow/block transport; `api-floor`'s npm-currency advisory reports `N/A (npm unreachable)` while its local floor check still runs.
 
