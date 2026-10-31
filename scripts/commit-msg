@@ -1,0 +1,29 @@
+#!/usr/bin/env node
+// git commit-msg hook: refuse a message that links a private Claude Code session.
+//
+// Agent harnesses append a `Claude-Session: https://claude.ai/code/session_…` trailer by default.
+// In a public repo that publishes a private session link under the author's name. This hook
+// rejects exactly that pattern. A `Co-Authored-By: Claude …` trailer is fine and is not matched.
+// Broader attribution policy is a review requirement, not something this hook enforces.
+//
+// Module-system agnostic on purpose (no import/require): git runs it from the hooks directory,
+// where the nearest package.json may or may not say "type": "module".
+//
+// Install:  node scripts/install-hooks.mjs   (copies this file into `git rev-parse --git-path hooks`)
+// Test:     node --test test/commit-msg.test.mjs
+
+const fs = process.getBuiltinModule("node:fs");
+const SESSION_URL = /claude\.ai\/code\/session_/;
+
+const file = process.argv[2];
+if (!file) {
+  process.stderr.write("commit-msg: expected the message file path as the first argument\n");
+  process.exit(2);
+}
+if (SESSION_URL.test(fs.readFileSync(file, "utf8"))) {
+  process.stderr.write(
+    "commit-msg: this message contains a claude.ai/code/session URL, and this repo is public.\n" +
+      "Remove the Claude-Session line (keep Co-Authored-By if you like) and commit again.\n",
+  );
+  process.exit(1);
+}
