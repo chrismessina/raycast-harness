@@ -1,0 +1,7 @@
+node_modules/
+*.tgz
+.DS_Store
+# per-machine editor and agent state
+.claude/
+.superpowers/
+.env

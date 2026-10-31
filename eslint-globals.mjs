@@ -1,0 +1,21 @@
+// Node.js globals ESLint should know about, kept here so the config has no extra dependency.
+export default {
+  process: "readonly",
+  console: "readonly",
+  Buffer: "readonly",
+  URL: "readonly",
+  URLSearchParams: "readonly",
+  TextEncoder: "readonly",
+  TextDecoder: "readonly",
+  setTimeout: "readonly",
+  clearTimeout: "readonly",
+  setInterval: "readonly",
+  clearInterval: "readonly",
+  queueMicrotask: "readonly",
+  structuredClone: "readonly",
+  fetch: "readonly",
+  AbortController: "readonly",
+  AbortSignal: "readonly",
+  performance: "readonly",
+  crypto: "readonly",
+};

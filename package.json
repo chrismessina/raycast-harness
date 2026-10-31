@@ -1,0 +1,58 @@
+{
+  "name": "raycast-harness",
+  "version": "0.1.0",
+  "description": "Tested, explicit-verdict checks for building and shipping Raycast extensions. One CLI (rx) replaces the shell procedures agents used to re-type.",
+  "license": "Apache-2.0",
+  "author": "Chris Messina <chris.messina@gmail.com> (https://github.com/chrismessina)",
+  "homepage": "https://github.com/chrismessina/raycast-harness",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/chrismessina/raycast-harness.git"
+  },
+  "bugs": "https://github.com/chrismessina/raycast-harness/issues",
+  "type": "module",
+  "bin": {
+    "rx": "bin/rx.mjs",
+    "raycast-harness": "bin/rx.mjs"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "files": [
+    "bin/",
+    "src/",
+    "schema/",
+    "eslint-plugin/",
+    "docs/commands.md",
+    "docs/check-classes.md",
+    "docs/applicability.md",
+    "LICENSE",
+    "NOTICE",
+    "README.md",
+    "CHANGELOG.md"
+  ],
+  "scripts": {
+    "test": "node --test 'test/**/*.test.mjs'",
+    "typecheck": "tsc --noEmit --checkJs -p .",
+    "lint": "eslint .",
+    "check": "npm run typecheck && npm run lint && npm test"
+  },
+  "dependencies": {
+    "pngjs": "7.0.0"
+  },
+  "devDependencies": {
+    "@eslint/js": "10.0.1",
+    "@types/node": "22.20.5",
+    "@types/pngjs": "6.0.5",
+    "eslint": "10.14.0",
+    "typescript": "5.9.3"
+  },
+  "keywords": [
+    "raycast",
+    "raycast-extensions",
+    "cli",
+    "preflight",
+    "store",
+    "greptile"
+  ]
+}

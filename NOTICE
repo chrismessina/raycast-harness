@@ -1,0 +1,24 @@
+raycast-harness
+Copyright 2026 Chris Messina
+
+Licensed under the Apache License, Version 2.0. See LICENSE.
+
+Third-party material vendored in this repository
+------------------------------------------------
+
+src/rules/greptile/ (config.json, files.json, rules.md, SOURCE.json)
+  A snapshot of the `.greptile/` review configuration from the raycast/extensions
+  repository (https://github.com/raycast/extensions), copyright Raycast
+  Technologies Ltd., licensed under the MIT License. SOURCE.json records the
+  exact repository, pull request or branch, commit SHA and fetch date the
+  snapshot was taken from. `rx greptile drift` compares it with the live copy.
+
+Material relicensed by its author
+---------------------------------
+
+The following code was first published by Chris Messina under the MIT License in
+https://github.com/chrismessina/raycast-extensions-skills and is relicensed by
+him here under Apache-2.0: the preflight checks (src/commands/preflight.mjs and
+its tests), the Greptile drift comparison (src/commands/greptile.mjs), the PR
+body editor (src/commands/pr.mjs, a port of pr-body.py) and the ESLint rule
+no-multiline-emptyview-description (eslint-plugin/).
