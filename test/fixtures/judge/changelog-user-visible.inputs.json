@@ -1,0 +1,4 @@
+{
+  "change": "Fix three quadratic paths in wrap and unwrap: an 833 KB single paragraph took 18,031 ms and 1 MB of prose took 32,056 ms; after the fix they take 22 ms and 39 ms.",
+  "context": "Three of the four slow paths shipped to the Store in the initial submission and stayed live across two releases. Nobody filed an issue, because a 32-second freeze reads to a user as Raycast hanging."
+}

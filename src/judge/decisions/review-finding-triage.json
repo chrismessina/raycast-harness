@@ -1,0 +1,81 @@
+{
+  "id": "review-finding-triage",
+  "question": "How should this review finding be triaged? Answer valid when the finding's premise holds and its stated or implied remedy is right. Answer valid-wrong-remedy when the finding is correct but the remedy it states or implies is wrong or makes things worse. Answer false-positive when the finding's premise is false (the code, the repository or the platform does not behave as the reviewer claims). Answer conflicts-with-chris when acting on the finding would undo something Chris decided or asked for; that always goes to Chris.",
+  "answers": ["valid", "valid-wrong-remedy", "false-positive", "conflicts-with-chris"],
+  "inputs": {
+    "type": "object",
+    "required": ["finding", "evidence"],
+    "additionalProperties": false,
+    "properties": {
+      "finding": { "type": "string", "minLength": 1, "description": "what the reviewer claims" },
+      "remedy": { "type": "string", "description": "the fix the reviewer states or implies" },
+      "evidence": { "type": "string", "minLength": 1, "description": "what checking the finding's and the remedy's premises against ground truth showed" },
+      "standingDecisions": { "type": "string", "description": "anything Chris decided or asked for that the finding touches" }
+    }
+  },
+  "fixtures": [
+    {
+      "inputs": {
+        "finding": "Outdated casks lose their kind and get formula-shaped brew arguments.",
+        "remedy": "Restore the cask kind where the outdated list enters the extension.",
+        "evidence": "brew outdated --json=v2 omits token from casks while isCask() keys off it; confirmed in cmd/outdated.rb and cask/cask.rb."
+      },
+      "expected": "valid",
+      "source": "~/Developer/GitHub/chrismessina/raycast-extensions-skills-harness/plugins/raycast-extensions/learnings/workflow-issues/verify-the-remedy-not-just-the-finding.md:171-174"
+    },
+    {
+      "inputs": {
+        "finding": "Attributing the Downloading status by substring scan is fragile: a package named git matches an unrelated package's GitHub URL.",
+        "remedy": "Match Homebrew's own 'Fetching <name> from <tap>' announcement instead.",
+        "evidence": "The substring false match is real. But brew fetch prints every Fetching line while enqueueing (cmd/fetch.rb:305 and :344) and only then works the queue concurrently, so the announcement says what is about to be fetched, not what is downloading."
+      },
+      "expected": "valid-wrong-remedy",
+      "source": "~/Developer/GitHub/chrismessina/raycast-extensions-skills-harness/plugins/raycast-extensions/learnings/workflow-issues/verify-the-remedy-not-just-the-finding.md:149-167"
+    },
+    {
+      "inputs": {
+        "finding": "Stale-lock reclamation can, in principle, delete a successor's lock.",
+        "remedy": "Give each lock acquisition its own unique lock path so a reclaimer cannot target a successor's lock.",
+        "evidence": "The race exists. The unique-path design, built and run under contention, opens a worse race when the directory empties: 5 of 6 writes survived against 8 of 8 for the current design."
+      },
+      "expected": "valid-wrong-remedy",
+      "source": "~/Developer/GitHub/chrismessina/raycast-extensions-skills-harness/plugins/raycast-extensions/learnings/workflow-issues/verify-the-remedy-not-just-the-finding.md:181-213"
+    },
+    {
+      "inputs": {
+        "finding": "The extension has no metadata/ screenshots.",
+        "remedy": "Add Store screenshots.",
+        "evidence": "metadata/ holds six 2000x1250 PNGs; the PR does not change them, so they are absent from its diff but present in the repository."
+      },
+      "expected": "false-positive",
+      "source": "~/Developer/GitHub/chrismessina/raycast-extensions-skills-harness/plugins/raycast-extensions/learnings/workflow-issues/verify-the-remedy-not-just-the-finding.md:176-179"
+    },
+    {
+      "inputs": {
+        "finding": "Sort by Popularity (Shift-Command-P) collides with Keyboard.Shortcut.Common.Pin.",
+        "remedy": "Move Sort by Popularity to another shortcut.",
+        "evidence": "The public API reference listed Common.Pin as Shift-Command-P, but the runtime bundled with Raycast 2.2.0.0 binds Pin to Command-period; the repo's keyboard-conventions.md already recorded Command-period."
+      },
+      "expected": "false-positive",
+      "source": "~/Developer/GitHub/chrismessina/raycast-extensions-skills-harness/plugins/raycast-extensions/learnings/workflow-issues/verify-the-remedy-not-just-the-finding.md:228-243"
+    },
+    {
+      "inputs": {
+        "finding": "FileManager.replaceItemAt throws when the destination does not exist.",
+        "evidence": "Verified false three times on a live system; the claim survived re-reviews anyway."
+      },
+      "expected": "false-positive",
+      "source": "~/Developer/GitHub/chrismessina/raycast-extensions-skills-harness/plugins/raycast-extensions/learnings/workflow-issues/reading-a-greptile-round.md:97-103"
+    },
+    {
+      "inputs": {
+        "finding": "The append rule flags the sectionActionsFirst default.",
+        "remedy": "Remove the sectionActionsFirst default.",
+        "evidence": "The flagged code is the sectionActionsFirst default itself; complying means removing it.",
+        "standingDecisions": "Chris asked twice in the same session for sectionActionsFirst to be the default."
+      },
+      "expected": "conflicts-with-chris",
+      "source": "~/Developer/GitHub/chrismessina/raycast-extensions-skills-harness/plugins/raycast-extensions/learnings/workflow-issues/reading-a-greptile-round.md:89-95"
+    }
+  ]
+}

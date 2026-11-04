@@ -1,0 +1,76 @@
+{
+  "id": "needs-code",
+  "question": "Does addressing this review feedback require changing the extension's code? Answer code when the response needs a change under src/ or to how the extension behaves, which hands the work back to develop. Answer metadata-only when the response is limited to Store metadata, screenshots, README, CHANGELOG or a reply, with no code change.",
+  "answers": [
+    "code",
+    "metadata-only"
+  ],
+  "inputs": {
+    "type": "object",
+    "required": [
+      "feedback"
+    ],
+    "additionalProperties": false,
+    "properties": {
+      "feedback": {
+        "type": "string",
+        "minLength": 1,
+        "description": "the review feedback or CI failure, as given"
+      },
+      "context": {
+        "type": "string",
+        "description": "what is known about the cause"
+      }
+    }
+  },
+  "fixtures": [
+    {
+      "inputs": {
+        "feedback": "metadata-images: brew-4.png's background differs from brew-1.png (RMS 42.3, limit 12.0).",
+        "context": "brew-4.png was a new capture; it scored 0.1 against the local shot it was taken alongside, but only changed files are pushed, so it was compared with the old published brew-1.png."
+      },
+      "expected": "metadata-only",
+      "source": "~/Developer/GitHub/chrismessina/raycast-extensions-skills-harness/plugins/raycast-extensions/learnings/workflow-issues/ship-submission-incident-history.md:176-200"
+    },
+    {
+      "inputs": {
+        "feedback": "metadata-images: the local development icon is visible in the screenshot's bottom bar.",
+        "context": "The checker's own fix is to recapture with Window Capture and Save to Metadata."
+      },
+      "expected": "metadata-only",
+      "source": "synthetic: no recorded dev-icon failure; written from the metadata-images failure list at ~/Developer/GitHub/chrismessina/raycast-extensions-skills-harness/plugins/raycast-extensions/learnings/workflow-issues/ship-submission-incident-history.md:187-189"
+    },
+    {
+      "inputs": {
+        "feedback": "The extension has no metadata/ screenshots.",
+        "context": "metadata/ holds six 2000x1250 PNGs that the PR does not touch, so they are absent from the diff; the answer is a push-back with that receipt."
+      },
+      "expected": "metadata-only",
+      "source": "~/Developer/GitHub/chrismessina/raycast-extensions-skills-harness/plugins/raycast-extensions/learnings/workflow-issues/verify-the-remedy-not-just-the-finding.md:176-179"
+    },
+    {
+      "inputs": {
+        "feedback": "Attributing 'Fetching <name> from <tap>' lines to rows cannot show which package is downloading: brew announces every fetch while enqueueing, before any download starts.",
+        "context": "No refinement of the match can produce a truthful per-package indicator, so the Downloading status has to go."
+      },
+      "expected": "code",
+      "source": "~/Developer/GitHub/chrismessina/raycast-extensions-skills-harness/plugins/raycast-extensions/learnings/workflow-issues/verify-the-remedy-not-just-the-finding.md:156-167"
+    },
+    {
+      "inputs": {
+        "feedback": "FileManager.replaceItemAt throws when the destination does not exist.",
+        "context": "Verified false three times on a live system, yet the claim survived re-reviews; what cleared it was rewriting the call site to branch explicitly on whether the file exists."
+      },
+      "expected": "code",
+      "source": "~/Developer/GitHub/chrismessina/raycast-extensions-skills-harness/plugins/raycast-extensions/learnings/workflow-issues/reading-a-greptile-round.md:97-103"
+    },
+    {
+      "inputs": {
+        "feedback": "sectionActionsFirst was removed to satisfy a review finding, but Chris had asked for it as the default.",
+        "context": "The removal shipped; the default had to be restored in the following release."
+      },
+      "expected": "code",
+      "source": "~/Developer/GitHub/chrismessina/raycast-extensions-skills-harness/plugins/raycast-extensions/learnings/workflow-issues/reading-a-greptile-round.md:89-95"
+    }
+  ]
+}

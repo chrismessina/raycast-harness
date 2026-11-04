@@ -54,9 +54,11 @@ Silence is never a pass. Unknown arguments are an `ERROR`. `--json` prints one e
 | `rx greptile` | fetches review rounds, waits for the next one, authorizes a reply, detects rule drift |
 | `rx shortcuts` | `runtime`: the installed app's `Keyboard.Shortcut.Common` table into the cache; `check`: panels and toast actions against it |
 | `rx preset` | validates a preset and regenerates the rule matrix it describes |
-| `rx judge` | advisory answers to named judgment calls (never blocks) |
+| `rx judge` | `ask`: an advisory answer to one named judgment call, or the structured question in agent mode; `eval`: per-fixture output and accuracy (never blocks) |
 | `rx doctor` | Node, `ray`, `gh` auth, git signing, Raycast app version |
 | `rx commands` | every command's contract as JSON |
+
+**Judge providers.** `rx judge` uses Jev (TypeSafe's decision model, implemented against its public API reference at `https://docs.typesafe.ai/api`, fetched 2026-11-04) when `TYPESAFE_API_KEY` is set, else Claude Haiku (`claude-haiku-5-5`) when `ANTHROPIC_API_KEY` is set, else agent mode, which prints the question, its answers and the inputs for the agent to decide; `--provider` overrides the order. Jev's probabilities are what its API returns; Haiku's are what the model writes into a forced tool call. Neither is calibrated, and `rx judge` never presents them as such. A provider answer counts only at a top probability of 0.7 or more, a provider error falls back to agent mode, and no `judge` result is part of the gates, the audit or the publish guard.
 
 The ESLint rules ship with the package and are importable at `raycast-harness/eslint-plugin` (flat config; `recommended` included).
 

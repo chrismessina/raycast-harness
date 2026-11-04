@@ -1,0 +1,77 @@
+{
+  "id": "changelog-user-visible",
+  "question": "Does this change earn a CHANGELOG bullet? Answer user-visible when someone using the published version of the extension would notice it (new or changed behavior, a fixed defect they could hit, a moved shortcut or action). Answer internal when nothing a user sees changes (refactors, tests, comments, tooling, build configuration). Answer branch-only-bug when it fixes or reverts something that existed only on this unpublished branch, so the published version never had the defect.",
+  "answers": [
+    "user-visible",
+    "internal",
+    "branch-only-bug"
+  ],
+  "inputs": {
+    "type": "object",
+    "required": [
+      "change"
+    ],
+    "additionalProperties": false,
+    "properties": {
+      "change": {
+        "type": "string",
+        "minLength": 1,
+        "description": "the change, in one or two sentences"
+      },
+      "context": {
+        "type": "string",
+        "description": "what is known about whether the published version had the behavior"
+      }
+    }
+  },
+  "fixtures": [
+    {
+      "inputs": {
+        "change": "Fix three quadratic paths in wrap and unwrap: an 833 KB single paragraph took 18,031 ms and 1 MB of prose took 32,056 ms; after the fix they take 22 ms and 39 ms.",
+        "context": "Three of the four slow paths shipped to the Store in the initial submission and stayed live across two releases. Nobody filed an issue, because a 32-second freeze reads to a user as Raycast hanging."
+      },
+      "expected": "user-visible",
+      "source": "~/Developer/GitHub/chrismessina/raycast-extensions-skills-harness/plugins/raycast-extensions/learnings/design-patterns/quadratic-accumulator-paths-in-text-reflow.md:136-144"
+    },
+    {
+      "inputs": {
+        "change": "Pinning a migrated zero-turn conversation no longer deletes it: persistFilter now gates only rows that were absent from storage before the write.",
+        "context": "The defect came from the shared collection store and the legacy-data migration, both introduced by a 39-commit storage refactor on a branch that was never merged."
+      },
+      "expected": "branch-only-bug",
+      "source": "~/Developer/GitHub/chrismessina/raycast-extensions-skills-harness/plugins/raycast-extensions/learnings/architecture-patterns/bugs-concentrate-at-module-seams.md:38-73"
+    },
+    {
+      "inputs": {
+        "change": "Restore Sort by Popularity to Shift-Command-P after an earlier release moved it to Shift-Command-S.",
+        "context": "Shift-Command-P is a long-standing user shortcut. The move to Shift-Command-S answered a reviewer's collision finding that turned out to be false, and it shipped; this change moves the shortcut back."
+      },
+      "expected": "user-visible",
+      "source": "~/Developer/GitHub/chrismessina/raycast-extensions-skills-harness/plugins/raycast-extensions/learnings/workflow-issues/verify-the-remedy-not-just-the-finding.md:238-243"
+    },
+    {
+      "inputs": {
+        "change": "Bound the block-safety probe in wrap to the tokens that can land on the candidate line, instead of joining every remaining token per rejected break.",
+        "context": "The unbounded version was the first cut of a review-round-7 correctness fix; on 1 MB of prose it took 32,056 ms. That code never reached a commit, so no published version had it."
+      },
+      "expected": "branch-only-bug",
+      "source": "~/Developer/GitHub/chrismessina/raycast-extensions-skills-harness/plugins/raycast-extensions/learnings/design-patterns/quadratic-accumulator-paths-in-text-reflow.md:200-206"
+    },
+    {
+      "inputs": {
+        "change": "Replace the ad hoc per-hook persistence rules with one shared collection store and an explicit migration path for legacy data.",
+        "context": "A 39-commit storage refactor of the extension; the commit itself replaces how hooks persist, not what they show."
+      },
+      "expected": "internal",
+      "source": "~/Developer/GitHub/chrismessina/raycast-extensions-skills-harness/plugins/raycast-extensions/learnings/architecture-patterns/bugs-concentrate-at-module-seams.md:38"
+    },
+    {
+      "inputs": {
+        "change": "Add a performance guard test that fails when wrapping 1 MB of prose exceeds its time budget.",
+        "context": "The guard caught a 32,056 ms regression in a first cut of a correctness fix before that code reached a commit; the guard itself is a test."
+      },
+      "expected": "internal",
+      "source": "~/Developer/GitHub/chrismessina/raycast-extensions-skills-harness/plugins/raycast-extensions/learnings/design-patterns/quadratic-accumulator-paths-in-text-reflow.md:200-207"
+    }
+  ]
+}

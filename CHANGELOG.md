@@ -94,3 +94,8 @@
   reason; any other command that mentions the word `publish` blocks with the plain-command
   instruction; any mention of marking a PR ready blocks; silent on allow, one JSON deny
   document on block. The dispatcher honors a command's `transport` for this.
+- `rx judge ask|eval`: four decisions (`changelog-user-visible`, `review-finding-triage`,
+  `needs-code`, `png-provenance`) with fixtures traced to receipts in the skills plugin's
+  learnings; inputs validated against each decision's schema; Jev and Claude Haiku adapters
+  behind an injectable transport, D6 provider order, 0.7 threshold with `defer-to-agent`,
+  provider errors falling back to agent mode, and eval accuracy. Advisory only.

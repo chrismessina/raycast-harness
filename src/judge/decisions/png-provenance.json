@@ -1,0 +1,117 @@
+{
+  "id": "png-provenance",
+  "question": "The local and the published copies of this PNG have different pixels (or the comparison could not decide). Which copy should win? Answer ours-newer when the published image is the shot we last submitted and the local one is our newer replacement, so keeping local is right. Answer contributor when the published image came from someone else (a contributor's shot, possibly pulled in by a sync), so keeping local would revert their work. Answer unclear when the evidence cannot settle it (a 16-bit PNG, color metadata the decode cannot compare, or a published image that matches an older shot of ours rather than the last one we submitted) and a human must look at both.",
+  "answers": [
+    "ours-newer",
+    "contributor",
+    "unclear"
+  ],
+  "inputs": {
+    "type": "object",
+    "required": [
+      "file",
+      "pixels",
+      "history"
+    ],
+    "additionalProperties": false,
+    "properties": {
+      "file": {
+        "type": "string",
+        "minLength": 1,
+        "description": "the PNG's path in the extension"
+      },
+      "pixels": {
+        "enum": [
+          "different",
+          "undecided"
+        ],
+        "description": "decoded-pixel comparison of local against published"
+      },
+      "history": {
+        "enum": [
+          "matches-last-submitted",
+          "matches-older-commit",
+          "matches-no-commit",
+          "not-checked"
+        ],
+        "description": "which commit in our history, if any, has the published pixels"
+      },
+      "context": {
+        "type": "string",
+        "description": "anything else known: who changed the image, when, and why"
+      }
+    }
+  },
+  "fixtures": [
+    {
+      "inputs": {
+        "file": "metadata/karakeep-1.png",
+        "pixels": "different",
+        "history": "matches-last-submitted",
+        "context": "The user replaced all six screenshots and the icon in this session and committed them before shipping; published 4.0K, local 48K, normalized hashes differ."
+      },
+      "expected": "ours-newer",
+      "source": "~/Developer/GitHub/chrismessina/raycast-extensions-skills-harness/plugins/raycast-extensions/learnings/workflow-issues/ship-submission-incident-history.md:204-212"
+    },
+    {
+      "inputs": {
+        "file": "metadata/get-app-icon-2.png",
+        "pixels": "different",
+        "history": "matches-last-submitted",
+        "context": "The user updated this screenshot that morning; three other images in the same extension were only recompressed by CI."
+      },
+      "expected": "ours-newer",
+      "source": "~/Developer/GitHub/chrismessina/raycast-extensions-skills-harness/plugins/raycast-extensions/learnings/workflow-issues/ship-submission-incident-history.md:214-221"
+    },
+    {
+      "inputs": {
+        "file": "metadata/example-1.png",
+        "pixels": "different",
+        "history": "matches-no-commit",
+        "context": "The published image matches no version in our history, and nothing else says who made it: it could be a contributor's shot or one of ours that was never committed."
+      },
+      "expected": "unclear",
+      "source": "synthetic: no recorded incident; written from the NOT-YOURS row at ~/Developer/GitHub/chrismessina/raycast-extensions-skills-harness/plugins/raycast-extensions/learnings/workflow-issues/ship-submission-incident-history.md:163, which names both a contributor's shot and one you never committed"
+    },
+    {
+      "inputs": {
+        "file": "metadata/example-2.png",
+        "pixels": "different",
+        "history": "matches-older-commit",
+        "context": "The commit whose pixels match the published copy is a contributor's shot that a sync pulled into our history."
+      },
+      "expected": "contributor",
+      "source": "synthetic: no recorded incident; written from the OLDER-SHOT row (a contributor shot pulled in by a sync) at ~/Developer/GitHub/chrismessina/raycast-extensions-skills-harness/plugins/raycast-extensions/learnings/workflow-issues/ship-submission-incident-history.md:162"
+    },
+    {
+      "inputs": {
+        "file": "metadata/example-5.png",
+        "pixels": "different",
+        "history": "matches-no-commit",
+        "context": "The published image matches no version in our history, and upstream's log shows it was added by a contributor's merged pull request to this extension."
+      },
+      "expected": "contributor",
+      "source": "synthetic: no recorded incident of a contributor-replaced screenshot; written from the NOT-YOURS row at ~/Developer/GitHub/chrismessina/raycast-extensions-skills-harness/plugins/raycast-extensions/learnings/workflow-issues/ship-submission-incident-history.md:163 and the warning at ~/Developer/GitHub/chrismessina/raycast-extensions-skills-harness/plugins/raycast-extensions/learnings/workflow-issues/ship-submission-incident-history.md:98-101, with the contributor evidence stated explicitly"
+    },
+    {
+      "inputs": {
+        "file": "metadata/example-3.png",
+        "pixels": "undecided",
+        "history": "not-checked",
+        "context": "One copy is a 16-bit PNG, so decoding to 8 bits could merge distinct values."
+      },
+      "expected": "unclear",
+      "source": "synthetic: no recorded 16-bit incident; written from the UNDECIDED row at ~/Developer/GitHub/chrismessina/raycast-extensions-skills-harness/plugins/raycast-extensions/learnings/workflow-issues/ship-submission-incident-history.md:164"
+    },
+    {
+      "inputs": {
+        "file": "metadata/example-4.png",
+        "pixels": "different",
+        "history": "matches-older-commit",
+        "context": "The published pixels match an older shot of ours, not the one we last submitted, so upstream may have restored an old shot."
+      },
+      "expected": "unclear",
+      "source": "synthetic: no recorded incident; written from the OLDER-SHOT row (an old shot upstream restored) at ~/Developer/GitHub/chrismessina/raycast-extensions-skills-harness/plugins/raycast-extensions/learnings/workflow-issues/ship-submission-incident-history.md:162"
+    }
+  ]
+}
