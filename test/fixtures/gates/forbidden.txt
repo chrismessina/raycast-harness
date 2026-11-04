@@ -1,0 +1,3 @@
+# Example values that must never ship (fixture; fake ids only)
+AbCdEfGhIjK
+example-secret-value

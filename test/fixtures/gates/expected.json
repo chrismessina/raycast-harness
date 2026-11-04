@@ -1,0 +1,22 @@
+{
+  "command": ["gates", "--preset", "test/fixtures/gates/preset.json", "--forbidden", "test/fixtures/gates/forbidden.txt"],
+  "note": "A clean, unpublished extension built by test/gates-helpers.mjs buildGated(). Verdicts named here must hold; every other result must be PASS, WARN or N/A.",
+  "verdicts": {
+    "stale": "N/A",
+    "scan-files": "PASS",
+    "scan-names": "PASS",
+    "scan-commits": "PASS",
+    "scan-pr-text": "N/A",
+    "scan-binary": "WARN",
+    "api-floor-lockfile": "PASS",
+    "api-floor-new": "PASS",
+    "api-currency": "N/A",
+    "changelog-updated": "N/A",
+    "gates-tree-changed": "PASS",
+    "build": "PASS",
+    "tsc": "PASS",
+    "lint": "PASS"
+  },
+  "steps": ["stale", "scan", "preflight", "api-floor", "build", "tsc", "lint"],
+  "exit": 0
+}

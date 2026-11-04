@@ -1,0 +1,64 @@
+{
+  "schema": 1,
+  "owner": "testowner",
+  "rules": [
+    {
+      "id": "extension-root",
+      "title": "Test: a build-only rule (never audited)",
+      "anchor": "anchors.md#extension-root",
+      "tag": "build",
+      "applies": true,
+      "severity": "block",
+      "bindings": []
+    },
+    {
+      "id": "copy-error",
+      "title": "Test: every failure toast carries a Copy Error action",
+      "anchor": "anchors.md#copy-error",
+      "tag": "both",
+      "applies": true,
+      "severity": "block",
+      "bindings": [{ "kind": "judgment", "check": "copy-error", "coverage": "full" }]
+    },
+    {
+      "id": "kit",
+      "title": "Test: prefer the house kit (report-only)",
+      "anchor": "anchors.md#kit",
+      "tag": "both",
+      "applies": true,
+      "severity": "report",
+      "bindings": [{ "kind": "judgment", "check": "kit", "coverage": "full" }]
+    },
+    {
+      "id": "export-actions",
+      "title": "Test: a completed file export offers Show in Finder and Copy Path",
+      "anchor": "anchors.md#export-actions",
+      "tag": "both",
+      "applies": { "writesFiles": true },
+      "severity": "block",
+      "bindings": [{ "kind": "judgment", "check": "export-actions", "coverage": "full" }]
+    },
+    {
+      "id": "fork-only",
+      "title": "Test: a rule that applies only to forks (never to this self-authored fixture)",
+      "anchor": "anchors.md#fork-only",
+      "tag": "verify",
+      "applies": { "not": { "selfAuthored": true } },
+      "severity": "block",
+      "bindings": [{ "kind": "judgment", "check": "fork-only", "coverage": "full" }]
+    }
+  ],
+  "judgments": [
+    { "id": "copy-error" },
+    { "id": "kit" },
+    { "id": "export-actions" },
+    { "id": "fork-only" }
+  ],
+  "dependencies": {
+    "api": {
+      "existing-1x": { "floor": "1.104.25" },
+      "2x": { "floor": "2.1.0" },
+      "new": "2x"
+    }
+  }
+}

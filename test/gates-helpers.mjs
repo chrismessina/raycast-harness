@@ -1,0 +1,171 @@
+// Shared scaffolding for the gates / audit / guard / fingerprint tests: a compliant extension in
+// a git repo with fake local tooling, the cross-repo cache pointed at the temp dir, the upstream
+// fetch pointed at a local bare repo, and the npm registry lookup stubbed. Nothing here reaches
+// the network or touches ~/.cache.
+
+import { chmodSync, mkdirSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { _setRegistry } from "../src/commands/api-floor.mjs";
+import { _setUpstreamForTests } from "../src/upstream.mjs";
+import { GREPTILE_JUDGMENT_RULES, GREPTILE_PREFIX } from "../src/audit/greptile.mjs";
+import { REPO, rx, withTempDir } from "./helpers.mjs";
+import { makeExt } from "./preflight-helpers.mjs";
+import { commit, fakeUpstream, g, initRepo } from "./upstream-fixtures.mjs";
+
+import { PNG } from "pngjs";
+
+export const FIX = join(REPO, "test", "fixtures", "gates");
+
+/**
+ * A fully decodable RGBA PNG (rx png inflates the IDAT and checks it, so the header-only PNG the
+ * preflight helpers write is not enough here). `seed` varies the pixels.
+ * @param {number} w @param {number} h @param {number} [seed]
+ */
+export function validPng(w, h, seed = 0) {
+  const p = new PNG({ width: w, height: h });
+  for (let i = 0; i < w * h; i++) {
+    p.data[i * 4] = (seed * 37 + 40) & 0xff;
+    p.data[i * 4 + 1] = 90;
+    p.data[i * 4 + 2] = (i + seed) & 0xff;
+    p.data[i * 4 + 3] = 255;
+  }
+  return PNG.sync.write(p, { colorType: 6, bitDepth: 8 });
+}
+export const PRESET = join(FIX, "preset.json");
+export const FORBIDDEN = join(FIX, "forbidden.txt");
+
+_setRegistry(async () => null);
+
+/**
+ * Run `fn` with XDG_CACHE_HOME pointed at a fresh temp dir and the upstream test hooks reset after.
+ * @template T
+ * @param {(dir: string) => Promise<T>} fn
+ */
+export async function withGatedEnv(fn) {
+  return withTempDir(async (dir) => {
+    const saved = process.env.XDG_CACHE_HOME;
+    process.env.XDG_CACHE_HOME = join(dir, "cache");
+    try {
+      return await fn(dir);
+    } finally {
+      _setUpstreamForTests({ url: null, probe: null });
+      if (saved === undefined) delete process.env.XDG_CACHE_HOME;
+      else process.env.XDG_CACHE_HOME = saved;
+    }
+  });
+}
+
+/**
+ * Fake local tooling: `node_modules/.bin/tsc` (a shell script) and `build` / `lint` scripts in
+ * package.json. `tscExit`, `buildExit`, `lintExit` set what each exits with.
+ * @param {string} root
+ * @param {{ tscExit?: number, buildExit?: number, lintExit?: number, tsc?: boolean, buildScript?: string }} [o]
+ *   `buildScript` replaces the build script entirely (for a build that writes files).
+ */
+export function fakeTooling(root, o = {}) {
+  mkdirSync(join(root, "node_modules", ".bin"), { recursive: true });
+  if (o.tsc !== false) {
+    const tsc = join(root, "node_modules", ".bin", "tsc");
+    writeFileSync(tsc, `#!/bin/sh\n${o.tscExit ? `echo "src/index.tsx(1,1): error TS0000: fixture error" >&2; ` : ""}exit ${o.tscExit ?? 0}\n`);
+    chmodSync(tsc, 0o755);
+  }
+  return {
+    build: o.buildScript ?? `node -e "${o.buildExit ? `console.error('fixture build error'); process.exit(${o.buildExit})` : "0"}"`,
+    lint: `node -e "${o.lintExit ? `console.error('fixture lint error'); process.exit(${o.lintExit})` : "0"}"`,
+  };
+}
+
+/**
+ * A compliant extension named `ext` at dir/ext, committed, with fake tooling. With `published`,
+ * a fake raycast/extensions holds the FIRST commit's files and a second commit adds a changelog
+ * entry (so `rx stale` classifies CHANGELOG.md as CHECK); otherwise the publication probe says 404.
+ * @param {string} dir
+ * @param {{ published?: boolean, src?: string, pkg?: Record<string, unknown>, tooling?: Parameters<typeof fakeTooling>[1], files?: Record<string, string | Buffer | null> }} [o]
+ */
+export async function buildGated(dir, o = {}) {
+  const root = join(dir, "ext");
+  const scripts = fakeTooling(root, o.tooling);
+  /** @type {Record<string, string | Buffer | null>} */
+  const files = {
+    ".gitignore": "node_modules/\n*.local\n",
+    "metadata/good-1.png": validPng(2000, 1250, 1),
+    "assets/icon.png": validPng(512, 512, 2),
+    "media/shot.png": validPng(10, 10, 3),
+    ...(o.files ?? {}),
+  };
+  if (o.src) files["src/index.tsx"] = o.src;
+  makeExt(root, { pkg: { name: "ext", scripts, ...(o.pkg ?? {}) }, files });
+  await initRepo(root);
+  const first = await commit(root, {}, "v1");
+  /** @type {Awaited<ReturnType<typeof fakeUpstream>> | null} */
+  let up = null;
+  if (o.published) {
+    // Published = the first commit's payload (what `ray publish` would have copied).
+    const { readFileSync, readdirSync, statSync } = await import("node:fs");
+    /** @type {Record<string, Buffer>} */
+    const tree = {};
+    const walk = (/** @type {string} */ rel) => {
+      for (const n of readdirSync(join(root, rel))) {
+        if (n === ".git" || n === "node_modules") continue;
+        const p = rel ? `${rel}/${n}` : n;
+        if (statSync(join(root, p)).isDirectory()) walk(p);
+        else tree[p] = readFileSync(join(root, p));
+      }
+    };
+    walk("");
+    up = await fakeUpstream(dir, { ext: tree });
+    _setUpstreamForTests({ url: up.url, probe: async (n) => n === "ext" });
+    await commit(root, { "CHANGELOG.md": "# Changelog\n\n## [Update] - {PR_MERGE_DATE}\n\n- Newer\n\n## [Initial Version] - 2026-01-02\n" }, "v2");
+  } else {
+    _setUpstreamForTests({ url: `file://${dir}/unused.git`, probe: async () => false });
+  }
+  return { root, first, up };
+}
+
+/** `rx gates` over the helper's extension. @param {string} root */
+export function gates(root) {
+  return rx(["gates", "--root", root, "--preset", PRESET, "--forbidden", FORBIDDEN, "--json"]);
+}
+
+/** The state dir (`git rev-parse --git-path rx`) of an extension. @param {string} root */
+export async function stateDir(root) {
+  return (await g(root, ["rev-parse", "--path-format=absolute", "--git-path", "rx"])).stdout;
+}
+
+/** Index results by id (the last result wins for repeated ids). @param {any} r */
+export const byId = (r) => Object.fromEntries(r.json.results.map((/** @type {any} */ x) => [x.id, x]));
+
+/**
+ * A complete entries file for the fixture preset: the three applicable rules and every Greptile
+ * judgment rule as pass, plus any overrides / extra items.
+ * @param {{ overrides?: Record<string, Partial<{ result: string, evidence: string }>>, omit?: string[], extra?: unknown[] }} [o]
+ */
+export function fullEntries(o = {}) {
+  const ids = ["copy-error", "kit", ...GREPTILE_JUDGMENT_RULES.map((id) => `${GREPTILE_PREFIX}${id}`)];
+  const entries = ids
+    .filter((id) => !(o.omit ?? []).includes(id))
+    .map((id) => ({ id, scope: "src/**", result: "pass", evidence: `read the branch diff for ${id}: nothing to report`, ...(o.overrides?.[id] ?? {}) }));
+  return [...entries, ...(o.extra ?? [])];
+}
+
+/** Write an entries file beside the extension (outside the payload). @param {string} dir @param {unknown} entries */
+export function writeEntries(dir, entries) {
+  const file = join(dir, "entries.json");
+  writeFileSync(file, JSON.stringify(entries, null, 2));
+  return file;
+}
+
+/** `rx audit record`. @param {string} root @param {string} entriesFile */
+export function auditRecord(root, entriesFile) {
+  return rx(["audit", "record", "--root", root, "--preset", PRESET, "--entries", entriesFile, "--json"]);
+}
+
+/** A PreToolUse payload for a Bash command. @param {string} command @param {string} cwd */
+export function bashPayload(command, cwd) {
+  return JSON.stringify({ session_id: "fixture", transcript_path: "/dev/null", cwd, hook_event_name: "PreToolUse", tool_name: "Bash", tool_input: { command, description: "fixture" }, tool_use_id: "toolu_fixture" });
+}
+
+/** `rx guard --json` with a payload on stdin. @param {string} payload */
+export function guard(payload) {
+  return rx(["guard", "--json"], { stdin: payload });
+}
