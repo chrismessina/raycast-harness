@@ -1,0 +1,9 @@
+{
+  "number": 12345,
+  "state": "open",
+  "draft": true,
+  "user": { "login": "octo-author" },
+  "head": { "ref": "ext/sample-ext", "sha": "0123456789abcdef0123456789abcdef01234567" },
+  "base": { "ref": "main", "repo": { "full_name": "raycast/extensions" } },
+  "body": "## Description\n\nUpdate Sample Ext\n\n## Screencast\n\n## Checklist\n\n- [ ] I read the extension guidelines\n- [ ] I ran `npm run build`\n"
+}

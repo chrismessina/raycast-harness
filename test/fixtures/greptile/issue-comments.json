@@ -1,0 +1,30 @@
+[
+  {
+    "id": 5001,
+    "user": { "login": "raycastbot" },
+    "created_at": "2026-10-01T10:00:00Z",
+    "updated_at": "2026-10-01T10:00:00Z",
+    "body": "Thank you for your contribution!"
+  },
+  {
+    "id": 5002,
+    "user": { "login": "greptile-apps[bot]" },
+    "created_at": "2026-10-01T10:05:00Z",
+    "updated_at": "2026-10-02T09:30:00Z",
+    "body": "## Greptile Summary\n\nThis PR updates the sample extension.\n\n**Confidence score: 4/5**\n\n<sub>Last reviewed commit: 0123456789abcdef0123456789abcdef01234567</sub>"
+  },
+  {
+    "id": 5003,
+    "user": { "login": "greptile-apps[bot]" },
+    "created_at": "2026-10-02T11:00:00Z",
+    "updated_at": "2026-10-02T11:00:00Z",
+    "body": "A later reply in the thread; not the summary."
+  },
+  {
+    "id": 5004,
+    "user": { "login": "octo-author" },
+    "created_at": "2026-10-02T12:00:00Z",
+    "updated_at": "2026-10-02T12:00:00Z",
+    "body": "Human comment, must not read as a round."
+  }
+]

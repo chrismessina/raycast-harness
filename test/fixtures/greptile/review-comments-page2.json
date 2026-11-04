@@ -1,0 +1,12 @@
+[
+  {
+    "id": 1004,
+    "user": { "login": "greptile-apps[bot]" },
+    "path": "extensions/sample-ext/src/util.ts",
+    "line": 12,
+    "original_line": 12,
+    "commit_id": "0123456789abcdef0123456789abcdef01234567",
+    "original_commit_id": "0123456789abcdef0123456789abcdef01234567",
+    "body": "A finding that only exists on page 2 of the review comments."
+  }
+]

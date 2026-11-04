@@ -1,0 +1,32 @@
+[
+  {
+    "id": 1001,
+    "user": { "login": "greptile-apps[bot]" },
+    "path": "extensions/sample-ext/src/index.tsx",
+    "line": 42,
+    "original_line": 40,
+    "commit_id": "0123456789abcdef0123456789abcdef01234567",
+    "original_commit_id": "89abcdef0123456789abcdef0123456789abcdef",
+    "body": "Consider handling the empty state here."
+  },
+  {
+    "id": 1002,
+    "user": { "login": "greptile-apps[bot]" },
+    "path": "extensions/sample-ext/package.json",
+    "line": null,
+    "original_line": 7,
+    "commit_id": "0123456789abcdef0123456789abcdef01234567",
+    "original_commit_id": "0123456789abcdef0123456789abcdef01234567",
+    "body": "The description should be a full sentence."
+  },
+  {
+    "id": 1003,
+    "user": { "login": "octo-author" },
+    "path": "extensions/sample-ext/package.json",
+    "line": 7,
+    "original_line": 7,
+    "commit_id": "0123456789abcdef0123456789abcdef01234567",
+    "original_commit_id": "0123456789abcdef0123456789abcdef01234567",
+    "body": "A human reply in a finding thread."
+  }
+]

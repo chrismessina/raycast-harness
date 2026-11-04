@@ -1,0 +1,5 @@
+[
+  { "filename": "extensions/sample-ext/package.json", "status": "modified" },
+  { "filename": "extensions/sample-ext/src/index.tsx", "status": "modified" },
+  { "filename": "extensions/sample-ext/CHANGELOG.md", "status": "modified" }
+]
