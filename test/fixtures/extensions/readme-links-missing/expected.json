@@ -1,0 +1,14 @@
+{
+  "preset": "legacy-compat",
+  "verdicts": {
+    "readme-links": "FAIL"
+  },
+  "details": {
+    "readme-links": [
+      "docs/missing.md",
+      "LICENSE",
+      "./diagram.png"
+    ]
+  },
+  "why": "Q9: links without ./ or ../, a bare LICENSE, and a docs-relative image"
+}

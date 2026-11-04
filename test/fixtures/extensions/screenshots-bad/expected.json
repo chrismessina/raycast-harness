@@ -1,0 +1,10 @@
+{
+  "preset": "legacy-compat",
+  "verdicts": {
+    "screenshot-count": "FAIL",
+    "screenshot-format": "FAIL",
+    "screenshot-size": "FAIL",
+    "screenshots": "PASS"
+  },
+  "why": "count > 6, a non-png file, a 1000×625 screenshot"
+}

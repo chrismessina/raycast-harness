@@ -1,0 +1,21 @@
+{
+  "preset": "house",
+  "verdicts": {
+    "agents-md-paths": "FAIL",
+    "agents-md-scripts": "FAIL",
+    "agents-md-no-home-paths": "FAIL",
+    "agents-md-symbols": "FAIL"
+  },
+  "details": {
+    "agents-md-paths": [
+      "src/lib/missing.ts"
+    ],
+    "agents-md-scripts": [
+      "npm run nope"
+    ],
+    "agents-md-symbols": [
+      "ghost()"
+    ]
+  },
+  "why": "11.1: each of the four assertions fails on its own line"
+}

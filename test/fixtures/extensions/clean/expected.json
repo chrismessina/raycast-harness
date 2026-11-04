@@ -1,0 +1,18 @@
+{
+  "preset": "legacy-compat",
+  "verdicts": {
+    "readme-assets": "PASS",
+    "readme-links": "PASS",
+    "changelog-placeholder": "PASS",
+    "screenshots": "PASS",
+    "screenshot-count": "PASS",
+    "screenshot-format": "PASS",
+    "screenshot-size": "PASS",
+    "icon-size": "PASS",
+    "prettierrc": "PASS",
+    "hand-typed-preferences": "PASS",
+    "generated-files": "PASS"
+  },
+  "noFail": true,
+  "noWarn": true
+}

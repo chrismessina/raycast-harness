@@ -1,0 +1,9 @@
+{
+  "preset": "legacy-compat",
+  "verdicts": {
+    "readme-assets": "PASS",
+    "readme-links": "PASS"
+  },
+  "noFail": true,
+  "why": "T4: fenced and inline code are not embeds"
+}

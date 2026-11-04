@@ -1,0 +1,17 @@
+{
+  "preset": "house",
+  "verdicts": {
+    "agent-scaffolding": "WARN"
+  },
+  "details": {
+    "agent-scaffolding": [
+      "AGENTS.md"
+    ]
+  },
+  "notDetails": {
+    "agent-scaffolding": [
+      "TODO.md"
+    ]
+  },
+  "why": "ship.keep exempts TODO.md for this extension name; AGENTS.md still warns"
+}

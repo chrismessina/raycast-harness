@@ -1,0 +1,12 @@
+{
+  "preset": "house",
+  "verdicts": {
+    "logger": "PASS",
+    "logger-verbose-copy": "FAIL",
+    "logger-strict-redaction": "WARN",
+    "pref-description-length": "WARN",
+    "pref-label-length": "WARN",
+    "prettierrc": "FAIL"
+  },
+  "why": "T5/Q12: the verbose block drifts in title; strictRedaction missing is report-only; copy budgets; the plugin is listed in .prettierrc but not in devDependencies"
+}

@@ -1,0 +1,8 @@
+{
+  "preset": "legacy-compat",
+  "verdicts": {
+    "readme-assets": "FAIL",
+    "readme-links": "PASS"
+  },
+  "why": "T3: query string and fragment stripped; Q9: links resolve from their own directory"
+}

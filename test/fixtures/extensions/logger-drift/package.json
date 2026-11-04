@@ -1,0 +1,43 @@
+{
+  "$schema": "https://www.raycast.com/schemas/extension.json",
+  "name": "logger-drift",
+  "title": "Good Extension",
+  "author": "testowner",
+  "icon": "icon.png",
+  "categories": [
+    "Productivity"
+  ],
+  "platforms": [
+    "macOS"
+  ],
+  "commands": [
+    {
+      "name": "index",
+      "title": "Search Items",
+      "mode": "view"
+    }
+  ],
+  "preferences": [
+    {
+      "name": "verboseLogging",
+      "title": "Verbose Logging",
+      "label": "Enable extra diagnostics in the console",
+      "description": "Show detailed logs in the console for debugging.",
+      "type": "checkbox",
+      "required": false,
+      "default": false
+    },
+    {
+      "name": "token",
+      "title": "Token",
+      "type": "password",
+      "required": true,
+      "description": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "label": "yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"
+    }
+  ],
+  "dependencies": {
+    "@raycast/api": "^2.1.0",
+    "@chrismessina/raycast-logger": "^1.5.0"
+  }
+}

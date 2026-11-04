@@ -1,0 +1,12 @@
+{
+  "preset": "house",
+  "verdicts": {
+    "logger": "N/A",
+    "prettierrc": "N/A",
+    "hand-typed-preferences": "WARN",
+    "agents-md-paths": "N/A",
+    "logger-strict-redaction": "N/A"
+  },
+  "noFail": true,
+  "why": "F6: on a fork the self-authored rules do not apply and no-hand-preferences is report-only"
+}

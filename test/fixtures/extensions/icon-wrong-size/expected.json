@@ -1,0 +1,11 @@
+{
+  "preset": "legacy-compat",
+  "verdicts": {
+    "icon-size": "FAIL"
+  },
+  "details": {
+    "icon-size": [
+      "assets/icon.png"
+    ]
+  }
+}

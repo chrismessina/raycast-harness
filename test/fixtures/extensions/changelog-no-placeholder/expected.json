@@ -1,0 +1,8 @@
+{
+  "preset": "legacy-compat",
+  "verdicts": {
+    "changelog-placeholder": "FAIL",
+    "changelog-order": "PASS"
+  },
+  "why": "Q10: zero placeholders is a FAIL"
+}

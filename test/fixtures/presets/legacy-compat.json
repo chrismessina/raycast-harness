@@ -1,0 +1,64 @@
+{
+  "schema": 1,
+  "owner": "legacy-preflight",
+  "rules": [
+    {
+      "id": "prettier-config",
+      "title": "Legacy preflight: .prettierrc has printWidth 120 and singleQuote false, in every extension",
+      "anchor": "legacy-anchors.md#prettier-config",
+      "tag": "both",
+      "applies": true,
+      "severity": "block",
+      "bindings": [{ "kind": "rx", "check": "prettierrc", "coverage": "full", "options": { "printWidth": 120, "singleQuote": false } }]
+    },
+    {
+      "id": "generated-preference-argument-types",
+      "title": "Legacy preflight: no hand-typed Preferences / Arguments (blocking)",
+      "anchor": "legacy-anchors.md#generated-preference-argument-types",
+      "tag": "both",
+      "applies": true,
+      "severity": "block",
+      "bindings": [{ "kind": "rx", "check": "hand-typed-preferences", "coverage": "full" }]
+    },
+    {
+      "id": "manifest-title-case",
+      "title": "Legacy preflight: Title Case heuristic (warn)",
+      "anchor": "legacy-anchors.md#manifest-title-case",
+      "tag": "both",
+      "applies": true,
+      "severity": "block",
+      "bindings": [{ "kind": "rx", "check": "title-case", "coverage": "partial" }]
+    },
+    {
+      "id": "no-agent-scaffolding",
+      "title": "Legacy preflight: agent scaffolding (warn; nested Greptile config fails)",
+      "anchor": "legacy-anchors.md#no-agent-scaffolding",
+      "tag": "both",
+      "applies": true,
+      "severity": "block",
+      "bindings": [{ "kind": "rx", "check": "agent-scaffolding", "coverage": "partial" }]
+    },
+    {
+      "id": "no-dev-material",
+      "title": "Legacy preflight: repo-only files (warn)",
+      "anchor": "legacy-anchors.md#no-dev-material",
+      "tag": "both",
+      "applies": true,
+      "severity": "block",
+      "bindings": [{ "kind": "rx", "check": "dev-material", "coverage": "partial" }]
+    },
+    {
+      "id": "no-generated-files",
+      "title": "Legacy preflight: build output fails, a stray .DS_Store warns",
+      "anchor": "legacy-anchors.md#no-generated-files",
+      "tag": "both",
+      "applies": true,
+      "severity": "block",
+      "bindings": [{ "kind": "rx", "check": "generated-files", "coverage": "full" }]
+    }
+  ],
+  "judgments": [],
+  "dependencies": { "api": { "existing-1x": { "floor": "1.104.25" }, "2x": { "floor": "2.1.0" }, "new": "2x" } },
+  "holdout": { "localOnly": [] },
+  "ship": { "keep": [] }
+}

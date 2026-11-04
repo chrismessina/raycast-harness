@@ -1,0 +1,13 @@
+{
+  "preset": "legacy-compat",
+  "verdicts": {
+    "readme-assets": "FAIL",
+    "readme-links": "PASS"
+  },
+  "details": {
+    "readme-assets": [
+      "metadata%2Fexample-extension-1.png"
+    ]
+  },
+  "why": "recorded shape: a README embedding a Store screenshot through a percent-encoded path (AbCdEfGhIjK-style ids and real titles removed)"
+}

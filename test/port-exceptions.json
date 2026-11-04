@@ -1,0 +1,32 @@
+{
+  "$comment": "Reviewed differences between the legacy scripts/preflight.mjs and rx preflight, read by scripts/compare-preflight.mjs. A legacy finding's message is split into its sub-findings (the legacy script joined several problems with '; '); each sub-finding maps to exactly one rx id through `split` (first matching `when` regex wins, else the legacy id itself) and counts as kept only when rx emits that id at the same or a higher severity with the same file:line locations.",
+  "split": {
+    "screenshots": [
+      { "when": "needs at least one screenshot", "id": "screenshots", "reason": "presence stays under `screenshots` (the legacy rule: a view command with no screenshot is a FAIL)" },
+      { "when": "must be 2000", "id": "screenshot-size", "reason": "dimensions moved to `screenshot-size` (plan 4.1)" }
+    ],
+    "changelog-order": [
+      { "when": "PR_MERGE_DATE\\} must be on the top entry|entries use \\{PR_MERGE_DATE\\}", "id": "changelog-placeholder", "reason": "placeholder count and placement moved to `changelog-placeholder` (Q10); the predicate is shared with rx changelog" },
+      { "when": "dates must|Unreleased", "id": "changelog-order", "reason": "date order, date format and the Unreleased section stay under `changelog-order`" }
+    ]
+  },
+  "expectedNew": [
+    "PASS and N/A lines for every check (docs/commands.md 1: silence is never a pass)",
+    "the JSON envelope { command, version, fingerprint, data, results, exit } instead of a bare findings array",
+    "ERROR args on an unknown argument (P1-2) and ERROR input on an unreadable --published or --preset",
+    "FAIL changelog-placeholder when no entry carries {PR_MERGE_DATE} (Q10) or the file holds conflict markers",
+    "FAIL readme-assets when README.md is missing, and FAIL icon-size, lockfile, eslint-config when those required artifacts are missing (absence rule)",
+    "FAIL screenshot-count (> 6), screenshot-format (non-.png under metadata/), icon-size (not 512×512), readme-links (unresolved relative link, Q9)",
+    "readme-assets findings for reference-style, angle-bracket, attribute-whitespace, srcset, multi-line and query-string forms (T3), and none for fenced, inline or indented code (T4); a plain link to an asset is readme-links' business, not readme-assets'",
+    "preset-class checks (prettierrc, hand-typed-preferences, title-case, agent-scaffolding, dev-material, generated-files) are N/A without a preset; the comparison runs with test/fixtures/presets/legacy-compat.json, which reproduces the legacy values and levels"
+  ],
+  "knownLost": [
+    {
+      "root": "test/fixtures/extensions/readme-fenced-example",
+      "id": "readme-assets",
+      "message": "^README images belong in media/, not metadata/ or assets/: metadata/shot\\.png, metadata/a\\.png, assets/icon\\.png$",
+      "file": null,
+      "reason": "T4: the legacy regex flagged a fenced Markdown example of the forbidden form; rx excludes fenced and inline code, so this exact legacy finding is a false positive the port deliberately drops (plan 4.1, job-A P1)."
+    }
+  ]
+}

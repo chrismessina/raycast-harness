@@ -1,0 +1,7 @@
+{
+  "preset": "legacy-compat",
+  "verdicts": {
+    "readme-assets": "FAIL"
+  },
+  "why": "T3: angle-bracket destination with a title"
+}

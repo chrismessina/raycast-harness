@@ -1,0 +1,7 @@
+{
+  "preset": "legacy-compat",
+  "verdicts": {
+    "readme-assets": "FAIL"
+  },
+  "why": "T3: reference-style image definition"
+}
