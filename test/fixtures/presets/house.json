@@ -1,0 +1,136 @@
+{
+  "schema": 1,
+  "owner": "testowner",
+  "rules": [
+    {
+      "id": "prettierrc",
+      "title": "Test house: the four-key .prettierrc, self-authored only",
+      "anchor": "house-anchors.md#prettierrc",
+      "tag": "both",
+      "applies": { "selfAuthored": true },
+      "severity": "block",
+      "bindings": [{ "kind": "rx", "check": "prettierrc", "coverage": "partial", "options": {
+        "printWidth": 120, "singleQuote": false,
+        "sortImports": { "plugin": "@ianvs/prettier-plugin-sort-imports", "importOrder": ["<BUILTIN_MODULES>", "<THIRD_PARTY_MODULES>", "^@raycast/(.*)$", "^[.]"] }
+      } }]
+    },
+    {
+      "id": "no-hand-preferences",
+      "title": "Test house: hand-typed preferences are report-only",
+      "anchor": "house-anchors.md#no-hand-preferences",
+      "tag": "lint",
+      "applies": true,
+      "severity": "report",
+      "bindings": [{ "kind": "rx", "check": "hand-typed-preferences", "coverage": "full" }]
+    },
+    {
+      "id": "logger",
+      "title": "Test house: structured logging via the house logger",
+      "anchor": "house-anchors.md#logger",
+      "tag": "both",
+      "applies": { "all": [{ "selfAuthored": true }, { "webRequests": true }] },
+      "severity": "block",
+      "bindings": [{ "kind": "rx", "check": "logger", "coverage": "full", "options": { "package": "@chrismessina/raycast-logger", "preference": "verboseLogging" } }]
+    },
+    {
+      "id": "logger-verbose-copy",
+      "title": "Test house: the verboseLogging block verbatim",
+      "anchor": "house-anchors.md#logger-verbose-copy",
+      "tag": "both",
+      "applies": { "declaresPreference": "verboseLogging" },
+      "severity": "block",
+      "bindings": [{ "kind": "rx", "check": "logger-verbose-copy", "coverage": "full", "options": { "expected": {
+        "name": "verboseLogging", "title": "Debug Logging", "label": "Enable extra diagnostics in the console",
+        "description": "Show detailed logs in the console for debugging.", "type": "checkbox", "required": false, "default": false
+      } } }]
+    },
+    {
+      "id": "logger-strict-redaction",
+      "title": "Test house: strictRedaction beside verboseLogging on logger 1.5.0+",
+      "anchor": "house-anchors.md#logger-strict-redaction",
+      "tag": "both",
+      "applies": { "all": [{ "selfAuthored": true }, { "dependency": { "name": "@chrismessina/raycast-logger", "minVersion": "1.5.0" } }] },
+      "severity": "report",
+      "bindings": [{ "kind": "rx", "check": "logger-strict-redaction", "coverage": "full", "options": { "expected": {
+        "name": "strictRedaction", "type": "checkbox", "required": false, "title": "Strict Redaction",
+        "label": "Also hide URL query strings and fragments in logs",
+        "description": "Turn on before reproducing an issue, then share only the new log lines.", "default": false
+      } } }]
+    },
+    {
+      "id": "pref-description-length",
+      "title": "Test house: preference copy budgets",
+      "anchor": "house-anchors.md#pref-description-length",
+      "tag": "both",
+      "applies": true,
+      "severity": "report",
+      "bindings": [
+        { "kind": "rx", "check": "pref-description-length", "coverage": "full", "options": { "max": 80 } },
+        { "kind": "rx", "check": "pref-label-length", "coverage": "full", "options": { "max": 49 } }
+      ]
+    },
+    {
+      "id": "agents-md",
+      "title": "Test house: AGENTS.md / CONCEPTS.md claims hold",
+      "anchor": "house-anchors.md#agents-md",
+      "tag": "verify",
+      "applies": { "selfAuthored": true },
+      "severity": "block",
+      "bindings": [
+        { "kind": "rx", "check": "agents-md-paths", "coverage": "full" },
+        { "kind": "rx", "check": "agents-md-scripts", "coverage": "full" },
+        { "kind": "rx", "check": "agents-md-no-home-paths", "coverage": "full" },
+        { "kind": "rx", "check": "agents-md-symbols", "coverage": "full" }
+      ]
+    },
+    {
+      "id": "merge-date-placeholder",
+      "title": "Test house: keep the placeholder",
+      "anchor": "house-anchors.md#merge-date-placeholder",
+      "tag": "both",
+      "applies": true,
+      "severity": "block",
+      "bindings": [{ "kind": "rx", "check": "changelog-placeholder", "coverage": "full" }]
+    },
+    {
+      "id": "no-generated-files",
+      "title": "Test house: no build output ships",
+      "anchor": "house-anchors.md#no-generated-files",
+      "tag": "both",
+      "applies": true,
+      "severity": "block",
+      "bindings": [{ "kind": "rx", "check": "generated-files", "coverage": "full" }]
+    },
+    {
+      "id": "no-agent-scaffolding",
+      "title": "Test house: no agent files ship, except the kept TODO.md",
+      "anchor": "house-anchors.md#no-agent-scaffolding",
+      "tag": "both",
+      "applies": true,
+      "severity": "block",
+      "bindings": [{ "kind": "rx", "check": "agent-scaffolding", "coverage": "partial" }]
+    },
+    {
+      "id": "ship-only-when-published",
+      "title": "Test house: a rule that needs the publication status",
+      "anchor": "house-anchors.md#ship-only-when-published",
+      "tag": "verify",
+      "applies": { "published": true },
+      "severity": "report",
+      "bindings": [{ "kind": "rx", "check": "dev-material", "coverage": "partial" }]
+    },
+    {
+      "id": "build-only-rule",
+      "title": "Test house: a build-only rule has no binding",
+      "anchor": "house-anchors.md#build-only-rule",
+      "tag": "build",
+      "applies": true,
+      "severity": "report",
+      "bindings": []
+    }
+  ],
+  "judgments": [],
+  "dependencies": { "api": { "existing-1x": { "floor": "1.104.25" }, "2x": { "floor": "2.1.0" }, "new": "2x" } },
+  "holdout": { "localOnly": [".env", ".claude", ".superpowers"] },
+  "ship": { "keep": [{ "path": "TODO.md", "extensions": ["keeps-todo"], "reason": "test: a public backlog" }] }
+}

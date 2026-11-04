@@ -1,0 +1,215 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/chrismessina/raycast-harness/schema/preset.schema.json",
+  "title": "raycast-harness preset",
+  "description": "An owner's policy for rx: rule ids with applicability, severity and implementation bindings, dependency floors, holdout and ship exceptions. Plan 4.16.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "owner", "rules"],
+  "properties": {
+    "schema": { "const": 1 },
+    "owner": {
+      "type": "string",
+      "description": "GitHub login whose extensions are self-authored (package.json author).",
+      "pattern": "^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$"
+    },
+    "rules": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/rule" }
+    },
+    "judgments": {
+      "type": "array",
+      "description": "Manual judgment ids a `judgment` binding may name, beside src/judge/decisions/.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id"],
+        "properties": {
+          "id": { "$ref": "#/$defs/kebab" },
+          "question": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "dependencies": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["api"],
+      "properties": {
+        "api": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["existing-1x", "2x", "new"],
+          "properties": {
+            "existing-1x": { "$ref": "#/$defs/floor" },
+            "2x": { "$ref": "#/$defs/floor" },
+            "new": { "const": "2x", "description": "The policy a brand-new extension (rx stale: published false) must satisfy." }
+          }
+        }
+      }
+    },
+    "holdout": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["localOnly"],
+      "properties": {
+        "localOnly": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/relpath" },
+          "uniqueItems": true
+        }
+      }
+    },
+    "ship": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["keep"],
+      "properties": {
+        "keep": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["path", "extensions", "reason"],
+            "properties": {
+              "path": { "$ref": "#/$defs/relpath" },
+              "extensions": { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 1 }, "uniqueItems": true },
+              "reason": { "type": "string", "minLength": 1 }
+            }
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "kebab": { "type": "string", "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$" },
+    "relpath": { "type": "string", "minLength": 1, "pattern": "^(?!/)(?!.*(^|/)\\.\\.(/|$)).+$" },
+    "semver": { "type": "string", "pattern": "^\\d+\\.\\d+\\.\\d+$" },
+    "floor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["floor"],
+      "properties": { "floor": { "$ref": "#/$defs/semver" } }
+    },
+    "rule": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "title", "anchor", "tag", "applies", "severity", "bindings"],
+      "properties": {
+        "id": { "$ref": "#/$defs/kebab" },
+        "title": { "type": "string", "minLength": 1 },
+        "anchor": {
+          "type": "string",
+          "description": "<reference file, relative to the preset>#<fragment>. The fragment is the rule id marked `**ID:** `id`` in that file, a `| `id` |` table row, or a heading slug.",
+          "pattern": "^[^#]+#[^#]+$"
+        },
+        "tag": { "enum": ["build", "verify", "both", "lint"] },
+        "applies": { "$ref": "#/$defs/applies" },
+        "severity": { "enum": ["block", "report"] },
+        "bindings": { "type": "array", "items": { "$ref": "#/$defs/binding" } }
+      }
+    },
+    "binding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "check", "coverage"],
+      "properties": {
+        "kind": { "enum": ["rx", "eslint", "judgment"] },
+        "check": { "type": "string", "minLength": 1 },
+        "coverage": { "enum": ["full", "partial"] },
+        "options": { "type": "object" }
+      },
+      "allOf": [
+        { "if": { "properties": { "kind": { "const": "rx" }, "check": { "const": "prettierrc" } }, "required": ["kind", "check"] },
+          "then": { "required": ["options"], "properties": { "options": { "$ref": "#/$defs/options-prettierrc" } } } },
+        { "if": { "properties": { "kind": { "const": "rx" }, "check": { "const": "logger-verbose-copy" } }, "required": ["kind", "check"] },
+          "then": { "required": ["options"], "properties": { "options": { "$ref": "#/$defs/options-expected-preference" } } } },
+        { "if": { "properties": { "kind": { "const": "rx" }, "check": { "const": "logger-strict-redaction" } }, "required": ["kind", "check"] },
+          "then": { "required": ["options"], "properties": { "options": { "$ref": "#/$defs/options-expected-preference" } } } },
+        { "if": { "properties": { "kind": { "const": "rx" }, "check": { "const": "logger" } }, "required": ["kind", "check"] },
+          "then": { "required": ["options"], "properties": { "options": { "$ref": "#/$defs/options-logger" } } } },
+        { "if": { "properties": { "kind": { "const": "rx" }, "check": { "const": "pref-description-length" } }, "required": ["kind", "check"] },
+          "then": { "required": ["options"], "properties": { "options": { "$ref": "#/$defs/options-max" } } } },
+        { "if": { "properties": { "kind": { "const": "rx" }, "check": { "const": "pref-label-length" } }, "required": ["kind", "check"] },
+          "then": { "required": ["options"], "properties": { "options": { "$ref": "#/$defs/options-max" } } } },
+        { "if": { "properties": { "check": { "enum": ["prettierrc", "logger", "logger-verbose-copy", "logger-strict-redaction", "pref-description-length", "pref-label-length"] } }, "required": ["check"] },
+          "else": { "not": { "required": ["options"] } } }
+      ]
+    },
+    "options-prettierrc": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["printWidth", "singleQuote"],
+      "properties": {
+        "printWidth": { "type": "integer", "minimum": 1 },
+        "singleQuote": { "type": "boolean" },
+        "sortImports": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["plugin", "importOrder"],
+          "properties": {
+            "plugin": { "type": "string", "minLength": 1 },
+            "importOrder": { "type": "array", "minItems": 1, "items": { "type": "string" } }
+          }
+        }
+      }
+    },
+    "options-logger": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["package", "preference"],
+      "properties": {
+        "package": { "type": "string", "minLength": 1 },
+        "preference": { "type": "string", "minLength": 1 }
+      }
+    },
+    "options-expected-preference": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["expected"],
+      "properties": {
+        "expected": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["name", "title", "label", "description", "type", "required", "default"],
+          "properties": {
+            "name": { "type": "string", "minLength": 1 },
+            "title": { "type": "string" },
+            "label": { "type": "string" },
+            "description": { "type": "string" },
+            "type": { "const": "checkbox" },
+            "required": { "type": "boolean" },
+            "default": { "type": "boolean" }
+          }
+        }
+      }
+    },
+    "options-max": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["max"],
+      "properties": { "max": { "type": "integer", "minimum": 1 } }
+    },
+    "applies": {
+      "anyOf": [
+        { "const": true },
+        { "type": "object", "additionalProperties": false, "required": ["all"], "properties": { "all": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/applies" } } } },
+        { "type": "object", "additionalProperties": false, "required": ["any"], "properties": { "any": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/applies" } } } },
+        { "type": "object", "additionalProperties": false, "required": ["not"], "properties": { "not": { "$ref": "#/$defs/applies" } } },
+        { "type": "object", "additionalProperties": false, "required": ["selfAuthored"], "properties": { "selfAuthored": { "const": true } } },
+        { "type": "object", "additionalProperties": false, "required": ["platform"], "properties": { "platform": { "enum": ["macOS", "Windows"] } } },
+        { "type": "object", "additionalProperties": false, "required": ["published"], "properties": { "published": { "const": true } } },
+        { "type": "object", "additionalProperties": false, "required": ["webRequests"], "properties": { "webRequests": { "const": true } } },
+        { "type": "object", "additionalProperties": false, "required": ["declaresPreference"], "properties": { "declaresPreference": { "type": "string", "minLength": 1 } } },
+        { "type": "object", "additionalProperties": false, "required": ["dependency"], "properties": { "dependency": {
+          "type": "object", "additionalProperties": false, "required": ["name"],
+          "properties": { "name": { "type": "string", "minLength": 1 }, "minVersion": { "$ref": "#/$defs/semver" } } } } },
+        { "type": "object", "additionalProperties": false, "required": ["hasViewCommand"], "properties": { "hasViewCommand": { "const": true } } },
+        { "type": "object", "additionalProperties": false, "required": ["commandMode"], "properties": { "commandMode": { "enum": ["view", "no-view", "menu-bar"] } } },
+        { "type": "object", "additionalProperties": false, "required": ["declaresInterval"], "properties": { "declaresInterval": { "const": true } } },
+        { "type": "object", "additionalProperties": false, "required": ["writesFiles"], "properties": { "writesFiles": { "const": true } } },
+        { "type": "object", "additionalProperties": false, "required": ["callsAI"], "properties": { "callsAI": { "const": true } } },
+        { "type": "object", "additionalProperties": false, "required": ["manual"], "properties": { "manual": { "type": "string", "minLength": 1 } } }
+      ]
+    }
+  }
+}
