@@ -21,6 +21,13 @@ export class ArgError extends RxError {
   constructor(message) {
     super(message, { id: "args", exit: 2 });
     this.name = "ArgError";
+    /**
+     * What the parser had established when it threw: the selected subcommand (null when none was
+     * selected or the token was unknown) and every flag parsed before the error. Set by parseArgs;
+     * read by the dispatcher's invalidation (src/cli.mjs), never by commands.
+     * @type {import("./args.mjs").ParsedArgs | null}
+     */
+    this.partial = null;
   }
 }
 

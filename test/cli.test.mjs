@@ -146,3 +146,41 @@ export async function run() { throw new RxError("boom", { id: "undeclared-error"
     assert.ok(j.results.some((x) => x.id === "protocol" && /not-declared/.test(x.message)));
   });
 });
+
+test("a command returning `transport` (the hook exception) prints exactly transport.stdout and exits transport.exit without --json; with --json the envelope is printed", async () => {
+  const { writeFileSync } = await import("node:fs");
+  const { join } = await import("node:path");
+  const { runCli } = await import("../src/cli.mjs");
+  const source = `export const spec = { name: "zz-scratch", summary: "s", root: "none", checks: { zz: "zz" } };
+export async function run({ results }) { results.fail("zz", "blocked"); return { data: { decision: "block" }, transport: { stdout: '{"deny":true}\\n', exit: 0 } }; }
+`;
+  await withTempDir(async (dir) => {
+    writeFileSync(join(dir, "zz-scratch.mjs"), source);
+    let stdout = "";
+    const io = { cwd: dir, commandsDir: dir, stdout: (/** @type {string} */ s) => (stdout += s), stderr: () => {} };
+    const code = await runCli(["zz-scratch"], io);
+    assert.equal(code, 0, "transport.exit wins over the FAIL verdict's exit 1");
+    assert.equal(stdout, '{"deny":true}\n');
+    stdout = "";
+    const jsonCode = await runCli(["zz-scratch", "--json"], io);
+    assert.equal(jsonCode, 1);
+    const env = JSON.parse(stdout);
+    assert.equal(env.results[0].verdict, "FAIL");
+    assert.equal(env.data.decision, "block");
+  });
+});
+
+test("a command returning `transport` with an undeclared check id still gets ERROR protocol, exit 2 (the registry wins over the transport)", async () => {
+  const { writeFileSync } = await import("node:fs");
+  const { join } = await import("node:path");
+  const { runCli } = await import("../src/cli.mjs");
+  await withTempDir(async (dir) => {
+    writeFileSync(join(dir, "zz-scratch.mjs"), `export const spec = { name: "zz-scratch", summary: "s", root: "none", checks: {} };
+export async function run({ results }) { results.pass("nope", "x"); return { transport: { stdout: "", exit: 0 } }; }
+`);
+    let stdout = "";
+    const code = await runCli(["zz-scratch"], { cwd: dir, commandsDir: dir, stdout: (/** @type {string} */ s) => (stdout += s), stderr: () => {} });
+    assert.equal(code, 2);
+    assert.match(stdout, /^ERROR {2}protocol /m);
+  });
+});

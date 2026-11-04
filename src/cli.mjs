@@ -8,7 +8,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { helpText, parseArgs } from "./args.mjs";
-import { RootError, RxError } from "./errors.mjs";
+import { ArgError, RootError, RxError } from "./errors.mjs";
 import { resolveRoot } from "./root.mjs";
 import { Results, emit } from "./verdict.mjs";
 
@@ -35,8 +35,19 @@ export const PROTOCOL_IDS = new Set(["args", "root", "input", "tooling", "github
  *   "optional" found none or "none"). A "none" command that needs a root from somewhere else
  *   (guard reads it from the hook payload) calls resolveRoot itself. `log` writes progress to
  *   stderr, never to stdout.
- * @typedef {{ data?: Record<string, unknown>, fingerprint?: string | null } | void} CommandOutput
- * @typedef {{ spec: CommandSpec, run: (ctx: CommandContext) => Promise<CommandOutput> }} CommandModule
+ * `transport` is the documented exception for `guard` (docs/commands.md §4.9 "Transport"): when present
+ * and `--json` was not given, the dispatcher writes `transport.stdout` verbatim and returns
+ * `transport.exit` instead of rendering verdict lines. The check-id registry is still enforced.
+ * @typedef {{ data?: Record<string, unknown>, fingerprint?: string | null, transport?: { stdout: string, exit: number } } | void} CommandOutput
+ * `invalidate` is optional: a command whose run() begins by deleting a prior authorization
+ * (`gates` → receipt.json, `audit record` → audit.json) exports it so that an argument error, which
+ * the dispatcher reports BEFORE run() starts, deletes it too (docs/commands.md §4.8, §4.9). It is
+ * called with the subcommand the parser selected and the root: resolved from cwd when no `--root`
+ * was given, from the parsed `--root` value when exactly one was given and parsed, else null (an
+ * explicit root that cannot be read names no repository); it is best-effort and its own failure is
+ * never reported, so the arguments stay the only result. `--help` with `--json` is an `ERROR args` that is a help request: it
+ * invalidates nothing.
+ * @typedef {{ spec: CommandSpec, run: (ctx: CommandContext) => Promise<CommandOutput>, invalidate?: (ctx: { root: string | null, subcommand: string | null, cwd: string }) => Promise<void> }} CommandModule
  */
 
 export const COMMANDS_DIR = join(HERE, "commands");
@@ -146,6 +157,7 @@ export async function runCli(argv, io = {}) {
   try {
     args = parseArgs(rest, mod.spec);
   } catch (e) {
+    if (mod.invalidate && e instanceof ArgError) await invalidateOnArgError(mod, e, rest, cwd);
     return fromError(e, results, finish, log);
   }
   if (args.help) {
@@ -174,9 +186,47 @@ export async function runCli(argv, io = {}) {
   try {
     const out = await mod.run({ args, root, cwd, env, results, stdin: defaultStdin(io.stdin), log, version: VERSION });
     if (results.items.length === 0) results.error("protocol", `${name} produced no results; silence is never a pass`);
+    if (out?.transport && !json) {
+      const stray = results.items.find((r) => !PROTOCOL_IDS.has(r.id) && !declared(r.id, checks));
+      // A protocol error outranks the transport: the ERROR line prints and exit 2 blocks the hook.
+      if (stray) return finish(out.data ?? {}, out.fingerprint ?? null);
+      if (out.transport.stdout) write(out.transport.stdout);
+      return out.transport.exit;
+    }
     return finish(out?.data ?? {}, out?.fingerprint ?? null);
   } catch (e) {
     return fromError(e, results, finish, log);
+  }
+}
+
+/**
+ * Call a module's `invalidate` after its arguments failed to parse. The parser's own partial result
+ * (`ArgError.partial`) says which subcommand it selected and which flags it parsed before throwing,
+ * so this never re-derives either. The root: when no `--root` token was given at all, the one that
+ * resolves from cwd; when exactly one was given and the parser parsed its value, that one; in every
+ * other case (an empty, missing or never-parsed value, or two `--root` tokens) null, because an
+ * explicit root that cannot be read names no repository and the cwd's is never the fallback.
+ * @param {CommandModule} mod
+ * @param {ArgError} e
+ * @param {string[]} rest
+ * @param {string} cwd
+ */
+async function invalidateOnArgError(mod, e, rest, cwd) {
+  const partial = e.partial;
+  const rootTokens = rest.filter((t) => t === "--root" || t.startsWith("--root=")).length;
+  const parsedRoot = partial && typeof partial.flags["--root"] === "string" ? partial.flags["--root"] : null;
+  /** @type {string | null} */
+  let root = null;
+  try {
+    if (rootTokens === 0) root = resolveRoot({ cwd });
+    else if (rootTokens === 1 && parsedRoot) root = resolveRoot({ root: parsedRoot, cwd });
+  } catch {
+    // No root resolves: nothing to invalidate.
+  }
+  try {
+    await /** @type {NonNullable<CommandModule["invalidate"]>} */ (mod.invalidate)({ root, subcommand: partial?.subcommand ?? null, cwd });
+  } catch {
+    // Best-effort: the argument error is the result; a failed deletion must not hide it.
   }
 }
 

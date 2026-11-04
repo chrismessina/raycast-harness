@@ -52,6 +52,21 @@ export const GLOBAL_FLAGS = /** @type {Record<string, Flag>} */ ({
 export function parseArgs(argv, schema) {
   /** @type {ParsedArgs} */
   const out = { subcommand: null, positionals: {}, flags: {}, json: false, help: false };
+  try {
+    return parse(argv, schema, out);
+  } catch (e) {
+    if (e instanceof ArgError) e.partial = out;
+    throw e;
+  }
+}
+
+/**
+ * @param {string[]} argv
+ * @param {ArgSchema} schema
+ * @param {ParsedArgs} out filled progressively, so an ArgError can carry what was parsed before it
+ * @returns {ParsedArgs}
+ */
+function parse(argv, schema, out) {
   const tokens = [...argv];
 
   if (!schema.subcommands) {
