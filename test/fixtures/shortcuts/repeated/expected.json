@@ -1,0 +1,17 @@
+{
+  "command": [
+    "shortcuts",
+    "check",
+    "--table",
+    "test/fixtures/shortcuts/table-2.10.1.0.json"
+  ],
+  "verdicts": {
+    "shortcut-runtime-table": "PASS",
+    "shortcut-ambiguous": "FAIL",
+    "shortcut-reserved": "PASS"
+  },
+  "conflicts": 2,
+  "declared": 6,
+  "exit": 1,
+  "note": "Two pairs: the two Common.Copy sites inside the first panel's items.map(...) ternary, and the two Common.Open sites inside its Array.from(items, mapper) ternary (any callback body withholds exclusivity). The second panel's ternary is evaluated once per panel, so Copy A / Copy B are exclusive."
+}

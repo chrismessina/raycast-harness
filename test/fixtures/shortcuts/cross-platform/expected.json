@@ -1,0 +1,8 @@
+{
+  "command": ["shortcuts", "check", "--table", "test/fixtures/shortcuts/table-2.10.1.0.json"],
+  "verdicts": { "shortcut-runtime-table": "PASS", "shortcut-ambiguous": "FAIL", "shortcut-reserved": "PASS" },
+  "conflicts": 1,
+  "conflictPlatforms": ["Windows"],
+  "exit": 1,
+  "note": "A Windows-only collision; the macOS audit alone would pass this panel."
+}

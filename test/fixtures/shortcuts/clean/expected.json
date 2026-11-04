@@ -1,0 +1,17 @@
+{
+  "command": [
+    "shortcuts",
+    "check",
+    "--table",
+    "test/fixtures/shortcuts/table-2.10.1.0.json"
+  ],
+  "verdicts": {
+    "shortcut-runtime-table": "PASS",
+    "shortcut-ambiguous": "PASS",
+    "shortcut-reserved": "PASS"
+  },
+  "declared": 7,
+  "unresolved": 2,
+  "exit": 0,
+  "note": "`shortcut={fav}` and the composed `<ItemActions />` child are unresolved and listed in data (both count as declared); the commented-out literal and the `Keyboard.Shortcut` type annotation are not shortcuts."
+}

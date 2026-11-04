@@ -1,0 +1,1 @@
+{ "name": "cross-platform", "title": "Cross Platform", "platforms": ["macOS", "Windows"], "commands": [{ "name": "index", "title": "Index", "mode": "view" }] }

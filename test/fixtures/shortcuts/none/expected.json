@@ -1,0 +1,6 @@
+{
+  "command": ["shortcuts", "check"],
+  "verdicts": { "shortcut-runtime-table": "N/A", "shortcut-ambiguous": "N/A", "shortcut-reserved": "N/A" },
+  "exit": 0,
+  "note": "No table is needed when no shortcut is declared; N/A states that."
+}

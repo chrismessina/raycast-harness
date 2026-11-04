@@ -1,0 +1,261 @@
+{
+  "appVersion": "2.10.1.0",
+  "shimFingerprint": "a28a27ab98c871f940ad9e8dd715712795ef75ebf5acfa5ad15fd67a645afc05",
+  "shortcuts": {
+    "Copy": {
+      "macOS": {
+        "modifiers": [
+          "cmd",
+          "shift"
+        ],
+        "key": "c"
+      },
+      "Windows": {
+        "modifiers": [
+          "ctrl",
+          "shift"
+        ],
+        "key": "c"
+      }
+    },
+    "CopyDeeplink": {
+      "macOS": {
+        "modifiers": [
+          "cmd",
+          "shift"
+        ],
+        "key": "c"
+      },
+      "Windows": {
+        "modifiers": [
+          "ctrl",
+          "shift"
+        ],
+        "key": "c"
+      }
+    },
+    "CopyName": {
+      "macOS": {
+        "modifiers": [
+          "cmd",
+          "opt"
+        ],
+        "key": "c"
+      },
+      "Windows": {
+        "modifiers": [
+          "ctrl",
+          "alt"
+        ],
+        "key": "c"
+      }
+    },
+    "CopyPath": {
+      "macOS": {
+        "modifiers": [
+          "cmd",
+          "ctrl"
+        ],
+        "key": "c"
+      },
+      "Windows": {
+        "modifiers": [
+          "alt",
+          "shift"
+        ],
+        "key": "c"
+      }
+    },
+    "Save": {
+      "macOS": {
+        "modifiers": [
+          "cmd"
+        ],
+        "key": "s"
+      },
+      "Windows": {
+        "modifiers": [
+          "ctrl"
+        ],
+        "key": "s"
+      }
+    },
+    "Duplicate": {
+      "macOS": {
+        "modifiers": [
+          "cmd"
+        ],
+        "key": "d"
+      },
+      "Windows": {
+        "modifiers": [
+          "ctrl",
+          "shift"
+        ],
+        "key": "s"
+      }
+    },
+    "Edit": {
+      "macOS": {
+        "modifiers": [
+          "cmd"
+        ],
+        "key": "e"
+      },
+      "Windows": {
+        "modifiers": [
+          "ctrl"
+        ],
+        "key": "e"
+      }
+    },
+    "MoveDown": {
+      "macOS": {
+        "modifiers": [
+          "cmd",
+          "opt"
+        ],
+        "key": "arrowDown"
+      },
+      "Windows": {
+        "modifiers": [
+          "ctrl",
+          "alt"
+        ],
+        "key": "arrowDown"
+      }
+    },
+    "MoveUp": {
+      "macOS": {
+        "modifiers": [
+          "cmd",
+          "opt"
+        ],
+        "key": "arrowUp"
+      },
+      "Windows": {
+        "modifiers": [
+          "ctrl",
+          "alt"
+        ],
+        "key": "arrowUp"
+      }
+    },
+    "New": {
+      "macOS": {
+        "modifiers": [
+          "cmd"
+        ],
+        "key": "n"
+      },
+      "Windows": {
+        "modifiers": [
+          "ctrl"
+        ],
+        "key": "n"
+      }
+    },
+    "Open": {
+      "macOS": {
+        "modifiers": [
+          "cmd"
+        ],
+        "key": "o"
+      },
+      "Windows": {
+        "modifiers": [
+          "ctrl"
+        ],
+        "key": "o"
+      }
+    },
+    "OpenWith": {
+      "macOS": {
+        "modifiers": [
+          "cmd",
+          "shift"
+        ],
+        "key": "o"
+      },
+      "Windows": {
+        "modifiers": [
+          "ctrl",
+          "shift"
+        ],
+        "key": "o"
+      }
+    },
+    "Pin": {
+      "macOS": {
+        "modifiers": [
+          "cmd"
+        ],
+        "key": "."
+      },
+      "Windows": {
+        "modifiers": [
+          "ctrl"
+        ],
+        "key": "."
+      }
+    },
+    "Refresh": {
+      "macOS": {
+        "modifiers": [
+          "cmd"
+        ],
+        "key": "r"
+      },
+      "Windows": {
+        "modifiers": [
+          "ctrl"
+        ],
+        "key": "r"
+      }
+    },
+    "Remove": {
+      "macOS": {
+        "modifiers": [
+          "ctrl"
+        ],
+        "key": "x"
+      },
+      "Windows": {
+        "modifiers": [
+          "ctrl"
+        ],
+        "key": "d"
+      }
+    },
+    "RemoveAll": {
+      "macOS": {
+        "modifiers": [
+          "ctrl",
+          "shift"
+        ],
+        "key": "x"
+      },
+      "Windows": {
+        "modifiers": [
+          "ctrl",
+          "alt"
+        ],
+        "key": "d"
+      }
+    },
+    "ToggleQuickLook": {
+      "macOS": {
+        "modifiers": [
+          "cmd"
+        ],
+        "key": "y"
+      },
+      "Windows": {
+        "modifiers": [
+          "ctrl"
+        ],
+        "key": "y"
+      }
+    }
+  }
+}

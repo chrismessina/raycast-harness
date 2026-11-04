@@ -1,0 +1,17 @@
+{
+  "command": [
+    "shortcuts",
+    "check",
+    "--table",
+    "test/fixtures/shortcuts/table-2.10.1.0.json"
+  ],
+  "verdicts": {
+    "shortcut-runtime-table": "PASS",
+    "shortcut-ambiguous": "FAIL",
+    "shortcut-reserved": "FAIL"
+  },
+  "conflicts": 4,
+  "exit": 1,
+  "note": "Copy, the \u2318\u21e7C literal and CopyDeeplink are three sites on one binding (3 pairs); Save and the \u2318S literal are a fourth pair. The two Copy as PNG actions sit on opposite sides of one ternary and never pair. The Submenu's own \u2318\u21e7E collides with nothing. Details spells out \u2318\u21b5, the secondary default.",
+  "reserved": 1
+}

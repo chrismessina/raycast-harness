@@ -1,0 +1,16 @@
+{
+  "command": [
+    "shortcuts",
+    "check",
+    "--table",
+    "test/fixtures/shortcuts/table-2.10.1.0.json"
+  ],
+  "verdicts": {
+    "shortcut-runtime-table": "PASS",
+    "shortcut-ambiguous": "FAIL",
+    "shortcut-reserved": "PASS"
+  },
+  "conflicts": 1,
+  "exit": 1,
+  "note": "The success toast's two actions share \u2318O (one pair). The failure toast's bare \u21b5 is not reserved: a toast is not a panel and has no primary default."
+}

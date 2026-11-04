@@ -1,0 +1,8 @@
+{
+  "command": ["shortcuts", "check", "--table", "test/fixtures/shortcuts/table-2.10.1.0.json"],
+  "verdicts": { "shortcut-runtime-table": "PASS", "shortcut-ambiguous": "PASS", "shortcut-reserved": "PASS" },
+  "declared": 2,
+  "unresolved": 1,
+  "exit": 0,
+  "note": "The spread on Action.CopyToClipboard is one unresolved, declared shortcut (so without a table this is ERROR, not N/A); the literal in props.ts is the second declaration, loose, never paired."
+}
