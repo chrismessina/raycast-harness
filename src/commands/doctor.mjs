@@ -16,16 +16,25 @@ export const spec = {
   flags: { "--root": { type: "string", value: "<dir>", help: "extension root (for the ray check)" } },
   network: "`gh auth status` contacts github.com; everything else is local",
   state: "none",
+  checks: {
+    node: "Node version is 22.12 or newer",
+    ray: "node_modules/.bin/ray present in the extension root",
+    "gh-auth": "gh is authenticated (network probe)",
+    "git-signing": "commit.gpgsign is on and a signing key is configured",
+    "raycast-app": "Raycast.app version readable from its Info.plist",
+  },
   data: {
     node: "string — process.version",
     ray: "{ found: boolean, apiVersion: string | null } | null when no root",
     gh: "{ authenticated: boolean, login: string | null, detail: string }",
     signing: "{ gpgsign: boolean, format: string | null, key: string | null }",
-    raycastApp: "{ version: string | null, path: string }",
+    raycastApp: "{ version: string | null, path: string, installed: boolean, error: string | null }",
   },
 };
 
-const RAYCAST_PLIST = "/Applications/Raycast.app/Contents/Info.plist";
+let RAYCAST_PLIST = "/Applications/Raycast.app/Contents/Info.plist";
+/** Test hook: point the Raycast.app check at another plist. @param {string} path */
+export function _setRaycastPlist(path) { RAYCAST_PLIST = path; }
 
 /** @type {import("../cli.mjs").CommandModule["run"]} */
 export async function run({ results, root }) {
@@ -35,8 +44,9 @@ export async function run({ results, root }) {
   // Node
   const major = Number(process.versions.node.split(".")[0]);
   data.node = process.version;
-  if (major >= 22) results.pass("node", `${process.version}`);
-  else results.warn("node", `${process.version}; rx needs Node 22 or newer`);
+  const minor = Number(process.versions.node.split(".")[1]);
+  if (major > 22 || (major === 22 && minor >= 12)) results.pass("node", `${process.version}`);
+  else results.warn("node", `${process.version}; rx needs Node 22.12 or newer`);
 
   // ray, resolved from the extension root (never installed by rx)
   if (!root) {
@@ -70,24 +80,32 @@ export async function run({ results, root }) {
 
   // git signing (report)
   const cwd = root ?? process.cwd();
-  const cfg = async (/** @type {string} */ k) => (await git(["config", "--get", k], { cwd, allowFail: true })).stdout.trim() || null;
-  const gpgsign = (await cfg("commit.gpgsign")) === "true";
+  const cfg = async (/** @type {string} */ k, /** @type {string[]} */ extra = []) =>
+    (await git(["config", ...extra, "--get", k], { cwd, allowFail: true })).stdout.trim() || null;
+  const gpgsign = (await cfg("commit.gpgsign", ["--bool"])) === "true"; // yes/on/1 all read as true
   const format = await cfg("gpg.format");
   const key = await cfg("user.signingkey");
   data.signing = { gpgsign, format, key: key ? key.slice(0, 24) + (key.length > 24 ? "…" : "") : null };
   if (gpgsign && key) results.pass("git-signing", `commits signed (${format ?? "openpgp"})`);
   else results.warn("git-signing", gpgsign ? "commit.gpgsign is true but user.signingkey is unset" : "commit.gpgsign is not true; commits will be unsigned");
 
-  // Raycast app version
+  // Raycast app version: absence is N/A; an installed app whose version cannot be read is a WARN.
   let appVersion = null;
-  if (existsSync(RAYCAST_PLIST)) {
-    const r = await exec("plutil", ["-convert", "json", "-o", "-", RAYCAST_PLIST]).catch(() => null);
-    if (r && r.code === 0) {
-      try { appVersion = JSON.parse(r.stdout).CFBundleShortVersionString ?? null; } catch { appVersion = null; }
+  let readError = null;
+  const installed = existsSync(RAYCAST_PLIST);
+  if (installed) {
+    try {
+      const r = await exec("plutil", ["-convert", "json", "-o", "-", RAYCAST_PLIST]);
+      if (r.code !== 0) readError = `plutil exit ${r.code}: ${r.stderr.trim().split("\n")[0] ?? ""}`;
+      else appVersion = JSON.parse(r.stdout).CFBundleShortVersionString ?? null;
+      if (!appVersion && !readError) readError = "CFBundleShortVersionString missing from Info.plist";
+    } catch (e) {
+      readError = /** @type {Error} */ (e).message;
     }
   }
-  data.raycastApp = { version: appVersion, path: RAYCAST_PLIST };
+  data.raycastApp = { version: appVersion, path: RAYCAST_PLIST, installed, error: readError };
   if (appVersion) results.pass("raycast-app", `Raycast ${appVersion}`);
+  else if (installed) results.warn("raycast-app", `Raycast.app is installed but its version could not be read: ${readError}`);
   else if (process.platform === "darwin") results.na("raycast-app", `Raycast.app not found at ${RAYCAST_PLIST}`);
   else results.na("raycast-app", `not macOS (${process.platform}); Raycast.app is not expected`);
 

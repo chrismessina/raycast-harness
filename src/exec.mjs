@@ -9,15 +9,21 @@ import { RxError } from "./errors.mjs";
  */
 
 /**
- * Run a program. Resolves even on a non-zero exit (read `code`); rejects with RxError only when
- * the program cannot be started at all (ENOENT → "<cmd> is not installed or not on PATH").
+ * Run a program. Resolves only when the child exited by itself (read `code`, which may be
+ * non-zero). Rejects with RxError when the program could not be started (ENOENT), timed out, was
+ * killed by a signal, or exceeded `maxBuffer`: an incomplete check must never look like a
+ * completed negative result.
  * @param {string} cmd
  * @param {string[]} args
- * @param {{ cwd?: string, input?: string | Buffer, env?: NodeJS.ProcessEnv, timeoutMs?: number, maxBuffer?: number }} [opts]
+ * @param {{ cwd?: string, input?: string | Buffer, env?: NodeJS.ProcessEnv, timeoutMs?: number, maxBuffer?: number, id?: string }} [opts]
  * @returns {Promise<ExecResult>}
  */
 export function run(cmd, args, opts = {}) {
+  const id = opts.id ?? "tooling";
+  const what = `${cmd} ${args.join(" ")}`.trim();
   return new Promise((resolvePromise, reject) => {
+    let settled = false;
+    const done = (/** @type {() => void} */ f) => { if (!settled) { settled = true; f(); } };
     const child = execFile(
       cmd,
       args,
@@ -30,21 +36,33 @@ export function run(cmd, args, opts = {}) {
         windowsHide: true,
       },
       (err, stdout, stderr) => {
-        if (err && /** @type {NodeJS.ErrnoException} */ (err).code === "ENOENT")
-          return reject(new RxError(`${cmd} is not installed or not on PATH`, { id: "tooling" }));
-        if (err && /** @type {NodeJS.ErrnoException} */ (err).code === "ETIMEDOUT")
-          return reject(new RxError(`${cmd} ${args.join(" ")} timed out`, { id: "tooling" }));
-        const code = err && typeof (/** @type {any} */ (err).code) === "number" ? /** @type {any} */ (err).code : err ? 1 : 0;
-        resolvePromise({ code, stdout: String(stdout ?? ""), stderr: String(stderr ?? "") });
+        const e = /** @type {(NodeJS.ErrnoException & { killed?: boolean, signal?: string | null }) | null} */ (err);
+        if (e && e.code === "ENOENT") return done(() => reject(new RxError(`${cmd} is not installed or not on PATH`, { id })));
+        if (e && e.code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER")
+          return done(() => reject(new RxError(`${what}: output exceeded ${opts.maxBuffer ?? 64 * 1024 * 1024} bytes`, { id })));
+        if (e && (e.killed || e.signal)) {
+          const why = e.killed && opts.timeoutMs !== 0 && e.signal === "SIGTERM" ? `timed out after ${opts.timeoutMs ?? 120_000} ms` : `killed by ${e.signal}`;
+          return done(() => reject(new RxError(`${what}: ${why}`, { id })));
+        }
+        if (e && typeof e.code !== "number")
+          return done(() => reject(new RxError(`${what}: ${e.message}`, { id })));
+        const code = e ? Number(e.code) : 0;
+        done(() => resolvePromise({ code, stdout: String(stdout ?? ""), stderr: String(stderr ?? "") }));
       },
     );
-    if (opts.input !== undefined && child.stdin) child.stdin.end(opts.input);
+    if (child.stdin) {
+      // A child that exits before reading its input makes stdin emit EPIPE; that is the child's
+      // outcome to report through the exit callback, not a crash of this process.
+      child.stdin.on("error", () => {});
+      if (opts.input !== undefined) child.stdin.end(opts.input);
+      else child.stdin.end();
+    }
   });
 }
 
 /**
  * Run and require exit 0; otherwise throw RxError carrying the first stderr line.
- * @param {string} cmd @param {string[]} args @param {Parameters<typeof run>[2] & { id?: string }} [opts]
+ * @param {string} cmd @param {string[]} args @param {Parameters<typeof run>[2]} [opts]
  */
 export async function runOk(cmd, args, opts = {}) {
   const r = await run(cmd, args, opts);

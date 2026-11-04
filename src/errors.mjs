@@ -24,11 +24,16 @@ export class ArgError extends RxError {
   }
 }
 
-/** The extension root could not be resolved (none found, or more than one candidate). Exit 2. */
+/**
+ * The extension root could not be resolved. `kind` says why: `none` (nothing found; an
+ * optional-root command tolerates this), `ambiguous` (more than one candidate), `bad-root`
+ * (an explicit --root that is not a directory). Exit 2.
+ */
 export class RootError extends RxError {
-  /** @param {string} message */
-  constructor(message) {
+  /** @param {string} message @param {"none" | "ambiguous" | "bad-root"} kind */
+  constructor(message, kind) {
     super(message, { id: "root", exit: 2 });
     this.name = "RootError";
+    this.kind = kind;
   }
 }

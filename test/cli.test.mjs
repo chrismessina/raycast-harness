@@ -71,3 +71,78 @@ test("a bad --root is an ERROR even for an optional-root command", async () => {
     assert.equal(r.json.results[0].id, "root");
   });
 });
+
+test("--help and --version reject unknown tokens; --help cannot be combined with --json", async () => {
+  for (const argv of [["--version", "--bogus"], ["--help", "--bogus"], ["--version", "--json"]]) {
+    const r = await rx(argv);
+    assert.equal(r.code, 2, argv.join(" "));
+    const msg = r.json ? r.json.results[0].message : r.stdout;
+    assert.match(msg, /unknown argument/);
+  }
+  const h = await rx(["commands", "--help", "--json"]);
+  assert.equal(h.code, 2);
+  assert.match(h.json.results[0].message, /--help prints text/);
+});
+
+// Scratch command modules live in a temp directory and are loaded through the test-only
+// `commandsDir` override, never written into src/commands/ (other test files load it concurrently).
+async function withScratchCommand(source, argv, fn) {
+  const { writeFileSync } = await import("node:fs");
+  const { join } = await import("node:path");
+  await withTempDir(async (dir) => {
+    writeFileSync(join(dir, "zz-scratch.mjs"), source);
+    let stdout = "";
+    const { runCli } = await import("../src/cli.mjs");
+    const code = await runCli(argv, { cwd: dir, commandsDir: dir, stdout: (s) => (stdout += s), stderr: () => {} });
+    await fn({ code, json: JSON.parse(stdout) });
+  });
+}
+
+test("a multi-line error thrown after results were recorded keeps them and appends one ERROR with details", async () => {
+  await withScratchCommand(
+    `import { RxError } from ${JSON.stringify(new URL("../src/errors.mjs", import.meta.url).href)};
+export const spec = { name: "zz-scratch", summary: "scratch", root: "none", checks: { a: "a", tooling: "t" } };
+export async function run({ results }) { results.fail("a", "first"); throw new RxError("tool said:\\nline two\\nline three", { id: "tooling" }); }
+`,
+    ["zz-scratch", "--json"],
+    ({ code, json: j }) => {
+      assert.equal(code, 2);
+      assert.deepEqual(j.results.map((x) => [x.verdict, x.id]), [["FAIL", "a"], ["ERROR", "tooling"]]);
+      assert.equal(j.results[1].message, "tool said:");
+      assert.deepEqual(j.results[1].details.map((d) => d.text), ["line two", "line three"]);
+    },
+  );
+});
+
+test("a command module that fails to load is ERROR protocol, exit 2, as one envelope", async () => {
+  await withScratchCommand("export const spec = { name: 'zz-broken' ;\n", ["anything", "--json"], ({ code, json: j }) => {
+    assert.equal(code, 2);
+    assert.deepEqual(j.results.map((x) => [x.verdict, x.id]), [["ERROR", "protocol"]]);
+    assert.match(j.results[0].message, /zz-scratch\.mjs failed to load/);
+  });
+});
+
+test("an undeclared check id is ERROR protocol on the normal path, on a thrown RxError, and for a result recorded before a throw", async () => {
+  const ok = `export const spec = { name: "zz-ids", summary: "s", root: "none", checks: { "stale-*": "classes" } };
+export async function run({ results }) { results.pass("stale-mine", "ok"); }
+`;
+  await withScratchCommand(ok, ["zz-ids", "--json"], ({ code }) => assert.equal(code, 0));
+  const undeclaredResult = ok.replace('results.pass("stale-mine", "ok");', 'results.pass("stale-mine", "ok"); results.pass("not-declared", "oops");');
+  await withScratchCommand(undeclaredResult, ["zz-ids", "--json"], ({ code, json: j }) => {
+    assert.equal(code, 2);
+    assert.match(j.results.at(-1).message, /undeclared check id "not-declared"/);
+  });
+  const thrown = `import { RxError } from ${JSON.stringify(new URL("../src/errors.mjs", import.meta.url).href)};
+export const spec = { name: "zz-ids", summary: "s", root: "none", checks: { "stale-*": "classes" } };
+export async function run() { throw new RxError("boom", { id: "undeclared-error" }); }
+`;
+  await withScratchCommand(thrown, ["zz-ids", "--json"], ({ code, json: j }) => {
+    assert.equal(code, 2);
+    assert.deepEqual(j.results.map((x) => x.id), ["undeclared-error", "protocol"]);
+  });
+  const before = ok.replace('results.pass("stale-mine", "ok");', 'results.pass("not-declared", "x"); throw new Error("later");');
+  await withScratchCommand(before, ["zz-ids", "--json"], ({ code, json: j }) => {
+    assert.equal(code, 2);
+    assert.ok(j.results.some((x) => x.id === "protocol" && /not-declared/.test(x.message)));
+  });
+});

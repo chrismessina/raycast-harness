@@ -11,7 +11,7 @@ opening a pull request you agree your contribution is licensed that way.
 2. **The verdict protocol.** One line per check, `PASS` / `FAIL` / `WARN` /
    `N/A` / `ERROR`, exit 0 / 1 / 2. Silence is never a pass: nothing to inspect
    is `N/A` with a reason. See `docs/commands.md` §Verdicts and
-   `src/verdict.mjs`.
+   `src/verdict.mjs`. A command declares every check id it may emit in `spec.checks`.
 3. **Witnessed red.** Every new check ships with a test that fails when the
    check is disabled. In the PR, show it: disable the check, run the test,
    paste the failure, restore it, paste the pass. A green suite alone is not

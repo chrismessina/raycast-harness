@@ -7,7 +7,8 @@
 // Broader attribution policy is a review requirement, not something this hook enforces.
 //
 // Module-system agnostic on purpose (no import/require): git runs it from the hooks directory,
-// where the nearest package.json may or may not say "type": "module".
+// where the nearest package.json may or may not say "type": "module". process.getBuiltinModule
+// needs Node 22.12 or newer, which is this package's engines floor.
 //
 // Install:  node scripts/install-hooks.mjs   (copies this file into `git rev-parse --git-path hooks`)
 // Test:     node --test test/commit-msg.test.mjs

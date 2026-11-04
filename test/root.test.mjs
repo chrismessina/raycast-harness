@@ -54,3 +54,19 @@ test("a malformed package.json is not an extension", async () => {
     assert.equal(isExtensionDir(dir), false);
   });
 });
+
+test("a symlinked extension directory one level down is found and counted", async () => {
+  await withTempDir((dir) => {
+    const { symlinkSync } = require_fs();
+    const real = fakeExtension(dir, "real");
+    mkdirSync(join(dir, "ws"));
+    symlinkSync(real, join(dir, "ws", "linked"));
+    assert.equal(resolveRoot({ cwd: join(dir, "ws") }), join(dir, "ws", "linked"));
+    symlinkSync(join(dir, "nowhere"), join(dir, "ws", "dangling")); // skipped, not a crash
+    assert.equal(resolveRoot({ cwd: join(dir, "ws") }), join(dir, "ws", "linked"));
+  });
+});
+
+function require_fs() {
+  return process.getBuiltinModule("node:fs");
+}

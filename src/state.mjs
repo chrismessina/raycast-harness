@@ -22,13 +22,37 @@ export async function repoStatePath(root, ...segments) {
 }
 
 /**
+ * Like repoStatePath but creates nothing: for commands that only read state (preflight,
+ * api-floor) and must not leave a `.git/rx` directory behind.
+ * @param {string} root
+ * @param {...string} segments
+ */
+export async function repoStatePathReadOnly(root, ...segments) {
+  const base = await gitPath(root, "rx");
+  return join(base, ...segments);
+}
+
+function cacheBase() {
+  return process.env.XDG_CACHE_HOME && process.env.XDG_CACHE_HOME.trim()
+    ? join(process.env.XDG_CACHE_HOME, "raycast-harness")
+    : join(homedir(), ".cache", "raycast-harness");
+}
+
+/**
  * Cross-repo cache directory, created on demand.
  * @param {...string} segments
  */
 export function cachePath(...segments) {
-  const base = process.env.XDG_CACHE_HOME && process.env.XDG_CACHE_HOME.trim()
-    ? join(process.env.XDG_CACHE_HOME, "raycast-harness")
-    : join(homedir(), ".cache", "raycast-harness");
+  const base = cacheBase();
   mkdirSync(base, { recursive: true });
   return join(base, ...segments);
+}
+
+/**
+ * Like cachePath but creates nothing: for read-only commands that only need to know where the
+ * cache would be (is `--published` inside it?) and must not leave an empty cache directory behind.
+ * @param {...string} segments
+ */
+export function cachePathReadOnly(...segments) {
+  return join(cacheBase(), ...segments);
 }

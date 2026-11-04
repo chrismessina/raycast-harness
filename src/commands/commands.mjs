@@ -12,7 +12,8 @@ export const spec = {
   root: "none",
   network: "none",
   state: "none",
-  data: { commands: "Command[] — { name, summary, root, network, state, positionals, flags, subcommands, data }" },
+  checks: { commands: "the command registry loaded" },
+  data: { commands: "Command[] — { name, summary, root, network, state, positionals, flags, subcommands, checks, data }" },
 };
 
 /** @param {import("../args.mjs").ArgSchema} s @param {import("../args.mjs").ArgSchema} [parent] */
@@ -28,6 +29,7 @@ function describe(s, parent) {
     subcommands: s.subcommands
       ? Object.fromEntries(Object.entries(s.subcommands).map(([n, sub]) => [n, describe({ ...sub, name: n }, s)]))
       : {},
+    checks: { ...(parent?.checks ?? {}), ...(s.checks ?? {}) },
     data: s.data ?? parent?.data ?? {},
   };
 }

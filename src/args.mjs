@@ -19,9 +19,15 @@ import { ArgError } from "./errors.mjs";
  *   network?: string,
  *   state?: string,
  *   data?: Record<string, unknown>,
+ *   checks?: Record<string, string | { description: string, levels: Array<"PASS" | "FAIL" | "WARN" | "N/A" | "ERROR"> }>,
  *   examples?: string[],
  * }} ArgSchema
- *   `root`, `network`, `state`, `data` describe the contract (docs/commands.md) and are reported
+ *   `checks` declares every check id the command may emit (`"stale-*"` declares a prefix); the
+ *   dispatcher rejects an undeclared id as `ERROR protocol`, and `rx preset check` validates rx
+ *   bindings against it. A value may be the description string or `{ description, levels }`;
+ *   `levels` lists the verdicts the check can produce. Absent `levels` means the check is
+ *   assumed able to FAIL (so a report-only preset rule may not bind it); an advisory check
+ *   declares `levels: ["PASS", "WARN", "N/A"]` to be bindable by a report rule. `root`, `network`, `state`, `data` describe the contract (docs/commands.md) and are reported
  *   by `rx commands --json`; a subcommand inherits them from its parent unless it sets its own.
  * @typedef {{
  *   subcommand: string | null,
@@ -46,27 +52,56 @@ export const GLOBAL_FLAGS = /** @type {Record<string, Flag>} */ ({
 export function parseArgs(argv, schema) {
   /** @type {ParsedArgs} */
   const out = { subcommand: null, positionals: {}, flags: {}, json: false, help: false };
-  let active = schema;
   const tokens = [...argv];
 
-  // A command with subcommands takes the subcommand as its first non-flag token.
-  if (schema.subcommands) {
-    const i = tokens.findIndex((t) => !t.startsWith("--"));
-    const names = Object.keys(schema.subcommands);
-    if (i === -1) {
-      if (tokens.includes("--help")) return { ...out, help: true };
-      throw new ArgError(`${schema.name} needs a subcommand: ${names.join(", ")}`);
-    }
-    const sub = tokens.splice(i, 1)[0];
-    if (!names.includes(sub)) throw new ArgError(`unknown ${schema.name} subcommand ${JSON.stringify(sub)}; expected one of ${names.join(", ")}`);
-    out.subcommand = sub;
-    active = schema.subcommands[sub];
+  if (!schema.subcommands) {
+    parseTokens(tokens, { ...GLOBAL_FLAGS, ...(schema.flags ?? {}) }, schema.positionals ?? [], out);
+    if (out.help) return out; // --help waives only the missing-required checks; every token was validated
+    requireInputs(schema, out);
+    return out;
   }
 
-  const flags = { ...GLOBAL_FLAGS, ...(active.flags ?? {}) };
-  const positionals = active.positionals ?? [];
-  let pi = 0;
+  // A command with subcommands takes the subcommand as its first non-flag token that is not the
+  // value of a preceding valued flag (`audit --root /path show` selects `show`, not `/path`).
+  const names = Object.keys(schema.subcommands);
+  const everyFlag = { ...GLOBAL_FLAGS, ...(schema.flags ?? {}) };
+  for (const sub of Object.values(schema.subcommands)) for (const [n, f] of Object.entries(sub.flags ?? {})) everyFlag[n] ??= f;
+  let i = 0;
+  for (; i < tokens.length; i++) {
+    const t = tokens[i];
+    if (!t.startsWith("--")) break;
+    const def = everyFlag[t.split("=")[0]];
+    if (def && def.type !== "boolean" && !t.includes("=")) i++; // skip the flag's value
+  }
+  if (i >= tokens.length) {
+    // No subcommand. Validate every token against the union of flags the same way a subcommand
+    // would, so duplicates, missing values and unknown names are still errors; then either help
+    // or "needs a subcommand".
+    parseTokens(tokens, everyFlag, [], out);
+    if (out.help) return out;
+    throw new ArgError(`${schema.name} needs a subcommand: ${names.join(", ")}`);
+  }
+  const sub = tokens.splice(i, 1)[0];
+  if (!names.includes(sub)) throw new ArgError(`unknown ${schema.name} subcommand ${JSON.stringify(sub)}; expected one of ${names.join(", ")}`);
+  out.subcommand = sub;
+  const active = schema.subcommands[sub];
+  parseTokens(tokens, { ...GLOBAL_FLAGS, ...(active.flags ?? {}) }, active.positionals ?? [], out);
+  if (out.help) return out;
+  requireInputs(active, out);
+  return out;
+}
 
+/**
+ * The one flag/positional loop. Throws ArgError on anything the schema does not declare.
+ * @param {string[]} tokens
+ * @param {Record<string, Flag>} flags
+ * @param {Positional[]} positionals
+ * @param {ParsedArgs} out
+ */
+function parseTokens(tokens, flags, positionals, out) {
+  /** @type {Set<string>} */
+  const seen = new Set();
+  let pi = 0;
   for (let i = 0; i < tokens.length; i++) {
     const tok = tokens[i];
     if (tok.startsWith("--")) {
@@ -80,6 +115,8 @@ export function parseArgs(argv, schema) {
       }
       const def = flags[name];
       if (!def) throw new ArgError(`unknown argument ${JSON.stringify(tok)}`);
+      if (seen.has(name) && !def.repeat) throw new ArgError(`${name} given twice`);
+      seen.add(name);
       if (def.type === "boolean") {
         if (inline !== undefined) throw new ArgError(`${name} takes no value`);
         if (name === "--json") out.json = true;
@@ -93,8 +130,7 @@ export function parseArgs(argv, schema) {
         value = tokens[++i];
       }
       if (value === "" || /^\s+$/.test(value)) throw new ArgError(`${name} has an empty value (an unset shell variable?)`);
-      if (value.startsWith("--") && !inline)
-        throw new ArgError(`${name} needs a value, got ${JSON.stringify(value)}`);
+      if (value.startsWith("--") && !inline) throw new ArgError(`${name} needs a value, got ${JSON.stringify(value)}`);
       /** @type {string | number} */
       let v = value;
       if (def.type === "int") {
@@ -105,7 +141,6 @@ export function parseArgs(argv, schema) {
         const prev = out.flags[name];
         out.flags[name] = Array.isArray(prev) ? [...prev, String(v)] : [String(v)];
       } else {
-        if (name in out.flags) throw new ArgError(`${name} given twice`);
         out.flags[name] = v;
       }
       continue;
@@ -117,13 +152,12 @@ export function parseArgs(argv, schema) {
     if (tok === "") throw new ArgError(`<${def.name}> is empty (an unset shell variable?)`);
     out.positionals[def.name] = tok;
   }
+}
 
-  if (out.help) return out;
-
-  for (const p of positionals) if (p.required && !(p.name in out.positionals)) throw new ArgError(`missing <${p.name}>`);
-  for (const [name, def] of Object.entries(active.flags ?? {}))
-    if (def.required && !(name in out.flags)) throw new ArgError(`missing ${name}`);
-  return out;
+/** @param {ArgSchema} active @param {ParsedArgs} out */
+function requireInputs(active, out) {
+  for (const p of active.positionals ?? []) if (p.required && !(p.name in out.positionals)) throw new ArgError(`missing <${p.name}>`);
+  for (const [name, def] of Object.entries(active.flags ?? {})) if (def.required && !(name in out.flags)) throw new ArgError(`missing ${name}`);
 }
 
 /**

@@ -16,7 +16,7 @@
     "raycast-harness": "bin/rx.mjs"
   },
   "engines": {
-    "node": ">=22"
+    "node": ">=22.12"
   },
   "files": [
     "bin/",
@@ -46,6 +46,10 @@
     "@types/pngjs": "6.0.5",
     "eslint": "10.14.0",
     "typescript": "5.9.3"
+  },
+  "exports": {
+    "./eslint-plugin": "./eslint-plugin/index.mjs",
+    "./package.json": "./package.json"
   },
   "keywords": [
     "raycast",

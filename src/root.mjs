@@ -26,7 +26,7 @@ export function isExtensionDir(dir) {
 export function resolveRoot({ root = null, cwd = process.cwd() } = {}) {
   if (root) {
     const abs = resolve(cwd, root);
-    if (!existsSync(abs) || !statSync(abs).isDirectory()) throw new RootError(`--root ${JSON.stringify(root)} is not a directory`);
+    if (!existsSync(abs) || !statSync(abs).isDirectory()) throw new RootError(`--root ${JSON.stringify(root)} is not a directory`, "bad-root");
     return abs;
   }
   let dir = resolve(cwd);
@@ -36,13 +36,15 @@ export function resolveRoot({ root = null, cwd = process.cwd() } = {}) {
     if (parent === dir) break;
     dir = parent;
   }
+  // Directory symlinks are followed (statSync), a dangling one is skipped.
+  const isDir = (/** @type {string} */ p) => { try { return statSync(p).isDirectory(); } catch { return false; } };
   const children = readdirSync(resolve(cwd), { withFileTypes: true })
-    .filter((e) => e.isDirectory() && e.name !== "node_modules" && !e.name.startsWith("."))
+    .filter((e) => e.name !== "node_modules" && !e.name.startsWith("."))
     .map((e) => join(resolve(cwd), e.name))
-    .filter(isExtensionDir)
+    .filter((p) => isDir(p) && isExtensionDir(p))
     .sort();
   if (children.length === 1) return children[0];
   if (children.length > 1)
-    throw new RootError(`more than one extension under ${resolve(cwd)}: ${children.map((c) => c.slice(resolve(cwd).length + 1)).join(", ")}; pass --root <dir>`);
-  throw new RootError(`no extension found from ${resolve(cwd)} (no package.json with a "commands" array here, above, or one level down); pass --root <dir>`);
+    throw new RootError(`more than one extension under ${resolve(cwd)}: ${children.map((c) => c.slice(resolve(cwd).length + 1)).join(", ")}; pass --root <dir>`, "ambiguous");
+  throw new RootError(`no extension found from ${resolve(cwd)} (no package.json with a "commands" array here, above, or one level down); pass --root <dir>`, "none");
 }

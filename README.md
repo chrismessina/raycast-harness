@@ -12,7 +12,7 @@ npx raycast-harness preflight         # from an extension root
 npx raycast-harness doctor
 ```
 
-Requires Node 22 or newer. The executable is available as both `rx` and `raycast-harness`.
+Requires Node 22.12 or newer. The executable is available as both `rx` and `raycast-harness`.
 
 ## Verdict protocol
 
@@ -52,11 +52,13 @@ Silence is never a pass. Unknown arguments are an `ERROR`. `--json` prints one e
 | `rx pr` | verifies a Store PR's author, branch, base and files; edits its body without clobbering hand edits |
 | `rx holdout` | moves untracked local-only files out of the payload and verifies their return |
 | `rx greptile` | fetches review rounds, waits for the next one, authorizes a reply, detects rule drift |
-| `rx shortcuts` | the runtime `Keyboard.Shortcut.Common` table and ambiguity checks |
+| `rx shortcuts` | `runtime`: the installed app's `Keyboard.Shortcut.Common` table into the cache; `check`: panels and toast actions against it |
 | `rx preset` | validates a preset and regenerates the rule matrix it describes |
 | `rx judge` | advisory answers to named judgment calls (never blocks) |
 | `rx doctor` | Node, `ray`, `gh` auth, git signing, Raycast app version |
 | `rx commands` | every command's contract as JSON |
+
+The ESLint rules ship with the package and are importable at `raycast-harness/eslint-plugin` (flat config; `recommended` included).
 
 ## Core versus preset
 
