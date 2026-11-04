@@ -1,0 +1,23 @@
+{
+  "_comment": "Built by test/stale.test.mjs: commit-1, then commit-2 (scripts/run.sh chmod +x), then the uncommitted overlay and a symlink link.txt. Verdicts per class. Only ray's skip list is excluded: the published .prettierrc counts (Q18).",
+  "results": {
+    "stale-mine": "PASS",
+    "stale-check": "WARN",
+    "stale-new": "WARN",
+    "stale-upstream": "FAIL",
+    "stale-only-pub": "FAIL",
+    "stale-unhandled": "FAIL"
+  },
+  "files": {
+    "assets/icon.txt": "MINE",
+    "package.json": "MINE",
+    "CHANGELOG.md": "CHECK",
+    "src/new.ts": "NEW?",
+    "src/index.tsx": "UPSTREAM",
+    "src/upstream-only.ts": "ONLY-PUB",
+    "scripts/run.sh": "UNHANDLED",
+    "link.txt": "UNHANDLED",
+    ".prettierrc": "ONLY-PUB"
+  },
+  "exit": 1
+}

@@ -1,0 +1,17 @@
+{
+  "local-redacted": {
+    "changelog-history": "PASS",
+    "changelog-placeholder": "PASS",
+    "exit": 0
+  },
+  "local-unrelated-edit": {
+    "changelog-history": "FAIL",
+    "changelog-placeholder": "PASS",
+    "exit": 1
+  },
+  "local-unstamped": {
+    "changelog-history": "FAIL",
+    "changelog-placeholder": "PASS",
+    "exit": 1
+  }
+}

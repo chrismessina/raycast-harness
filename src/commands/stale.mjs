@@ -1,0 +1,234 @@
+// `rx stale [--root d] [--json]` (docs/commands.md §4.2): is the published copy of this extension
+// older or different from what is here? The dispatcher resolves the root before this runs (Q3), so
+// the first network call already knows which extension it is asking about.
+//
+// Classifier per path, published tree versus the local payload (what `ray publish` copies):
+//   MINE       published blob == local HEAD blob (identical, or the delta is uncommitted)
+//   CHECK      published blob == an older commit of this path
+//   NEW?       local file the published tree lacks
+//   UPSTREAM   published blob not in this path's history
+//   ONLY-PUB   published has a file local does not
+//   UNHANDLED  symlink, mode change, or an undecidable path
+// CHECK and NEW? are WARN "requiring an audit disposition" keyed by { path, localHash, baseline }
+// (data.files[]), which `rx audit record` matches.
+
+import { lstatSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { dirname, join, relative } from "node:path";
+import { RxError } from "../errors.mjs";
+import { git } from "../git.mjs";
+import { repoStatePath } from "../state.mjs";
+import { blobId, ensureUpstream, skipSegment, withUpstreamLock } from "../upstream.mjs";
+
+/** @type {import("../cli.mjs").CommandSpec} */
+export const spec = {
+  name: "stale",
+  summary: "compare the local extension with its published copy in raycast/extensions, path by path",
+  root: "required",
+  flags: { "--root": { type: "string", value: "<dir>", help: "extension root" } },
+  network: "GitHub API (publication lookup) and `git fetch` of raycast/extensions into the cross-repo cache",
+  state: "reads/writes cache/upstream/ (sparse checkout); writes repo/stale/baseline.json { name, baseline, publishedDir, published, at }",
+  checks: {
+    stale: { description: "N/A when the extension is not published (no baseline to compare)", levels: ["N/A"] },
+    "stale-mine": { description: "published == local HEAD for these paths (PASS)", levels: ["PASS"] },
+    "stale-check": { description: "published == an older commit of these paths; WARN requiring an audit disposition", levels: ["WARN"] },
+    "stale-new": { description: "local files the published tree lacks; WARN requiring an audit disposition", levels: ["WARN"] },
+    "stale-upstream": "published content not in these paths' history (FAIL)",
+    "stale-only-pub": "published files local lacks; publishing deletes them (FAIL)",
+    "stale-unhandled": "symlink, mode change or undecidable path (FAIL)",
+  },
+  data: {
+    name: "string — package.json name",
+    published: "boolean",
+    publishedDir: "string | null — cache path of the published copy",
+    baseline: "string | null — raycast/extensions main commit the comparison used",
+    files: "[{ path, class, localHash, publishedHash | null, note }] — class ∈ MINE CHECK NEW? UPSTREAM ONLY-PUB UNHANDLED; localHash is the git blob id of the on-disk bytes (null when absent locally)",
+  },
+};
+
+/** The verdict each class maps to and its result id. */
+const CLASSES = /** @type {const} */ ({
+  MINE: { id: "stale-mine", verdict: "PASS", summary: "published matches local HEAD" },
+  CHECK: { id: "stale-check", verdict: "WARN", summary: "published matches an older commit; audit disposition required" },
+  "NEW?": { id: "stale-new", verdict: "WARN", summary: "not published (your new file, or deleted upstream); audit disposition required" },
+  UPSTREAM: { id: "stale-upstream", verdict: "FAIL", summary: "published content is not in this path's history; publishing would revert it" },
+  "ONLY-PUB": { id: "stale-only-pub", verdict: "FAIL", summary: "published has files local lacks; publishing would delete them" },
+  UNHANDLED: { id: "stale-unhandled", verdict: "FAIL", summary: "classify by hand" },
+});
+
+/** @typedef {keyof typeof CLASSES} Class */
+/** @typedef {{ path: string, class: Class, localHash: string | null, publishedHash: string | null, note: string }} FileRow */
+
+/** @type {import("../cli.mjs").CommandModule["run"]} */
+export async function run({ results, root, log }) {
+  const dir = /** @type {string} */ (root);
+  const name = readName(dir);
+  // The lock is held from the fetch through the whole comparison: another rx fetching a different
+  // extension would otherwise move the shared tree while this one reads it.
+  return withUpstreamLock(() => compare(dir, name, results, log));
+}
+
+/**
+ * @param {string} dir @param {string} name @param {import("../verdict.mjs").Results} results @param {(s: string) => void} log
+ * @returns {Promise<import("../cli.mjs").CommandOutput>}
+ */
+async function compare(dir, name, results, log) {
+  const info = await ensureUpstream(name, { log });
+
+  const baselineFile = await repoStatePath(dir, "stale", "baseline.json");
+  mkdirSync(dirname(baselineFile), { recursive: true });
+  writeFileSync(baselineFile, JSON.stringify({ name, baseline: info.baseline, publishedDir: info.publishedDir, published: info.published, at: info.at }, null, 2) + "\n");
+
+  if (!info.published) {
+    results.na("stale", `not published: extensions/${name} is not on raycast/extensions main; no baseline`);
+    return { data: { name, published: false, publishedDir: null, baseline: null, files: [] } };
+  }
+
+  const publishedDir = /** @type {string} */ (info.publishedDir);
+  const files = await classify(dir, publishedDir);
+
+  /** @type {Map<Class, FileRow[]>} */
+  const byClass = new Map();
+  for (const f of files) {
+    const list = byClass.get(f.class) ?? [];
+    list.push(f);
+    byClass.set(f.class, list);
+  }
+  const allMine = files.length > 0 && files.every((f) => f.class === "MINE" && f.note === "identical");
+  if (allMine) results.pass("stale-mine", `identical to published (${files.length} files, baseline ${info.baseline?.slice(0, 12)})`);
+  else if (files.length === 0) results.fail("stale-unhandled", "neither side has any file to compare");
+  else {
+    for (const cls of /** @type {Class[]} */ (Object.keys(CLASSES))) {
+      const rows = byClass.get(cls);
+      if (!rows) continue;
+      const { id, verdict, summary } = CLASSES[cls];
+      results.add(verdict, id, `${rows.length} ${rows.length === 1 ? "path" : "paths"}: ${summary}`, rows.map((r) => ({ file: r.path, text: `${cls} ${r.note}` })));
+    }
+  }
+  return { data: { name, published: true, publishedDir, baseline: info.baseline, files } };
+}
+
+/** @param {string} dir */
+function readName(dir) {
+  let pkg;
+  try {
+    pkg = JSON.parse(readFileSync(join(dir, "package.json"), "utf8"));
+  } catch (e) {
+    throw new RxError(`cannot read ${join(dir, "package.json")}: ${/** @type {Error} */ (e).message}`, { id: "input" });
+  }
+  if (typeof pkg?.name !== "string" || !pkg.name.trim()) throw new RxError(`package.json in ${dir} has no "name"`, { id: "input" });
+  return pkg.name;
+}
+
+/**
+ * Walk a directory tree, returning payload-relative POSIX paths with their lstat type. Skips the
+ * publish skip list and compare noise at any depth.
+ * @param {string} base
+ * @returns {Map<string, { kind: "file" | "symlink" | "other", mode: number }>}
+ */
+export function walkPayload(base) {
+  /** @type {Map<string, { kind: "file" | "symlink" | "other", mode: number }>} */
+  const out = new Map();
+  const visit = (/** @type {string} */ abs) => {
+    for (const entry of readdirSync(abs, { withFileTypes: true })) {
+      if (skipSegment(entry.name)) continue;
+      const full = join(abs, entry.name);
+      const rel = relative(base, full).split("\\").join("/");
+      const st = lstatSync(full);
+      if (st.isSymbolicLink()) out.set(rel, { kind: "symlink", mode: st.mode });
+      else if (st.isDirectory()) visit(full);
+      else if (st.isFile()) out.set(rel, { kind: "file", mode: st.mode });
+      else out.set(rel, { kind: "other", mode: st.mode });
+    }
+  };
+  visit(base);
+  return out;
+}
+
+/**
+ * `git ls-tree -r <ref> .` run inside `cwd`: paths come back relative to that directory, which is
+ * what makes the same call work from a standalone checkout, from `extensions/<name>` inside a
+ * monorepo clone, and inside the upstream cache.
+ * @param {string} cwd
+ * @param {string} ref
+ */
+async function lsTree(cwd, ref) {
+  const r = await git(["ls-tree", "-r", "-z", ref, "."], { cwd, allowFail: true });
+  /** @type {Map<string, { mode: string, blob: string }>} */
+  const out = new Map();
+  if (r.code !== 0) return out; // no HEAD yet (fresh repo): nothing tracked
+  for (const rec of r.stdout.split("\0")) {
+    if (!rec) continue;
+    const tab = rec.indexOf("\t");
+    const [mode, , blob] = rec.slice(0, tab).split(" ");
+    out.set(rec.slice(tab + 1), { mode, blob });
+  }
+  return out;
+}
+
+/**
+ * The classifier. Exported for tests.
+ * @param {string} dir local extension root
+ * @param {string} publishedDir the published copy on disk (inside the upstream cache)
+ * @returns {Promise<FileRow[]>}
+ */
+export async function classify(dir, publishedDir) {
+  const local = walkPayload(dir);
+  const published = walkPayload(publishedDir);
+  const pubTree = await lsTree(publishedDir, "HEAD");
+  const inRepo = (await git(["rev-parse", "--is-inside-work-tree"], { cwd: dir, allowFail: true })).stdout.trim() === "true";
+  const localTree = inRepo ? await lsTree(dir, "HEAD") : new Map();
+
+  const paths = [...new Set([...local.keys(), ...published.keys()])].sort();
+  /** @type {FileRow[]} */
+  const rows = [];
+  for (const path of paths) {
+    const l = local.get(path);
+    const p = published.get(path);
+    const localHash = l?.kind === "file" ? blobId(readFileSync(join(dir, path))) : null;
+    const pubEntry = pubTree.get(path);
+    const publishedHash = pubEntry?.blob ?? (p?.kind === "file" ? blobId(readFileSync(join(publishedDir, path))) : null);
+    const row = (/** @type {Class} */ cls, /** @type {string} */ note) => rows.push({ path, class: cls, localHash, publishedHash, note });
+
+    if ((l && l.kind !== "file") || (p && p.kind !== "file")) { row("UNHANDLED", `${l?.kind ?? p?.kind} (not a regular file)`); continue; }
+    if (p && !l) { row("ONLY-PUB", "published has this file; local does not"); continue; }
+    if (l && !p) { row("NEW?", "not published: your new file, or deleted upstream"); continue; }
+    if (!l || !p) continue;
+
+    if (!pubEntry) { row("UNHANDLED", "no published blob id (not tracked upstream?)"); continue; }
+    // Mode: the working file's executable bit (uncommitted changes included) against the published
+    // tree entry, before identical bytes are accepted as MINE.
+    const localMode = gitMode(l.mode);
+    const localEntry = localTree.get(path);
+    if (pubEntry.mode !== localMode) { row("UNHANDLED", `mode ${pubEntry.mode} published, ${localMode} local${localEntry && localEntry.mode === pubEntry.mode ? " (uncommitted)" : ""}`); continue; }
+
+    const headBlob = inRepo ? (await git(["rev-parse", "-q", "--verify", `HEAD:./${path}`], { cwd: dir, allowFail: true })) : null;
+    const headId = headBlob && headBlob.code === 0 ? headBlob.stdout.trim() : null;
+    const identical = localHash === publishedHash || (localHash !== null && readFileSync(join(dir, path)).equals(readFileSync(join(publishedDir, path))));
+    if (identical) { row("MINE", "identical"); continue; }
+    if (headId && headId === pubEntry.blob) { row("MINE", "published == your HEAD; the delta is uncommitted"); continue; }
+    if (inRepo && (await blobInHistory(dir, path, pubEntry.blob))) { row("CHECK", "published == an older commit of yours; read the diff"); continue; }
+    row("UPSTREAM", "published blob not found in this path's history");
+  }
+  return rows;
+}
+
+/** A working file's git tree mode: 100755 when any execute bit is set, else 100644. @param {number} mode */
+function gitMode(mode) {
+  return (mode & 0o111) !== 0 ? "100755" : "100644";
+}
+
+/**
+ * Did any commit of `path` (from HEAD) ever hold blob `id`? `--full-history --diff-merges=separate`
+ * so a blob that only ever arrived through a merge is still found.
+ * @param {string} cwd @param {string} path @param {string} id
+ */
+async function blobInHistory(cwd, path, id) {
+  const r = await git(["--literal-pathspecs", "log", "--full-history", "--diff-merges=separate", "--raw", "--no-abbrev", "--format=", "HEAD", "--", path], { cwd, allowFail: true });
+  if (r.code !== 0) return false;
+  for (const line of r.stdout.split("\n")) {
+    // :100644 100644 <old> <new> M\tpath
+    const m = line.match(/^:\d{6} \d{6} [0-9a-f]{40} ([0-9a-f]{40}) /);
+    if (m && m[1] === id) return true;
+  }
+  return false;
+}

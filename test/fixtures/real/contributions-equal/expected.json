@@ -1,0 +1,11 @@
+{
+  "_comment": "Scrubbed from a 2026-10-30 pull-contributions merge: MERGE_HEAD is raycastbot's date-stamp commit on the merged PR branch, byte-identical to the published copy; ours has three later releases. Built by test/contributions.test.mjs: base → branch theirs (author raycastbot) → ours → merge.",
+  "theirsAuthor": "raycastbot <raycastbot@users.noreply.github.com>",
+  "theirsMessage": "Update CHANGELOG.md",
+  "conflicts": {
+    "CHANGELOG.md": "OURS-SAFE"
+  },
+  "contribution-branch": "WARN",
+  "incomingEqualsPublished": true,
+  "exit": 0
+}

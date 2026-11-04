@@ -1,0 +1,24 @@
+{
+  "zero.md": {
+    "changelog-placeholder": "FAIL",
+    "exit": 1
+  },
+  "two.md": {
+    "changelog-placeholder": "FAIL",
+    "exit": 1
+  },
+  "misplaced.md": {
+    "changelog-placeholder": "FAIL",
+    "exit": 1
+  },
+  "one.md": {
+    "changelog-placeholder": "PASS",
+    "changelog-bullets": "PASS",
+    "exit": 0
+  },
+  "long-bullet.md": {
+    "changelog-placeholder": "PASS",
+    "changelog-bullets": "WARN",
+    "exit": 0
+  }
+}

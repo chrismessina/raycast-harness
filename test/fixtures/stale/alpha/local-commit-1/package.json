@@ -1,0 +1,12 @@
+{
+  "name": "alpha",
+  "title": "Alpha",
+  "version": "1.0.0",
+  "commands": [
+    {
+      "name": "index",
+      "title": "Index",
+      "mode": "view"
+    }
+  ]
+}

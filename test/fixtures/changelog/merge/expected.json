@@ -1,0 +1,13 @@
+{
+  "theirs-stamped.md": {
+    "changelog-merge": "PASS",
+    "changelog-placeholder": "PASS",
+    "written": "expected-rebuilt.md",
+    "exit": 0
+  },
+  "theirs-unrelated.md": {
+    "changelog-merge": "ERROR",
+    "written": null,
+    "exit": 2
+  }
+}

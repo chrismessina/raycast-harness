@@ -1,0 +1,8 @@
+[
+  {
+    "heading": "## [Download Fix] - 2026-09-14",
+    "originalHash": "sha256:2791fff2e6b0f22e7f449565b2e19852c95489325cf312a8cb3b68c0add89795",
+    "replacementHash": "sha256:147077f64166f539907c2a0a62112664a82f6101c961823d8411f395b6f78f87",
+    "forbiddenLine": "RealShortcode123"
+  }
+]

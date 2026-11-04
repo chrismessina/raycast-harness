@@ -1,0 +1,12 @@
+{
+  "_comment": "T1: a contributor code fix (src/download.ts) with no CHANGELOG entry arrives next to an older CHANGELOG. CHANGELOG containment may clear CHANGELOG.md only; the code file is REAL-CONTRIBUTION. Built by test/contributions.test.mjs.",
+  "theirsAuthor": "Example Contributor <contrib@example.com>",
+  "theirsMessage": "Validate ids before downloading",
+  "conflicts": {
+    "CHANGELOG.md": "OURS-SAFE",
+    "src/download.ts": "REAL-CONTRIBUTION"
+  },
+  "contribution-branch": "PASS",
+  "incomingEqualsPublished": false,
+  "exit": 1
+}

@@ -1,0 +1,12 @@
+{
+  "name": "example-downloader",
+  "title": "Example Downloader",
+  "version": "1.4.0",
+  "commands": [
+    {
+      "name": "download",
+      "title": "Download",
+      "mode": "view"
+    }
+  ]
+}
