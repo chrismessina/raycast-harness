@@ -1,0 +1,11 @@
+{
+  "comment": "Run by test/scan.test.mjs: the extension is copied to a temp git repo with one commit whose message is clean, then `rx scan --forbidden forbidden.txt --pr-text pr-body.md`.",
+  "verdicts": {
+    "scan-files": "FAIL",
+    "scan-names": "FAIL",
+    "scan-commits": "PASS",
+    "scan-pr-text": "FAIL",
+    "scan-binary": "WARN"
+  },
+  "exit": 1
+}

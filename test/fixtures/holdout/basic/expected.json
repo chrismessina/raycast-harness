@@ -1,0 +1,5 @@
+{
+  "comment": "Run by test/holdout.test.mjs: the extension is copied to a temp git repo and committed; the test then creates untracked .env, .claude/settings.json and .superpowers/state before `rx holdout out --preset preset.json`. notes.local is listed but absent; TODO.md is listed, tracked AND in ship.keep, so keep wins: skipped, never moved, never a holdout-tracked FAIL. The .env keep names other-ext only, so basic's .env still moves.",
+  "out": { "holdout-out": "PASS", "holdout-tracked": "PASS", "holdout-inventory": "PASS", "exit": 0 },
+  "in": { "holdout-inventory": "PASS", "holdout-in": "PASS", "exit": 0 }
+}

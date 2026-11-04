@@ -1,0 +1,11 @@
+{
+  "name": "test-preset",
+  "holdout": { "localOnly": [".env", ".claude", ".superpowers", "notes.local", "TODO.md"] },
+  "ship": {
+    "keep": [
+      { "path": "TODO.md", "extensions": ["basic", "brew", "dev-null"], "reason": "these ship their TODO" },
+      { "path": ".env", "extensions": ["other-ext"], "reason": "a keep for ANOTHER extension; must not protect basic's .env" }
+    ]
+  },
+  "unrelated": { "opaque": true }
+}
