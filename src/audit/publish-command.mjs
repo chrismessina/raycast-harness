@@ -12,8 +12,10 @@
 //             (`~` = home), to a protected path by the same checkProtectedPath the Write rule uses
 //             (src/audit/protected-paths.mjs: a repository's rx state, a worktree's or separate
 //             git dir's rx state, the whole $XDG_CONFIG_HOME/raycast-harness/ directory). Words are
-//             split at whitespace and `; & | < > ( )` after quotes and backslashes are stripped
-//             (case kept), and the part after a word's first `=` (`--out=<path>`) is checked too.
+//             split the way a POSIX shell splits them (shellWords: quotes and backslash escapes
+//             keep a space inside its word; unquoted whitespace and `; & | < > ( )` separate),
+//             then unquoted (case kept), and the part after a word's first `=` (`--out=<path>`) is
+//             checked too.
 //             Always blocked; rx state, the key and the generations are written only by rx, and
 //             read with `rx audit show`. rx's own calls (`rx gates --preset …`, `audit record
 //             --entries <file outside the root>`, `git rev-parse --git-path rx`) name none of
@@ -115,19 +117,83 @@ export function mentionsState(command) {
   return STATE_MENTIONS.some((re) => re.test(text));
 }
 
+/** Characters a backslash escapes inside double quotes (POSIX); before any other, it is literal. */
+const DQ_ESCAPES = new Set(['"', "\\", "$", "`"]);
+
+/** Unquoted characters that end a word: whitespace and the operators `; & | < > ( )`. */
+const WORD_BREAK = /[\s;&|<>()]/;
+
 /**
- * The words of a command that look like paths: continuations joined, quotes and backslashes
- * stripped (case kept), separators collapsed, split at whitespace and `; & | < > ( )`; a word is
- * kept when it contains `/` or starts with `.` or `~`, and the part after its first `=` is
- * considered on its own too.
+ * Split a command into words the way a POSIX shell does before it removes quotes, then remove
+ * them: single quotes are literal; inside double quotes a backslash escapes only `" \\ $` and a
+ * backtick (and a newline, which it removes); outside quotes a backslash escapes the next
+ * character, a space included (a backslash-newline is a continuation). Unquoted whitespace and
+ * `; & | < > ( )` separate words. No expansion is performed: `$VAR` stays as written.
+ * @param {string} command
+ * @returns {string[]}
+ */
+export function shellWords(command) {
+  /** @type {string[]} */
+  const words = [];
+  let word = "";
+  let inWord = false;
+  const end = () => {
+    if (inWord) words.push(word);
+    word = "";
+    inWord = false;
+  };
+  for (let i = 0; i < command.length; i++) {
+    const c = command[i];
+    if (c === "'") {
+      inWord = true;
+      const close = command.indexOf("'", i + 1);
+      const stop = close < 0 ? command.length : close;
+      word += command.slice(i + 1, stop);
+      i = stop;
+    } else if (c === '"') {
+      inWord = true;
+      for (i++; i < command.length && command[i] !== '"'; i++) {
+        const d = command[i];
+        if (d === "\\" && i + 1 < command.length) {
+          const n = command[i + 1];
+          if (n === "\n") { i++; continue; }
+          if (n === "\r" && command[i + 2] === "\n") { i += 2; continue; }
+          if (DQ_ESCAPES.has(n)) { word += n; i++; continue; }
+        }
+        word += d;
+      }
+    } else if (c === "\\") {
+      const n = command[i + 1];
+      if (n === undefined) { word += c; inWord = true; continue; }
+      if (n === "\n") { i++; continue; }
+      if (n === "\r" && command[i + 2] === "\n") { i += 2; continue; }
+      word += n;
+      inWord = true;
+      i++;
+    } else if (WORD_BREAK.test(c)) {
+      end();
+    } else {
+      word += c;
+      inWord = true;
+    }
+  }
+  end();
+  return words;
+}
+
+/**
+ * The words of a command that look like paths: split into complete shell words (shellWords; a
+ * quoted or escaped space stays inside its word), separators collapsed; a word is kept when it
+ * contains `/` or starts with `.` or `~`, and the part after its first `=` is considered on its
+ * own too.
  * @param {string} command
  * @returns {string[]}
  */
 export function pathWords(command) {
-  const text = collapseSeparators(command.replace(/\\\r?\n/g, "").replace(/["'\\]/g, ""));
   /** @type {Set<string>} */
   const out = new Set();
-  for (const w of text.split(/[\s;&|<>()]+/)) {
+  for (const raw of shellWords(command)) {
+    const w = collapseSeparators(raw);
     const eq = w.indexOf("=");
     for (const c of eq >= 0 ? [w, w.slice(eq + 1)] : [w]) if (c && (c.includes("/") || c.startsWith(".") || c.startsWith("~"))) out.add(c);
   }

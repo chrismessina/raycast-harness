@@ -138,6 +138,13 @@
   the receipt's attestation, binding and clean results before using it, and `rx audit show`
   reports provenance failures. A key directory that already exists with group or other access
   is `ERROR attest-key` with the `chmod 700` fix. `docs/guide.md` ships in the package.
+- Replay fixes (Codex round W7r2): `rx gates` rotates the generation right after the root
+  resolves, before any git call, so a gates attempt whose git lookup fails still supersedes a
+  saved receipt and audit. A failed rotation unlinks the stored generation, and every reader
+  rejects a generation whose directory is open to group or other, naming the `chmod 700` fix.
+  The Bash state rule splits words the way a POSIX shell does before removing quotes, so a
+  protected path with a quoted or escaped space is caught. The guide no longer claims that
+  `publication.json` is bound to a checkout.
 - Walkthrough fixes: `agents-md-paths` checks only paths with no extension or one an
   extension repository holds, and `<!-- rx-ignore agents-md -->` on a line (or alone on the
   line above) exempts it from the paths, scripts and symbols checks, never from the home-path

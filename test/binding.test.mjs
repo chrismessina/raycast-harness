@@ -14,7 +14,7 @@ import { currentGeneration, generationPaths, rotateGeneration, subjectOf } from 
 import { _setGhForTests } from "../src/commands/doctor.mjs";
 import { RxError } from "../src/errors.mjs";
 import { checkProtectedPath, resolveFsOrder } from "../src/audit/protected-paths.mjs";
-import { classifyCommand, collapseSeparators, mentionsProtectedPath, mentionsState } from "../src/audit/publish-command.mjs";
+import { classifyCommand, collapseSeparators, mentionsProtectedPath, mentionsState, pathWords, shellWords } from "../src/audit/publish-command.mjs";
 import { FORBIDDEN, PRESET, auditRecord, bashPayload, buildGated, byId, fullEntries, gates, guard, stateDir, withGatedEnv, writeAttested, writeEntries } from "./gates-helpers.mjs";
 import { rx, withTempDir } from "./helpers.mjs";
 
@@ -377,5 +377,120 @@ test("key directory: a directory rx creates is exactly 0700 whatever the umask",
       process.umask(old);
     }
     assert.equal(statSync(keyPaths().dir).mode & 0o777, 0o700);
+  });
+});
+
+// ---- Codex round W7r2 -------------------------------------------------------------------------
+
+/**
+ * Run fn with PATH pointing at an empty directory, so every git (and npm) lookup fails with ENOENT
+ * while root resolution, which reads the filesystem, still succeeds.
+ * @template T
+ * @param {string} dir
+ * @param {() => Promise<T>} fn
+ */
+async function withoutGit(dir, fn) {
+  const empty = join(dir, "empty-bin");
+  mkdirSync(empty, { recursive: true });
+  const saved = process.env.PATH;
+  process.env.PATH = empty;
+  try {
+    return await fn();
+  } finally {
+    process.env.PATH = saved;
+  }
+}
+
+test("W7r2 #1: gates whose git lookup throws still rotates first, so the saved receipt/audit pair blocks (run and invalidate)", async () => {
+  await withGatedEnv(async (dir) => {
+    const { root, receiptPath, auditPath } = await gated(dir);
+    const savedReceipt = readFileSync(receiptPath);
+    const savedAudit = readFileSync(auditPath);
+    assert.equal(guardResult(await guard(bashPayload(PUBLISH, root))).verdict, "PASS");
+
+    // Codex's trace: a gates attempt from a shell where git cannot be found ERRORs at the state
+    // lookup; with PATH restored and the pair untouched, the guard must block.
+    const r = await withoutGit(dir, () => gates(root));
+    assert.equal(r.code, 2, r.stdout);
+    assert.match(r.stdout, /git is not installed or not on PATH/);
+    writeFileSync(receiptPath, savedReceipt);
+    writeFileSync(auditPath, savedAudit);
+    const g = await guard(bashPayload(PUBLISH, root));
+    assert.equal(guardResult(g).verdict, "FAIL", guardResult(g).message);
+    assert.equal(guardResult(g).message, `publish of ${realpathSync(root)} blocked: receipt.json is from an earlier rx gates attempt; run rx gates again`);
+
+    // The same through the argument-error path (invalidate).
+    assert.equal((await gates(root)).code, 0);
+    assert.equal((await auditRecord(root, writeEntries(dir, fullEntries()))).code, 0);
+    const again = readFileSync(receiptPath);
+    const againAudit = readFileSync(auditPath);
+    assert.equal(guardResult(await guard(bashPayload(PUBLISH, root))).verdict, "PASS");
+    const bad = await withoutGit(dir, () => rx(["gates", "--root", root, "--forbidden", FORBIDDEN, "--json"]));
+    assert.equal(bad.code, 2);
+    writeFileSync(receiptPath, again);
+    writeFileSync(auditPath, againAudit);
+    assert.match(guardResult(await guard(bashPayload(PUBLISH, root))).message, /receipt\.json is from an earlier rx gates attempt; run rx gates again$/);
+  });
+});
+
+test("W7r2 #2: a generations/ directory open to group or other invalidates the stored generation; gates revokes it; the guard names the directory and chmod 700", async () => {
+  await withGatedEnv(async (dir) => {
+    const { root, receiptPath, auditPath } = await gated(dir);
+    const savedReceipt = readFileSync(receiptPath);
+    const savedAudit = readFileSync(auditPath);
+    const { dir: genDir, file: genFile } = generationPaths(root);
+
+    // Codex's trace: save the pair, loosen generations/, gates fails, restore the pair.
+    chmodSync(genDir, 0o755);
+    const r = await gates(root);
+    assert.equal(r.code, 2, r.stdout);
+    assert.equal(byId(r)["attest-key"].verdict, "ERROR");
+    assert.ok(!existsSync(genFile), "the failed rotation revoked the stored generation");
+    writeFileSync(receiptPath, savedReceipt);
+    writeFileSync(auditPath, savedAudit);
+    const want = `the rx attestation key directory ${genDir} has mode 0755; it must not be accessible to group or other, and rx does not change a directory it did not create: run chmod 700 ${genDir}`;
+    const g = await guard(bashPayload(PUBLISH, root));
+    assert.equal(guardResult(g).verdict, "FAIL", guardResult(g).message);
+    assert.equal(guardResult(g).message, `publish of ${realpathSync(root)} blocked: ${want}`);
+
+    // The reader check on its own: a valid generation file in a loosened directory is invalid.
+    chmodSync(genDir, 0o700);
+    assert.equal((await gates(root)).code, 0);
+    assert.equal((await auditRecord(root, writeEntries(dir, fullEntries()))).code, 0);
+    assert.equal(guardResult(await guard(bashPayload(PUBLISH, root))).verdict, "PASS");
+    chmodSync(genDir, 0o750);
+    assert.equal(currentGeneration(root), null);
+    assert.match(guardResult(await guard(bashPayload(PUBLISH, root))).message, /generations has mode 0750; .*run chmod 700 /);
+    chmodSync(genDir, 0o700);
+    assert.equal(guardResult(await guard(bashPayload(PUBLISH, root))).verdict, "PASS");
+  });
+});
+
+test("W7r2 #3: shellWords splits like a POSIX shell before removing quotes", () => {
+  assert.deepEqual(shellWords(`cp a "/x y/z" '/p q' /r\\ s`), ["cp", "a", "/x y/z", "/p q", "/r s"]);
+  assert.deepEqual(shellWords(`echo "a\\"b\\\\c\\$d\\\`e\\nf"`), ["echo", 'a"b\\c$d`e\\nf']);
+  assert.deepEqual(shellWords(`echo 'a\\b' x;y|z&w<v>u(t)s`), ["echo", "a\\b", "x", "y", "z", "w", "v", "u", "t", "s"]);
+  assert.deepEqual(shellWords("a\\\nb \"c\\\nd\""), ["ab", "cd"]);
+  assert.deepEqual(shellWords(`x --out="/a b/c"`), ["x", "--out=/a b/c"]);
+  assert.deepEqual(shellWords(`'' ""`), ["", ""]);
+});
+
+test("W7r2 #3: a config path with a space, quoted or backslash-escaped, is protected (Codex's two spellings)", async () => {
+  await withTempDir(async (dir) => {
+    const saved = process.env.XDG_CONFIG_HOME;
+    const cfg = join(realpathSync(dir), "rx config");
+    process.env.XDG_CONFIG_HOME = cfg;
+    try {
+      const target = join(cfg, "raycast-harness", "generations", "x.json");
+      assert.equal((await checkProtectedPath(target, dir)).protected, true, "the intact pathname is protected");
+      for (const cmd of [`cp saved.json "${target}"`, `cp saved.json ${target.replace(/ /g, "\\ ")}`, `cp saved.json '${target}'`, `node t.mjs --out="${target}"`]) {
+        assert.ok(pathWords(cmd).includes(target), `${cmd}: ${JSON.stringify(pathWords(cmd))}`);
+        assert.ok(await mentionsProtectedPath(cmd, dir), cmd);
+        assert.deepEqual(await classifyCommand(cmd, dir), { kind: "state" }, cmd);
+      }
+    } finally {
+      if (saved === undefined) delete process.env.XDG_CONFIG_HOME;
+      else process.env.XDG_CONFIG_HOME = saved;
+    }
   });
 });

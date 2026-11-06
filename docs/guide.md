@@ -84,7 +84,7 @@ Every command whose root rule is `required` or `optional` finds the extension li
 - **rx config** lives in `$XDG_CONFIG_HOME/raycast-harness`, by default `~/.config/raycast-harness`, outside every repository: the attestation key `attest.key` and one generation file per extension root under `generations/` (see "Receipt attestation").
 - **Cross-repo cache** lives in `$XDG_CACHE_HOME/raycast-harness`, by default `~/.cache/raycast-harness`: the sparse checkout of `raycast/extensions` under `upstream/`, the runtime shortcut table under `shortcuts/`, the runner's tarball installs and registry cache under `runner/`, and PR-body snapshots.
 
-Only rx writes rx state. Never hand-edit `receipt.json`, `audit.json` or `publication.json`, and never copy them between checkouts or restore saved copies: each is bound to the checkout and the `rx gates` attempt it was made for.
+Only rx writes rx state. Never hand-edit `receipt.json`, `audit.json` or `publication.json`, and never copy them between checkouts or restore saved copies. `receipt.json` and `audit.json` are bound to the checkout and the `rx gates` attempt they were made for. `publication.json` is a plain record, `{repo, pr, remoteSha, at}`, written by the plugin runner, and it carries no binding.
 
 ### Presets versus core
 

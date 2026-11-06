@@ -24,7 +24,7 @@
 import { createHash, randomBytes } from "node:crypto";
 import { chmodSync, closeSync, openSync, readFileSync, realpathSync, renameSync, rmSync, writeSync } from "node:fs";
 import { join } from "node:path";
-import { ensurePrivateDir, keyPaths } from "./attest.mjs";
+import { ensurePrivateDir, keyPaths, privateDirProblem } from "./attest.mjs";
 import { git } from "./git.mjs";
 
 export const GENERATION_BYTES = 32;
@@ -57,46 +57,70 @@ export function generationPaths(root) {
 
 /**
  * Write a new generation for this root (atomically) and return it. Throws RxError `attest-key`
- * when the config directory or `generations/` exists with group or other access.
+ * when the config directory or `generations/` exists with group or other access. A rotation that
+ * fails after the root resolved first tries to revoke the stored generation (unlinks this root's
+ * generation file), so a saved receipt cannot outlive a failed attempt.
  * @param {string} root
  * @returns {string}
  */
 export function rotateGeneration(root) {
   const { real, dir, file } = generationPaths(root);
-  ensurePrivateDir(keyPaths().dir);
-  ensurePrivateDir(dir);
-  const generation = randomBytes(GENERATION_BYTES).toString("hex");
-  const tmp = `${file}.${process.pid}.${randomBytes(6).toString("hex")}.tmp`;
   try {
-    const fd = openSync(tmp, "wx", 0o600);
+    ensurePrivateDir(keyPaths().dir);
+    ensurePrivateDir(dir);
+    const generation = randomBytes(GENERATION_BYTES).toString("hex");
+    const tmp = `${file}.${process.pid}.${randomBytes(6).toString("hex")}.tmp`;
     try {
-      writeSync(fd, JSON.stringify({ root: real, generation }) + "\n");
+      const fd = openSync(tmp, "wx", 0o600);
+      try {
+        writeSync(fd, JSON.stringify({ root: real, generation }) + "\n");
+      } finally {
+        closeSync(fd);
+      }
+      chmodSync(tmp, 0o600);
+      renameSync(tmp, file);
     } finally {
-      closeSync(fd);
+      rmSync(tmp, { force: true });
     }
-    chmodSync(tmp, 0o600);
-    renameSync(tmp, file);
-  } finally {
-    rmSync(tmp, { force: true });
+    return generation;
+  } catch (e) {
+    try {
+      rmSync(file, { force: true });
+    } catch {
+      // Best effort: the reader's directory check blocks this generation anyway.
+    }
+    throw e;
   }
-  return generation;
 }
 
 /**
- * The current generation for this root, or null when there is none (or the file is not one rx
- * wrote for this root).
+ * The current generation for this root, with the sentence that makes it invalid. A config
+ * directory or `generations/` open to group or other (the check rotation applies) invalidates it:
+ * `problem` is then that directory's sentence, naming the `chmod 700` fix.
+ * @param {string} root
+ * @returns {{ generation: string | null, problem: string | null }}
+ */
+export function generationState(root) {
+  try {
+    const { real, dir, file } = generationPaths(root);
+    const problem = privateDirProblem(keyPaths().dir) ?? privateDirProblem(dir);
+    if (problem) return { generation: null, problem };
+    const doc = JSON.parse(readFileSync(file, "utf8"));
+    if (doc && doc.root === real && typeof doc.generation === "string" && /^[0-9a-f]{64}$/.test(doc.generation)) return { generation: doc.generation, problem: null };
+    return { generation: null, problem: null };
+  } catch {
+    return { generation: null, problem: null };
+  }
+}
+
+/**
+ * The current generation for this root, or null when there is none, the file is not one rx wrote
+ * for this root, or its directory fails the private-directory check.
  * @param {string} root
  * @returns {string | null}
  */
 export function currentGeneration(root) {
-  try {
-    const { real, file } = generationPaths(root);
-    const doc = JSON.parse(readFileSync(file, "utf8"));
-    if (doc && doc.root === real && typeof doc.generation === "string" && /^[0-9a-f]{64}$/.test(doc.generation)) return doc.generation;
-    return null;
-  } catch {
-    return null;
-  }
+  return generationState(root).generation;
 }
 
 /**
@@ -116,8 +140,9 @@ export async function receiptBindingProblem(receipt, root) {
     here = null;
   }
   if (!here || !recorded || recorded.root !== here.root || recorded.gitCommonDir !== here.gitCommonDir) return SENTENCES.otherCheckout(typeof recorded?.root === "string" ? recorded.root : "(none recorded)");
-  const current = currentGeneration(root);
-  if (current === null || receipt.generation !== current) return SENTENCES.earlierAttempt;
+  const current = generationState(root);
+  if (current.problem) return current.problem;
+  if (current.generation === null || receipt.generation !== current.generation) return SENTENCES.earlierAttempt;
   return null;
 }
 

@@ -1,9 +1,9 @@
 // `rx gates --preset f --forbidden f [--root d] [--json]` (docs/commands.md §4.8; plan-review-1 #2,
 // plan-review-2 F3; Q1): the mechanical gates, in order, and the receipt that proves they ran.
 //
-//   1. rotate this root's generation (src/binding.mjs), then delete any existing receipt (a
-//      half-finished run must never look current, and a receipt saved before this attempt must
-//      never become current again by being restored)
+//   1. rotate this root's generation (src/binding.mjs) before any git call or state-directory
+//      creation, then delete any existing receipt (a half-finished run must never look current,
+//      and a receipt saved before this attempt must never become current again by being restored)
 //   2. stale → scan → preflight (--published <stale's dir> only when published) → api-floor,
 //      each run in-process (src/audit/step.mjs) and merged with its own ids
 //   3. `npm run build` → `npx --no-install tsc --noEmit` → `npm run lint` (build first: it
@@ -152,11 +152,37 @@ async function toolStep(name, root, results, env, log) {
  */
 export async function invalidate({ root }) {
   if (!root) return;
+  await rotateThenDelete(root);
+}
+
+/**
+ * Rotate this root's generation, then delete its receipt. The rotation comes first and needs no
+ * git (the generation key is the root's realpath), so a git lookup or state-directory creation
+ * that fails afterward cannot leave an old receipt/audit pair authorized. A rotation that fails
+ * still deletes the receipt when the state path resolves, and its own error is the one reported.
+ * @param {string} root
+ * @returns {Promise<{ generation: string, receiptPath: string }>}
+ */
+async function rotateThenDelete(root) {
+  /** @type {string | undefined} */
+  let generation;
+  /** @type {unknown} */
+  let rotationError;
   try {
-    rotateGeneration(root);
-  } finally {
-    rmSync(await repoStatePath(root, "receipt.json"), { force: true });
+    generation = rotateGeneration(root);
+  } catch (e) {
+    rotationError = e;
   }
+  /** @type {string} */
+  let receiptPath;
+  try {
+    receiptPath = await repoStatePath(root, "receipt.json");
+    rmSync(receiptPath, { force: true });
+  } catch (e) {
+    throw rotationError ?? e;
+  }
+  if (rotationError !== undefined) throw rotationError;
+  return { generation: /** @type {string} */ (generation), receiptPath };
 }
 
 /** @type {import("../cli.mjs").CommandModule["run"]} */
@@ -164,17 +190,11 @@ export async function run(ctx) {
   const { args, results, cwd, env, log, version } = ctx;
   const root = /** @type {string} */ (ctx.root);
   // 1. A new generation, then no receipt survives the start of a run: both before any input is
-  //    even validated, so a run that fails cannot leave an old authorization behind, and a receipt
-  //    saved before this attempt cannot be restored into authority afterward. A rotation that
-  //    fails (a config directory open to group or other) still deletes the receipt.
-  const receiptPath = await repoStatePath(root, "receipt.json");
-  /** @type {string} */
-  let generation;
-  try {
-    generation = rotateGeneration(root);
-  } finally {
-    rmSync(receiptPath, { force: true });
-  }
+  //    even validated, and the rotation before any git call or state-directory creation, so a run
+  //    that fails cannot leave an old authorization behind, and a receipt saved before this attempt
+  //    cannot be restored into authority afterward. A rotation that fails (a config directory open
+  //    to group or other) still deletes the receipt.
+  const { generation, receiptPath } = await rotateThenDelete(root);
 
   const presetPath = resolve(cwd, /** @type {string} */ (args.flags["--preset"]));
   const forbiddenPath = resolve(cwd, /** @type {string} */ (args.flags["--forbidden"]));
