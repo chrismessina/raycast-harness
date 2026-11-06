@@ -1,0 +1,29 @@
+{
+  "version": "1.0.1",
+  "commands": {
+    "build": {
+      "id": "build",
+      "flags": {
+        "target": {
+          "type": "option"
+        },
+        "output": {
+          "type": "option"
+        }
+      }
+    },
+    "lint": {
+      "id": "lint",
+      "flags": {
+        "fix": {
+          "type": "boolean",
+          "default": false
+        }
+      }
+    },
+    "legacy": {
+      "id": "legacy",
+      "flags": {}
+    }
+  }
+}

@@ -1,0 +1,8 @@
+{
+  "name": "@raycast/api",
+  "version": "1.2.0",
+  "types": "types/index.d.ts",
+  "dependencies": {
+    "@raycast/eslint-config": "1.0.0"
+  }
+}

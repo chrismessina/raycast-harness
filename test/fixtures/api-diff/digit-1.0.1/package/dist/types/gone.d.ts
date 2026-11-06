@@ -1,0 +1,1 @@
+export type Gone = number;

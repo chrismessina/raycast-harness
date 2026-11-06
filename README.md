@@ -46,6 +46,7 @@ Silence is never a pass. Unknown arguments are an `ERROR`. `--json` prints one e
 | `rx changelog` | placeholder, history and bullet checks; rebuilds the CHANGELOG during a merge |
 | `rx contributions` | during a pull-contributions merge: which conflicted files carry a real contribution |
 | `rx api-floor` | `@raycast/api` floor and currency, policy from the preset |
+| `rx api-diff` | what changed between two published `@raycast/api` versions: files, `types/index.d.ts` diff, CLI commands and flags |
 | `rx gates` | runs the gates in order and writes a fingerprinted receipt |
 | `rx guard` | the publish hook: allows `ray publish` only on a fresh receipt and a complete audit |
 | `rx audit` | records the judgment evidence the receipt cannot hold |

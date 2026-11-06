@@ -99,3 +99,12 @@
   learnings; inputs validated against each decision's schema; Jev and Claude Haiku adapters
   behind an injectable transport, D6 provider order, 0.7 threshold with `defer-to-agent`,
   provider errors falling back to agent mode, and eval accuracy. Advisory only.
+- `rx api-diff <from> <to> [--out <dir>]`: packs both `@raycast/api` versions from npm and
+  reports the publish-order window, the added, removed and changed files, the
+  `types/index.d.ts` unified diff, `dist/types/` and the `oclif.manifest.json` commands, flags
+  and changed leaves (with `kind` added/removed/changed); file modes are inventoried; `N/A`
+  only when every change is a version field under the two narrow versionOnly rules (JSON
+  top-level `version`, or one whole quoted literal in a text file); a pack, extraction or read
+  failure, a symlink or special file in a package, or a publish-time tie on an endpoint is
+  `ERROR`; `--out` reserves `<dir>/<version>` atomically before npm, never overwrites, and an
+  ERROR removes only what the run reserved; temp dirs are removed on every exit path.

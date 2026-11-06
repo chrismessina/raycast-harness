@@ -1,0 +1,33 @@
+{
+  "version": "1.1.0",
+  "commands": {
+    "build": {
+      "id": "build",
+      "flags": {
+        "target": {
+          "type": "option"
+        },
+        "emoji": {
+          "type": "boolean"
+        }
+      }
+    },
+    "lint": {
+      "id": "lint",
+      "flags": {
+        "fix": {
+          "type": "boolean",
+          "default": true
+        }
+      }
+    },
+    "evals": {
+      "id": "evals",
+      "flags": {
+        "watch": {
+          "type": "boolean"
+        }
+      }
+    }
+  }
+}
