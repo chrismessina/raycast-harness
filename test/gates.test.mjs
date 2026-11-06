@@ -30,7 +30,9 @@ test("gates: a clean unpublished run matches expected.json, runs the seven steps
     const receiptPath = join(await stateDir(root), "receipt.json");
     assert.equal(r.json.data.receipt, receiptPath);
     const receipt = JSON.parse(readFileSync(receiptPath, "utf8"));
-    assert.deepEqual(Object.keys(receipt).sort(), ["at", "data", "fingerprints", "inputs", "results", "rxVersion", "steps"]);
+    assert.deepEqual(Object.keys(receipt).sort(), ["at", "attestation", "data", "fingerprints", "generation", "inputs", "results", "rxVersion", "steps", "subject"]);
+    assert.deepEqual(Object.keys(receipt.attestation).sort(), ["alg", "keyId", "mac"]);
+    assert.equal(receipt.attestation.alg, "hmac-sha256");
     assert.deepEqual(receipt.steps, EXPECTED.steps);
     assert.deepEqual(Object.keys(receipt.fingerprints).sort(), [...FINGERPRINT_FIELDS, "combined"].sort());
     assert.equal(receipt.fingerprints.baseline, "unpublished");

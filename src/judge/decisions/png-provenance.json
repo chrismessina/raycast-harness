@@ -51,7 +51,7 @@
         "context": "The user replaced all six screenshots and the icon in this session and committed them before shipping; published 4.0K, local 48K, normalized hashes differ."
       },
       "expected": "ours-newer",
-      "source": "~/Developer/GitHub/chrismessina/raycast-extensions-skills-harness/plugins/raycast-extensions/learnings/workflow-issues/ship-submission-incident-history.md:204-212"
+      "source": "raycast-extensions-skills:plugins/raycast-extensions/learnings/workflow-issues/ship-submission-incident-history.md:204-212"
     },
     {
       "inputs": {
@@ -61,7 +61,7 @@
         "context": "The user updated this screenshot that morning; three other images in the same extension were only recompressed by CI."
       },
       "expected": "ours-newer",
-      "source": "~/Developer/GitHub/chrismessina/raycast-extensions-skills-harness/plugins/raycast-extensions/learnings/workflow-issues/ship-submission-incident-history.md:214-221"
+      "source": "raycast-extensions-skills:plugins/raycast-extensions/learnings/workflow-issues/ship-submission-incident-history.md:214-221"
     },
     {
       "inputs": {
@@ -71,7 +71,7 @@
         "context": "The published image matches no version in our history, and nothing else says who made it: it could be a contributor's shot or one of ours that was never committed."
       },
       "expected": "unclear",
-      "source": "synthetic: no recorded incident; written from the NOT-YOURS row at ~/Developer/GitHub/chrismessina/raycast-extensions-skills-harness/plugins/raycast-extensions/learnings/workflow-issues/ship-submission-incident-history.md:163, which names both a contributor's shot and one you never committed"
+      "source": "synthetic: no recorded incident; written from the NOT-YOURS row at raycast-extensions-skills:plugins/raycast-extensions/learnings/workflow-issues/ship-submission-incident-history.md:163, which names both a contributor's shot and one you never committed"
     },
     {
       "inputs": {
@@ -81,7 +81,7 @@
         "context": "The commit whose pixels match the published copy is a contributor's shot that a sync pulled into our history."
       },
       "expected": "contributor",
-      "source": "synthetic: no recorded incident; written from the OLDER-SHOT row (a contributor shot pulled in by a sync) at ~/Developer/GitHub/chrismessina/raycast-extensions-skills-harness/plugins/raycast-extensions/learnings/workflow-issues/ship-submission-incident-history.md:162"
+      "source": "synthetic: no recorded incident; written from the OLDER-SHOT row (a contributor shot pulled in by a sync) at raycast-extensions-skills:plugins/raycast-extensions/learnings/workflow-issues/ship-submission-incident-history.md:162"
     },
     {
       "inputs": {
@@ -91,7 +91,7 @@
         "context": "The published image matches no version in our history, and upstream's log shows it was added by a contributor's merged pull request to this extension."
       },
       "expected": "contributor",
-      "source": "synthetic: no recorded incident of a contributor-replaced screenshot; written from the NOT-YOURS row at ~/Developer/GitHub/chrismessina/raycast-extensions-skills-harness/plugins/raycast-extensions/learnings/workflow-issues/ship-submission-incident-history.md:163 and the warning at ~/Developer/GitHub/chrismessina/raycast-extensions-skills-harness/plugins/raycast-extensions/learnings/workflow-issues/ship-submission-incident-history.md:98-101, with the contributor evidence stated explicitly"
+      "source": "synthetic: no recorded incident of a contributor-replaced screenshot; written from the NOT-YOURS row at raycast-extensions-skills:plugins/raycast-extensions/learnings/workflow-issues/ship-submission-incident-history.md:163 and the warning at raycast-extensions-skills:plugins/raycast-extensions/learnings/workflow-issues/ship-submission-incident-history.md:98-101, with the contributor evidence stated explicitly"
     },
     {
       "inputs": {
@@ -101,7 +101,7 @@
         "context": "One copy is a 16-bit PNG, so decoding to 8 bits could merge distinct values."
       },
       "expected": "unclear",
-      "source": "synthetic: no recorded 16-bit incident; written from the UNDECIDED row at ~/Developer/GitHub/chrismessina/raycast-extensions-skills-harness/plugins/raycast-extensions/learnings/workflow-issues/ship-submission-incident-history.md:164"
+      "source": "synthetic: no recorded 16-bit incident; written from the UNDECIDED row at raycast-extensions-skills:plugins/raycast-extensions/learnings/workflow-issues/ship-submission-incident-history.md:164"
     },
     {
       "inputs": {
@@ -111,7 +111,7 @@
         "context": "The published pixels match an older shot of ours, not the one we last submitted, so upstream may have restored an old shot."
       },
       "expected": "unclear",
-      "source": "synthetic: no recorded incident; written from the OLDER-SHOT row (an old shot upstream restored) at ~/Developer/GitHub/chrismessina/raycast-extensions-skills-harness/plugins/raycast-extensions/learnings/workflow-issues/ship-submission-incident-history.md:162"
+      "source": "synthetic: no recorded incident; written from the OLDER-SHOT row (an old shot upstream restored) at raycast-extensions-skills:plugins/raycast-extensions/learnings/workflow-issues/ship-submission-incident-history.md:162"
     }
   ]
 }

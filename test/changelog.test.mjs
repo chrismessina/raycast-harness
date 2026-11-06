@@ -33,7 +33,8 @@ test("changelog-placeholder and changelog-bullets across the placeholder fixture
       const got = by(r);
       for (const [id, verdict] of Object.entries(want)) if (id !== "exit") assert.equal(got[id]?.verdict, verdict, `${name} ${id}: ${JSON.stringify(got[id])}`);
       assert.equal(got["changelog-history"].verdict, "N/A", "no --published → N/A with reason");
-      assert.match(got["changelog-history"].message, /--published/);
+      assert.match(got["changelog-history"].message, /^no published copy given; pass --published <dir> \(rx stale prints it\)/);
+      assert.doesNotMatch(got["changelog-history"].message, /not published/, "a missing flag is not a fact about publication");
       if (name === "long-bullet.md") assert.equal(got["changelog-bullets"].details[0].line, 5);
       if (name === "zero.md") assert.match(got["changelog-placeholder"].message, /zero placeholders is not a pass/);
     });

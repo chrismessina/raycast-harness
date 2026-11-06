@@ -30,7 +30,7 @@
         "context": "brew-4.png was a new capture; it scored 0.1 against the local shot it was taken alongside, but only changed files are pushed, so it was compared with the old published brew-1.png."
       },
       "expected": "metadata-only",
-      "source": "~/Developer/GitHub/chrismessina/raycast-extensions-skills-harness/plugins/raycast-extensions/learnings/workflow-issues/ship-submission-incident-history.md:176-200"
+      "source": "raycast-extensions-skills:plugins/raycast-extensions/learnings/workflow-issues/ship-submission-incident-history.md:176-200"
     },
     {
       "inputs": {
@@ -38,7 +38,7 @@
         "context": "The checker's own fix is to recapture with Window Capture and Save to Metadata."
       },
       "expected": "metadata-only",
-      "source": "synthetic: no recorded dev-icon failure; written from the metadata-images failure list at ~/Developer/GitHub/chrismessina/raycast-extensions-skills-harness/plugins/raycast-extensions/learnings/workflow-issues/ship-submission-incident-history.md:187-189"
+      "source": "synthetic: no recorded dev-icon failure; written from the metadata-images failure list at raycast-extensions-skills:plugins/raycast-extensions/learnings/workflow-issues/ship-submission-incident-history.md:187-189"
     },
     {
       "inputs": {
@@ -46,7 +46,7 @@
         "context": "metadata/ holds six 2000x1250 PNGs that the PR does not touch, so they are absent from the diff; the answer is a push-back with that receipt."
       },
       "expected": "metadata-only",
-      "source": "~/Developer/GitHub/chrismessina/raycast-extensions-skills-harness/plugins/raycast-extensions/learnings/workflow-issues/verify-the-remedy-not-just-the-finding.md:176-179"
+      "source": "raycast-extensions-skills:plugins/raycast-extensions/learnings/workflow-issues/verify-the-remedy-not-just-the-finding.md:176-179"
     },
     {
       "inputs": {
@@ -54,7 +54,7 @@
         "context": "No refinement of the match can produce a truthful per-package indicator, so the Downloading status has to go."
       },
       "expected": "code",
-      "source": "~/Developer/GitHub/chrismessina/raycast-extensions-skills-harness/plugins/raycast-extensions/learnings/workflow-issues/verify-the-remedy-not-just-the-finding.md:156-167"
+      "source": "raycast-extensions-skills:plugins/raycast-extensions/learnings/workflow-issues/verify-the-remedy-not-just-the-finding.md:156-167"
     },
     {
       "inputs": {
@@ -62,7 +62,7 @@
         "context": "Verified false three times on a live system, yet the claim survived re-reviews; what cleared it was rewriting the call site to branch explicitly on whether the file exists."
       },
       "expected": "code",
-      "source": "~/Developer/GitHub/chrismessina/raycast-extensions-skills-harness/plugins/raycast-extensions/learnings/workflow-issues/reading-a-greptile-round.md:97-103"
+      "source": "raycast-extensions-skills:plugins/raycast-extensions/learnings/workflow-issues/reading-a-greptile-round.md:97-103"
     },
     {
       "inputs": {
@@ -70,7 +70,7 @@
         "context": "The removal shipped; the default had to be restored in the following release."
       },
       "expected": "code",
-      "source": "~/Developer/GitHub/chrismessina/raycast-extensions-skills-harness/plugins/raycast-extensions/learnings/workflow-issues/reading-a-greptile-round.md:89-95"
+      "source": "raycast-extensions-skills:plugins/raycast-extensions/learnings/workflow-issues/reading-a-greptile-round.md:89-95"
     }
   ]
 }

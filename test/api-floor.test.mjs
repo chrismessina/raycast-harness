@@ -179,3 +179,15 @@ test("api-floor is read-only: it leaves no .git/rx behind", async () => {
     assert.ok(!existsSync(join(root, ".git", "rx")), ".git/rx was created by a read-only run");
   });
 });
+
+test("api-currency: the major-version migration note appears only when npm latest is in another major", async () => {
+  await withTempDir(async (dir) => {
+    latest = "2.11.1";
+    const same = await rx(["api-floor", "--root", ext(dir, "2.8.2", "^2.8.2", "same"), "--preset", HOUSE_PRESET, "--json"]);
+    assert.equal(by(same)["api-currency"].verdict, "WARN");
+    assert.equal(by(same)["api-currency"].message, "2.8.2 is behind npm latest 2.11.1");
+    const cross = await rx(["api-floor", "--root", ext(dir, "1.104.25", "^1.104.25", "cross"), "--preset", HOUSE_PRESET, "--json"]);
+    assert.equal(by(cross)["api-currency"].verdict, "WARN");
+    assert.equal(by(cross)["api-currency"].message, "1.104.25 is behind npm latest 2.11.1 (advisory: crossing a major is a migration, not a ship-time bump)");
+  });
+});

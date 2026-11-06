@@ -1,9 +1,12 @@
 // `rx doctor [--root d] [--json]`: is this machine set up? Report only: it never FAILs, it says
-// what it found as PASS / WARN / N/A so an agent can decide. The `gh auth status` probe is an
-// explicit network operation.
+// what it found as PASS / WARN / N/A so an agent can decide. The one ERROR it can emit is
+// `attest-key` for an attestation key that exists but is unusable (or whose directory is open to
+// group or other), since every rx gates and rx audit record run would then ERROR too. The
+// `gh auth status` probe is an explicit network operation.
 
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { inspectKey } from "../attest.mjs";
 import { run as exec } from "../exec.mjs";
 import { gh } from "../gh.mjs";
 import { git } from "../git.mjs";
@@ -11,17 +14,18 @@ import { git } from "../git.mjs";
 /** @type {import("../cli.mjs").CommandSpec} */
 export const spec = {
   name: "doctor",
-  summary: "report Node, ray, gh auth, git signing and the Raycast app version (report only)",
+  summary: "report Node, ray, gh auth, git signing, the Raycast app version and the rx attestation key (report only)",
   root: "optional",
   flags: { "--root": { type: "string", value: "<dir>", help: "extension root (for the ray check)" } },
   network: "`gh auth status` contacts github.com; everything else is local",
-  state: "none",
+  state: "reads the attestation key $XDG_CONFIG_HOME/raycast-harness/attest.key; creates nothing",
   checks: {
     node: "Node version is 22.12 or newer",
     ray: "node_modules/.bin/ray present in the extension root",
     "gh-auth": "gh is authenticated (network probe)",
     "git-signing": "commit.gpgsign is on and a signing key is configured",
     "raycast-app": "Raycast.app version readable from its Info.plist",
+    "attest-key": { description: "PASS the attestation key is a regular file of 32 bytes with no group or other access (prints its mode and keyId) / WARN not created yet / ERROR present but unusable, or its directory is accessible to group or other", levels: ["PASS", "WARN", "ERROR"] },
   },
   data: {
     node: "string — process.version",
@@ -29,12 +33,22 @@ export const spec = {
     gh: "{ authenticated: boolean, login: string | null, detail: string }",
     signing: "{ gpgsign: boolean, format: string | null, key: string | null }",
     raycastApp: "{ version: string | null, path: string, installed: boolean, error: string | null }",
+    attestKey: "{ path: string, present: boolean, keyId: string | null, error: string | null }",
   },
 };
 
 let RAYCAST_PLIST = "/Applications/Raycast.app/Contents/Info.plist";
 /** Test hook: point the Raycast.app check at another plist. @param {string} path */
 export function _setRaycastPlist(path) { RAYCAST_PLIST = path; }
+
+/** @type {typeof gh} */
+let ghProbe = gh;
+/**
+ * Test hook: replace the `gh auth status` probe (tests must not reach the network, and with a
+ * temporary XDG_CONFIG_HOME gh's 1Password fallback waits out its 30 s timeout). null restores it.
+ * @param {typeof gh | null} fn
+ */
+export function _setGhForTests(fn) { ghProbe = fn ?? gh; }
 
 /** @type {import("../cli.mjs").CommandModule["run"]} */
 export async function run({ results, root }) {
@@ -66,7 +80,7 @@ export async function run({ results, root }) {
 
   // gh auth (network)
   try {
-    const r = await gh(["auth", "status"]);
+    const r = await ghProbe(["auth", "status"]);
     const text = `${r.stdout}\n${r.stderr}`;
     const login = text.match(/Logged in to github\.com account (\S+)/)?.[1] ?? text.match(/account (\S+) \(/)?.[1] ?? null;
     const ok = r.code === 0 && /Logged in to github\.com/.test(text);
@@ -108,6 +122,13 @@ export async function run({ results, root }) {
   else if (installed) results.warn("raycast-app", `Raycast.app is installed but its version could not be read: ${readError}`);
   else if (process.platform === "darwin") results.na("raycast-app", `Raycast.app not found at ${RAYCAST_PLIST}`);
   else results.na("raycast-app", `not macOS (${process.platform}); Raycast.app is not expected`);
+
+  // The attestation key (src/attest.mjs): read only, never created here.
+  const k = inspectKey();
+  data.attestKey = { path: k.path, present: k.status !== "missing", keyId: k.status === "ok" ? k.keyId : null, error: k.status === "bad" ? k.problem : null };
+  if (k.status === "ok") results.pass("attest-key", `${k.path} (mode ${k.mode.toString(8).padStart(4, "0")}, 32 bytes, keyId ${k.keyId})`);
+  else if (k.status === "missing") results.warn("attest-key", `${k.path} not created yet; rx gates creates it`);
+  else results.error("attest-key", k.message);
 
   return { data };
 }

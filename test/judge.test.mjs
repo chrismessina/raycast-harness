@@ -91,17 +91,21 @@ test("the four decisions load, each with ≥ 4 fixtures and every answer covered
   }
 });
 
-test("every fixture source is a ~/ receipt with a line range inside its file, or marked synthetic", (t) => {
+test("every fixture source is a raycast-extensions-skills: receipt with a line range inside its file, or marked synthetic", (t) => {
+  // The receipts live in a sibling checkout of the skills repository (the harness worktree first,
+  // where the learnings are written, then the main checkout).
+  const roots = ["raycast-extensions-skills-harness", "raycast-extensions-skills"].map((d) => join(REPO, "..", d));
   for (const id of decisionIds()) {
     for (const [i, f] of loadDecision(id).fixtures.entries()) {
-      assert.equal(f.source.includes(homedir()), false, `${id} fixture ${i + 1}: an absolute home-directory path; write ~/ instead`);
+      assert.equal(f.source.includes(homedir()), false, `${id} fixture ${i + 1}: an absolute home-directory path`);
+      assert.equal(/~\/|\/Users\//.test(f.source), false, `${id} fixture ${i + 1}: a machine path; cite raycast-extensions-skills:<repo path>:<lines>`);
       if (f.source.startsWith("synthetic: ")) continue;
-      const m = f.source.match(/^~\/(.+):(\d+)(?:-(\d+))?$/);
+      const m = f.source.match(/^raycast-extensions-skills:([^\s:]+):(\d+)(?:-(\d+))?$/);
       assert.ok(m, `${id} fixture ${i + 1}: ${f.source}`);
-      const path = join(homedir(), m[1]);
-      // The receipts live in the sibling skills checkout; on a machine without it (CI) the range
-      // cannot be checked, and the test says so instead of passing silently.
-      if (!existsSync(path)) { t.diagnostic(`receipt not on this machine, range unchecked: ${f.source}`); continue; }
+      const path = roots.map((r) => join(r, m[1])).find((p) => existsSync(p));
+      // On a machine without the skills checkout (CI) the range cannot be checked, and the test
+      // says so instead of passing silently.
+      if (!path) { t.diagnostic(`receipt not on this machine, range unchecked: ${f.source}`); continue; }
       const lines = readFileSync(path, "utf8").split("\n").length;
       const end = Number(m[3] ?? m[2]);
       assert.ok(Number(m[2]) >= 1 && Number(m[2]) <= end && end <= lines, `${id} fixture ${i + 1}: ${f.source} is outside 1..${lines}`);

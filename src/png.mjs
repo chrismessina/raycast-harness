@@ -7,7 +7,8 @@
 //   decodeRgba(buf)    pngjs decode to 8-bit RGBA (`{ width, height, data }`); throws PngError. pngjs's
 //                      sync reader does NOT fail on a damaged IDAT (it yields zeroed pixels), so the
 //                      IDAT stream is inflated here first and its length checked against IHDR.
-//   comparePng(a, b)   "SAME-PIXELS" | "DIFFERENT" | "UNDECIDED" with a reason, after fully decoding
+//   comparePng(a, b)   "SAME-PIXELS" | "DIFFERENT" | "UNDECIDED" with a reason naming every
+//                      difference found (bit depth, metadata chunks, size, pixels), after fully decoding
 //                      both files (any decode failure throws before an outcome): UNDECIDED when
 //                      either file is 16-bit (decoding to 8 bits merges distinct values) or the
 //                      color metadata differs (the same bytes render differently); SAME-PIXELS
@@ -188,11 +189,19 @@ export function comparePng(a, b) {
   // even when the headers alone would already decide UNDECIDED or DIFFERENT.
   const da = decodeRgba(a);
   const db = decodeRgba(b);
-  if (ia.bitDepth > 8 || ib.bitDepth > 8) return { outcome: "UNDECIDED", reason: `16-bit PNG (bit depth ${ia.bitDepth} vs ${ib.bitDepth}); compare by eye`, a: ia, b: ib };
+  // Every difference is named, not just the one that decides the outcome; the outcome order is
+  // unchanged: 16-bit or a metadata difference → UNDECIDED, else size or pixels → DIFFERENT.
+  const sixteen = ia.bitDepth > 8 || ib.bitDepth > 8;
   const differing = META_CHUNKS.filter((k) => ia[k] !== ib[k]);
-  if (differing.length) return { outcome: "UNDECIDED", reason: `color metadata differs: ${differing.join(", ")}; compare by eye`, a: ia, b: ib };
-  if (ia.width !== ib.width || ia.height !== ib.height) return { outcome: "DIFFERENT", reason: `size ${ia.width}x${ia.height} vs ${ib.width}x${ib.height}`, a: ia, b: ib };
-  if (!da.data.equals(db.data)) return { outcome: "DIFFERENT", reason: "RGBA pixels differ", a: ia, b: ib };
+  const sameSize = ia.width === ib.width && ia.height === ib.height;
+  /** @type {string[]} */
+  const diffs = [];
+  if (sixteen) diffs.push(`16-bit PNG (bit depth ${ia.bitDepth} vs ${ib.bitDepth})`);
+  if (differing.length) diffs.push(`color metadata differs: ${differing.join(", ")}`);
+  if (!sameSize) diffs.push(`size ${ia.width}x${ia.height} vs ${ib.width}x${ib.height}`);
+  else if (!da.data.equals(db.data)) diffs.push("RGBA pixels differ");
+  if (sixteen || differing.length) return { outcome: "UNDECIDED", reason: `${diffs.join("; ")}; compare by eye`, a: ia, b: ib };
+  if (diffs.length) return { outcome: "DIFFERENT", reason: diffs.join("; "), a: ia, b: ib };
   return { outcome: "SAME-PIXELS", reason: "equal size, RGBA pixels and color metadata", a: ia, b: ib };
 }
 

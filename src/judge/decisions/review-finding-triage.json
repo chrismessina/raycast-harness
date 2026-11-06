@@ -21,7 +21,7 @@
         "evidence": "brew outdated --json=v2 omits token from casks while isCask() keys off it; confirmed in cmd/outdated.rb and cask/cask.rb."
       },
       "expected": "valid",
-      "source": "~/Developer/GitHub/chrismessina/raycast-extensions-skills-harness/plugins/raycast-extensions/learnings/workflow-issues/verify-the-remedy-not-just-the-finding.md:171-174"
+      "source": "raycast-extensions-skills:plugins/raycast-extensions/learnings/workflow-issues/verify-the-remedy-not-just-the-finding.md:171-174"
     },
     {
       "inputs": {
@@ -30,7 +30,7 @@
         "evidence": "The substring false match is real. But brew fetch prints every Fetching line while enqueueing (cmd/fetch.rb:305 and :344) and only then works the queue concurrently, so the announcement says what is about to be fetched, not what is downloading."
       },
       "expected": "valid-wrong-remedy",
-      "source": "~/Developer/GitHub/chrismessina/raycast-extensions-skills-harness/plugins/raycast-extensions/learnings/workflow-issues/verify-the-remedy-not-just-the-finding.md:149-167"
+      "source": "raycast-extensions-skills:plugins/raycast-extensions/learnings/workflow-issues/verify-the-remedy-not-just-the-finding.md:149-167"
     },
     {
       "inputs": {
@@ -39,7 +39,7 @@
         "evidence": "The race exists. The unique-path design, built and run under contention, opens a worse race when the directory empties: 5 of 6 writes survived against 8 of 8 for the current design."
       },
       "expected": "valid-wrong-remedy",
-      "source": "~/Developer/GitHub/chrismessina/raycast-extensions-skills-harness/plugins/raycast-extensions/learnings/workflow-issues/verify-the-remedy-not-just-the-finding.md:181-213"
+      "source": "raycast-extensions-skills:plugins/raycast-extensions/learnings/workflow-issues/verify-the-remedy-not-just-the-finding.md:181-213"
     },
     {
       "inputs": {
@@ -48,7 +48,7 @@
         "evidence": "metadata/ holds six 2000x1250 PNGs; the PR does not change them, so they are absent from its diff but present in the repository."
       },
       "expected": "false-positive",
-      "source": "~/Developer/GitHub/chrismessina/raycast-extensions-skills-harness/plugins/raycast-extensions/learnings/workflow-issues/verify-the-remedy-not-just-the-finding.md:176-179"
+      "source": "raycast-extensions-skills:plugins/raycast-extensions/learnings/workflow-issues/verify-the-remedy-not-just-the-finding.md:176-179"
     },
     {
       "inputs": {
@@ -57,7 +57,7 @@
         "evidence": "The public API reference listed Common.Pin as Shift-Command-P, but the runtime bundled with Raycast 2.2.0.0 binds Pin to Command-period; the repo's keyboard-conventions.md already recorded Command-period."
       },
       "expected": "false-positive",
-      "source": "~/Developer/GitHub/chrismessina/raycast-extensions-skills-harness/plugins/raycast-extensions/learnings/workflow-issues/verify-the-remedy-not-just-the-finding.md:228-243"
+      "source": "raycast-extensions-skills:plugins/raycast-extensions/learnings/workflow-issues/verify-the-remedy-not-just-the-finding.md:228-243"
     },
     {
       "inputs": {
@@ -65,7 +65,7 @@
         "evidence": "Verified false three times on a live system; the claim survived re-reviews anyway."
       },
       "expected": "false-positive",
-      "source": "~/Developer/GitHub/chrismessina/raycast-extensions-skills-harness/plugins/raycast-extensions/learnings/workflow-issues/reading-a-greptile-round.md:97-103"
+      "source": "raycast-extensions-skills:plugins/raycast-extensions/learnings/workflow-issues/reading-a-greptile-round.md:97-103"
     },
     {
       "inputs": {
@@ -75,7 +75,7 @@
         "standingDecisions": "Chris asked twice in the same session for sectionActionsFirst to be the default."
       },
       "expected": "conflicts-with-chris",
-      "source": "~/Developer/GitHub/chrismessina/raycast-extensions-skills-harness/plugins/raycast-extensions/learnings/workflow-issues/reading-a-greptile-round.md:89-95"
+      "source": "raycast-extensions-skills:plugins/raycast-extensions/learnings/workflow-issues/reading-a-greptile-round.md:89-95"
     }
   ]
 }

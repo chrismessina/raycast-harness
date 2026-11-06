@@ -24,6 +24,7 @@
     "schema/",
     "eslint-plugin/",
     "docs/commands.md",
+    "docs/guide.md",
     "docs/check-classes.md",
     "docs/applicability.md",
     "LICENSE",

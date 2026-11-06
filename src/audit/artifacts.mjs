@@ -48,6 +48,8 @@ export function validateReceipt(receipt, { version }) {
   if (!isObj(receipt.data) || !isObj(receipt.data.stale)) return "the receipt lacks data.stale";
   if (receipt.rxVersion !== version) return `the receipt was written by rx ${String(receipt.rxVersion)}, not the running ${version}`;
   if (!str(receipt.at)) return "the receipt lacks at";
+  if (!isObj(receipt.subject) || !str(receipt.subject.root) || !str(receipt.subject.gitCommonDir)) return "the receipt lacks subject.root / subject.gitCommonDir";
+  if (!str(receipt.generation)) return "the receipt lacks generation";
   return null;
 }
 
@@ -73,5 +75,7 @@ export function validateAudit(audit, { version }) {
   if (!isObj(audit.evidence) || !Array.isArray(audit.evidence.shortcuts) || !Array.isArray(audit.evidence.png)) return "the audit lacks evidence.shortcuts / evidence.png";
   for (const r of [...audit.evidence.shortcuts, ...audit.evidence.png]) if (!isResult(r)) return "the audit holds a malformed evidence result";
   for (const k of ["blocking", "reportOnly"]) if (!Array.isArray(audit[k]) || !audit[k].every((/** @type {unknown} */ s) => typeof s === "string")) return `the audit lacks ${k}`;
+  if (!isObj(audit.subject) || !str(audit.subject.root) || !str(audit.subject.gitCommonDir)) return "the audit lacks subject.root / subject.gitCommonDir";
+  if (!str(audit.receiptGeneration) || !str(audit.receiptMac)) return "the audit lacks receiptGeneration / receiptMac";
   return null;
 }

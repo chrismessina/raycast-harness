@@ -17,6 +17,9 @@ import {
 import { gitIgnoredSet, gitignoreMatcher } from "./gitignore.mjs";
 import { extractEmbeds, isExternal, targetPath } from "./markdown.mjs";
 
+/** The N/A message when a comparison check ran without --published (a missing flag, not a fact about publication). */
+export const NO_PUBLISHED_COPY = "no published copy given; pass --published <dir> (rx stale prints it)";
+
 const HERE = dirname(fileURLToPath(import.meta.url));
 /** @type {any} */
 export const STORE = JSON.parse(readFileSync(join(HERE, "..", "rules", "store.json"), "utf8"));
@@ -252,7 +255,7 @@ export async function runPreflight({ root, publishedDir, preset }) {
     if (ph.problems.length) c.fail("changelog-placeholder", ph.problems.join("; "), placeholderLines(log));
     c.pass("changelog-placeholder", `one ${P}, in the top entry's heading`);
 
-    if (publishedDir === null) c.na("changelog-updated", "not published; pass --published");
+    if (publishedDir === null) c.na("changelog-updated", NO_PUBLISHED_COPY);
     else {
       const pub = read(join(publishedDir, "CHANGELOG.md"));
       const pubTop = pub === null ? null : changelogHeadings(pub)[0]?.raw;
@@ -263,7 +266,7 @@ export async function runPreflight({ root, publishedDir, preset }) {
   }
 
   // command-renamed
-  if (publishedDir === null) c.na("command-renamed", "not published; pass --published");
+  if (publishedDir === null) c.na("command-renamed", NO_PUBLISHED_COPY);
   else {
     /** @type {any[] | null} */
     let pubCommands = null;
@@ -667,6 +670,10 @@ function blockCheck(prefs, expected, id, c) {
   c.pass(id, `the ${name} block matches, every field`);
 }
 
+/** The marker that exempts one AGENTS.md / CONCEPTS.md line from the paths, scripts and symbols checks. */
+export const IGNORE_AGENTS_MD = "<!-- rx-ignore agents-md -->";
+const ESCAPE_HINT = `, or mark a reference to another repository with ${IGNORE_AGENTS_MD}`;
+
 /** @param {string} root @param {any} pkg @param {import("./context.mjs").Source[]} sources @param {Collector} c @param {string[]} ids */
 function agentsMd(root, pkg, sources, c, ids) {
   const files = ["AGENTS.md", "CONCEPTS.md"].filter((f) => existsSync(join(root, f)));
@@ -689,10 +696,16 @@ function agentsMd(root, pkg, sources, c, ids) {
   };
   collect(root);
   const MIME = /^(text|application|image|audio|video|font|multipart|message|model)\//;
+  // Only these extensions are files an extension repo holds; `app/Http/Kernel.php` names another repo's file.
+  const REPO_EXT = /\.(md|json|ts|tsx|js|mjs|cjs|yml|yaml|png|svg)$/;
   for (const f of files) {
     const text = read(join(root, f)) ?? "";
-    text.split("\n").forEach((line, i) => {
+    const lines = text.split("\n");
+    lines.forEach((line, i) => {
       if (/\/Users\//.test(line)) bad["agents-md-no-home-paths"].push({ file: f, line: i + 1, text: line.trim().slice(0, 120) });
+      // A reference to another repository opts out of the paths, scripts and symbols checks with the marker
+      // on the same line or alone on the line directly above it; the home-path check above still applies.
+      if (line.includes(IGNORE_AGENTS_MD) || (i > 0 && lines[i - 1].trim() === IGNORE_AGENTS_MD)) return;
       for (const m of line.matchAll(/`([^`]+)`/g)) {
         const tok = m[1].trim();
         const npm = tok.match(/^npm run ([\w:-]+)/);
@@ -702,7 +715,9 @@ function agentsMd(root, pkg, sources, c, ids) {
         // A slash path whose first segment is not a MIME type or a property access (`environment.supportPath/x`), or a bare file name.
         const slashPath = /^(?![@~/]|https?:)[\w.-]+(?:\/[\w.-]+)+\/?$/.test(tok) && !MIME.test(tok) && !/^[a-z]\w*\.[a-z]/.test(tok.split("/")[0]);
         const bareFile = /^[\w-]+\.(md|json|ts|tsx|js|mjs|cjs|yml|yaml|png|svg)$/.test(tok);
-        if ((slashPath || bareFile) && !tok.includes("*")) {
+        const last = tok.replace(/\/$/, "").split("/").pop() ?? "";
+        const foreignExt = /^[^.].*\.[^.]+$/.test(last) && !REPO_EXT.test(last); // a dotfile (`.env`) has no extension
+        if ((slashPath || bareFile) && !foreignExt && !tok.includes("*")) {
           counts.paths++;
           const found = existsSync(join(root, tok)) || (bareFile && basenames.has(tok));
           if (!found) bad["agents-md-paths"].push({ file: f, line: i + 1, text: tok });
@@ -715,8 +730,8 @@ function agentsMd(root, pkg, sources, c, ids) {
     const seen = new Set();
     bad[k] = bad[k].filter((d) => { const key = `${d.file}:${d.line}:${d.text}`; if (seen.has(key)) return false; seen.add(key); return true; });
   }
-  if (ids.includes("agents-md-paths")) { if (bad["agents-md-paths"].length) c.fail("agents-md-paths", `${bad["agents-md-paths"].length} backticked path${bad["agents-md-paths"].length === 1 ? "" : "s"} in ${what} do not exist`, bad["agents-md-paths"]); counts.paths ? c.pass("agents-md-paths", `${counts.paths} backticked paths in ${what} exist`) : c.na("agents-md-paths", `${what} names no repo paths`); }
-  if (ids.includes("agents-md-scripts")) { if (bad["agents-md-scripts"].length) c.fail("agents-md-scripts", `npm scripts named in ${what} are not in package.json: ${bad["agents-md-scripts"].map((d) => d.text).join(", ")}`, bad["agents-md-scripts"]); counts.scripts ? c.pass("agents-md-scripts", `${counts.scripts} npm run references in ${what} exist`) : c.na("agents-md-scripts", `${what} names no npm scripts`); }
+  if (ids.includes("agents-md-paths")) { if (bad["agents-md-paths"].length) c.fail("agents-md-paths", `${bad["agents-md-paths"].length} backticked path${bad["agents-md-paths"].length === 1 ? "" : "s"} in ${what} ${bad["agents-md-paths"].length === 1 ? "does not exist; fix it" : "do not exist; fix them"}${ESCAPE_HINT}`, bad["agents-md-paths"]); counts.paths ? c.pass("agents-md-paths", `${counts.paths} backticked paths in ${what} exist`) : c.na("agents-md-paths", `${what} names no repo paths`); }
+  if (ids.includes("agents-md-scripts")) { if (bad["agents-md-scripts"].length) c.fail("agents-md-scripts", `npm scripts named in ${what} are not in package.json: ${bad["agents-md-scripts"].map((d) => d.text).join(", ")}; fix them${ESCAPE_HINT}`, bad["agents-md-scripts"]); counts.scripts ? c.pass("agents-md-scripts", `${counts.scripts} npm run references in ${what} exist`) : c.na("agents-md-scripts", `${what} names no npm scripts`); }
   if (ids.includes("agents-md-no-home-paths")) { if (bad["agents-md-no-home-paths"].length) c.fail("agents-md-no-home-paths", `home-directory path in ${what}`, bad["agents-md-no-home-paths"]); c.pass("agents-md-no-home-paths", `no home-directory path in ${what}`); }
-  if (ids.includes("agents-md-symbols")) { if (bad["agents-md-symbols"].length) c.fail("agents-md-symbols", `symbols named in ${what} are not in src/: ${bad["agents-md-symbols"].map((d) => d.text).join(", ")}`, bad["agents-md-symbols"]); counts.symbols ? c.pass("agents-md-symbols", `${counts.symbols} symbol() references in ${what} exist in src/`) : c.na("agents-md-symbols", `${what} names no symbol()`); }
+  if (ids.includes("agents-md-symbols")) { if (bad["agents-md-symbols"].length) c.fail("agents-md-symbols", `symbols named in ${what} are not in src/: ${bad["agents-md-symbols"].map((d) => d.text).join(", ")}; fix them${ESCAPE_HINT}`, bad["agents-md-symbols"]); counts.symbols ? c.pass("agents-md-symbols", `${counts.symbols} symbol() references in ${what} exist in src/`) : c.na("agents-md-symbols", `${what} names no symbol()`); }
 }

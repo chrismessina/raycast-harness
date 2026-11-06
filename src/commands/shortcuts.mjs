@@ -81,7 +81,7 @@ export const spec = {
         groups: "{ panels, toasts, loose }",
         files: "number of source files scanned",
       },
-      examples: ["rx shortcuts check", "rx shortcuts check --root ~/Developer/GitHub/chrismessina/raycast-brew --table test/fixtures/shortcuts/table-2.10.1.0.json"],
+      examples: ["rx shortcuts check", "rx shortcuts check --root ../raycast-brew --table test/fixtures/shortcuts/table-2.10.1.0.json"],
     },
   },
 };

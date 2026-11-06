@@ -2,13 +2,36 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { _setGhForTests } from "../src/commands/doctor.mjs";
 import { fakeExtension, rx, withTempDir } from "./helpers.mjs";
 
-// doctor is report-only: it may WARN or say N/A, it never FAILs. The gh probe is a real network
-// call; these tests only assert its verdict is PASS or WARN, never its content.
+// doctor is report-only: it may WARN or say N/A, it never FAILs. The gh probe is stubbed (no
+// network in tests); these tests only assert its verdict is PASS or WARN, never its content. Every
+// test points XDG_CONFIG_HOME at its temp dir so the attest-key check never reads the real
+// ~/.config.
+
+/**
+ * withTempDir with XDG_CONFIG_HOME at <dir>/config, restored after.
+ * @template T
+ * @param {(dir: string) => Promise<T>} fn
+ */
+async function withConfig(fn) {
+  return withTempDir(async (dir) => {
+    const saved = process.env.XDG_CONFIG_HOME;
+    process.env.XDG_CONFIG_HOME = join(dir, "config");
+    _setGhForTests(async () => ({ code: 1, stdout: "", stderr: "You are not logged into any GitHub hosts. To log in, run: gh auth login" }));
+    try {
+      return await fn(dir);
+    } finally {
+      _setGhForTests(null);
+      if (saved === undefined) delete process.env.XDG_CONFIG_HOME;
+      else process.env.XDG_CONFIG_HOME = saved;
+    }
+  });
+}
 
 test("doctor without a root: node PASS, ray N/A with reason, never FAIL", async () => {
-  await withTempDir(async (dir) => {
+  await withConfig(async (dir) => {
     const r = await rx(["doctor", "--json"], { cwd: dir });
     assert.notEqual(r.code, 1, "doctor never FAILs");
     const by = Object.fromEntries(r.json.results.map((x) => [x.id, x]));
@@ -18,14 +41,14 @@ test("doctor without a root: node PASS, ray N/A with reason, never FAIL", async 
     assert.ok(["PASS", "WARN"].includes(by["gh-auth"].verdict));
     assert.ok(["PASS", "WARN"].includes(by["git-signing"].verdict));
     assert.ok(["PASS", "WARN", "N/A"].includes(by["raycast-app"].verdict));
-    assert.deepEqual(Object.keys(r.json.data).sort(), ["gh", "node", "ray", "raycastApp", "signing"]);
+    assert.deepEqual(Object.keys(r.json.data).sort(), ["attestKey", "gh", "node", "ray", "raycastApp", "signing"]);
     assert.deepEqual(Object.keys(r.json.data.raycastApp).sort(), ["error", "installed", "path", "version"]);
     assert.equal(r.json.data.ray, null);
   });
 });
 
 test("doctor with a root reports ray presence and the installed @raycast/api version", async () => {
-  await withTempDir(async (dir) => {
+  await withConfig(async (dir) => {
     const ext = fakeExtension(dir, "ext");
     mkdirSync(join(ext, "node_modules", ".bin"), { recursive: true });
     mkdirSync(join(ext, "node_modules", "@raycast", "api"), { recursive: true });
@@ -39,7 +62,7 @@ test("doctor with a root reports ray presence and the installed @raycast/api ver
 });
 
 test("doctor with a root but no ray installed is a WARN, not a FAIL", async () => {
-  await withTempDir(async (dir) => {
+  await withConfig(async (dir) => {
     const ext = fakeExtension(dir, "ext");
     const r = await rx(["doctor", "--json"], { cwd: ext });
     const by = Object.fromEntries(r.json.results.map((x) => [x.id, x]));
@@ -49,7 +72,7 @@ test("doctor with a root but no ray installed is a WARN, not a FAIL", async () =
 });
 
 test("doctor declares every id it emits and reads commit.gpgsign as a git boolean", async () => {
-  await withTempDir(async (dir) => {
+  await withConfig(async (dir) => {
     const { execFileSync } = await import("node:child_process");
     const ext = fakeExtension(dir, "ext");
     execFileSync("git", ["init", "-q"], { cwd: ext });
@@ -65,7 +88,7 @@ test("doctor declares every id it emits and reads commit.gpgsign as a git boolea
 
 test("an installed Raycast.app whose plist cannot be read is WARN, not N/A (witness through the test hook)", async () => {
   const { _setRaycastPlist } = await import("../src/commands/doctor.mjs");
-  await withTempDir(async (dir) => {
+  await withConfig(async (dir) => {
     const bad = join(dir, "Info.plist");
     writeFileSync(bad, "not a plist");
     _setRaycastPlist(bad);

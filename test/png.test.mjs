@@ -397,3 +397,25 @@ test("N1/N3 (gate): rx png with an external --published dir on a machine with no
     }
   });
 });
+
+test("comparePng lists every difference it found (metadata chunks, size, pixels); the outcome is unchanged", () => {
+  const iccp = buildChunk("iCCP", Buffer.concat([Buffer.from("test\0\0", "latin1"), Buffer.from([0x78, 0x9c, 0x03, 0x00, 0x00, 0x00, 0x00, 0x01])]));
+  const gama = buildChunk("gAMA", Buffer.from([0, 0, 0xb1, 0x8f]));
+  const base = png({ vary: true });
+  // A flipped shot that also gained an ICC profile (what sips does): both differences are named.
+  const flipped = insertChunk(png({ vary: true, pixel: [201, 100, 50, 255] }), iccp);
+  const a = comparePng(base, flipped);
+  assert.equal(a.outcome, "UNDECIDED");
+  assert.equal(a.reason, "color metadata differs: iCCP; RGBA pixels differ; compare by eye");
+  // Two chunks and a size change.
+  const b = comparePng(base, insertChunk(insertChunk(png({ w: 5 }), iccp), gama));
+  assert.equal(b.outcome, "UNDECIDED");
+  assert.equal(b.reason, "color metadata differs: gAMA, iCCP; size 4x3 vs 5x3; compare by eye");
+  // Without metadata differences the outcome is DIFFERENT and the reason as before.
+  assert.deepEqual([comparePng(base, png({ w: 5 })).outcome, comparePng(base, png({ w: 5 })).reason], ["DIFFERENT", "size 4x3 vs 5x3"]);
+  assert.deepEqual([comparePng(base, png({ vary: true, pixel: [9, 9, 9, 255] })).outcome, comparePng(base, png({ vary: true, pixel: [9, 9, 9, 255] })).reason], ["DIFFERENT", "RGBA pixels differ"]);
+  // 16-bit with different pixels names both.
+  const c = comparePng(png({ bitDepth: 16 }), png({ bitDepth: 16, pixel: [9, 9, 9, 255] }));
+  assert.equal(c.outcome, "UNDECIDED");
+  assert.equal(c.reason, "16-bit PNG (bit depth 16 vs 16); RGBA pixels differ; compare by eye");
+});

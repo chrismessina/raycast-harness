@@ -180,7 +180,10 @@ export async function run({ args, root, cwd, results, log }) {
   const latest = await registry();
   if (latest === null) results.na("api-currency", "npm unreachable");
   else if (compareSemver(resolved, latest) >= 0) results.pass("api-currency", `${resolved} is npm latest`);
-  else results.warn("api-currency", `${resolved} is behind npm latest ${latest} (advisory: crossing a major is a migration, not a ship-time bump)`);
+  else {
+    const crossesMajor = resolved.split(".")[0] !== latest.split(".")[0];
+    results.warn("api-currency", `${resolved} is behind npm latest ${latest}${crossesMajor ? " (advisory: crossing a major is a migration, not a ship-time bump)" : ""}`);
+  }
 
   return { data: { policy, floor, resolved, range, latest, publication } };
 }

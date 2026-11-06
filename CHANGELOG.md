@@ -108,3 +108,42 @@
   failure, a symlink or special file in a package, or a publish-time tie on an endpoint is
   `ERROR`; `--out` reserves `<dir>/<version>` atomically before npm, never overwrites, and an
   ERROR removes only what the run reserved; temp dirs are removed on every exit path.
+- `rx guard` (plan §9 item 3): a `cd` target that exists but is not a directory
+  (`cd ./package.json && npm run publish`) now blocks with "the cd target … is not a
+  directory" before any root or receipt is looked up, and an extension found one level down
+  through a symlinked child is reported and checked at its physical root in `data.roots` and
+  in every sentence.
+- Receipt and audit provenance (plan §9 item 4): `rx gates` and `rx audit record` attest
+  `receipt.json` and `audit.json` with an HMAC-SHA256 under a per-machine key at
+  `$XDG_CONFIG_HOME/raycast-harness/attest.key` (created on first need at 0600 in a 0700
+  directory, race-safe, never replaced; an unusable key is `ERROR attest-key`). `rx guard`
+  verifies both attestations before any other check, so a missing key, a missing
+  attestation, a different key and a changed file each block with their own sentence; a
+  receipt written before this change blocks until `rx gates` runs again. The guard now also
+  handles `Write`, `Edit`, `MultiEdit` and `NotebookEdit`, blocking any target inside a
+  repository's rx state directory or on the key, and blocks a Bash command that mentions
+  `.git/rx` or the key's path. `rx doctor` reports `attest-key`. The contract's limitation (2)
+  now says what the attestation proves and what it does not.
+- Replay and path fixes (Codex round W7): a receipt and audit are bound to the checkout and
+  the `rx gates` attempt they were made for. Both carry an attested `subject` (the real path
+  of the root and of the git common directory), and every `rx gates` attempt, failed or
+  stopped on its arguments included, first rotates a per-root generation kept outside the
+  repository under `$XDG_CONFIG_HOME/raycast-harness/generations/`; the receipt carries it
+  and the audit records the receipt's generation and MAC. The guard blocks a receipt copied
+  from another checkout, one restored after a later gates attempt, and an audit recorded
+  against a superseded receipt. The Bash state rule collapses `/./` and repeated `/`, and
+  checks every path-like word with the same protected-path test the Write rule uses (which
+  catches a worktree's state path and the whole rx config directory). Protected paths resolve
+  `..` in filesystem order, so a symlink followed by `..` is caught. `rx audit record` checks
+  the receipt's attestation, binding and clean results before using it, and `rx audit show`
+  reports provenance failures. A key directory that already exists with group or other access
+  is `ERROR attest-key` with the `chmod 700` fix. `docs/guide.md` ships in the package.
+- Walkthrough fixes: `agents-md-paths` checks only paths with no extension or one an
+  extension repository holds, and `<!-- rx-ignore agents-md -->` on a line (or alone on the
+  line above) exempts it from the paths, scripts and symbols checks, never from the home-path
+  check. Without `--published`, the comparison checks say "no published copy given" instead of
+  "not published". `audit-verification` says "recorded" and counts `n-a` apart from `pass`.
+  `rx audit record` says a blocking audit will stop the guard. Judge fixture sources cite
+  `raycast-extensions-skills:<path>:<lines>` instead of a path on one machine, and a test keeps
+  home-directory paths out of every shipped file. `api-currency` mentions a major-version
+  migration only across majors. `rx png` names every difference it found.

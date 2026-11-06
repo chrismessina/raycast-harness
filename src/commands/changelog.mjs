@@ -79,7 +79,7 @@ export async function run({ results, root, args }) {
   // History versus the published copy.
   /** @type {Map<string, { changed: boolean, redacted: boolean }>} */
   const status = new Map();
-  if (!publishedDir) results.na("changelog-history", "not published; pass --published <dir> to compare dated history");
+  if (!publishedDir) results.na("changelog-history", "no published copy given; pass --published <dir> (rx stale prints it) to compare dated history");
   else if (published === null) results.na("changelog-history", `published copy has no CHANGELOG.md (${join(publishedDir, "CHANGELOG.md")})`);
   else {
     const pub = parseChangelog(published);

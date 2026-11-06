@@ -1,20 +1,27 @@
 // `rx gates --preset f --forbidden f [--root d] [--json]` (docs/commands.md §4.8; plan-review-1 #2,
 // plan-review-2 F3; Q1): the mechanical gates, in order, and the receipt that proves they ran.
 //
-//   1. delete any existing receipt (a half-finished run must never look current)
+//   1. rotate this root's generation (src/binding.mjs), then delete any existing receipt (a
+//      half-finished run must never look current, and a receipt saved before this attempt must
+//      never become current again by being restored)
 //   2. stale → scan → preflight (--published <stale's dir> only when published) → api-floor,
 //      each run in-process (src/audit/step.mjs) and merged with its own ids
 //   3. `npm run build` → `npx --no-install tsc --noEmit` → `npm run lint` (build first: it
 //      generates raycast-env.d.ts, which tsc needs; Q1). Missing local tooling → ERROR tooling;
 //      nothing is ever installed.
 //   4. fingerprint the tree (src/fingerprint.mjs) and, only when no step FAILed or ERRORed,
-//      write repo/receipt.json atomically (temp file in the state dir, then rename).
+//      write repo/receipt.json atomically (temp file in the state dir, then rename), carrying
+//      its subject (root and git common dir) and the generation from step 1, attested with this
+//      machine's rx key (src/attest.mjs; created on first need, before any step runs, so a bad
+//      key is an ERROR attest-key that costs no build).
 //
 // Network: stale's (GitHub API, git fetch), api-floor's optional npm read, and whatever the
 // project's own build and lint scripts do.
 
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
+import { attest, loadOrCreateKey } from "../attest.mjs";
+import { rotateGeneration, subjectOf } from "../binding.mjs";
 import { RxError } from "../errors.mjs";
 import { run as exec } from "../exec.mjs";
 import { computeFingerprints } from "../fingerprint.mjs";
@@ -43,7 +50,7 @@ export const spec = {
     "--forbidden": { type: "string", value: "<file>", required: true, help: "forbidden-values file for rx scan (its bytes are fingerprinted)" },
   },
   network: "stale's (GitHub API, git fetch of raycast/extensions); api-floor's optional npm read; `npm run build` and `npm run lint` do whatever the project's scripts do. Never installs packages",
-  state: "deletes then writes repo/receipt.json { fingerprints, inputs, results, steps, rxVersion, at } (only when no step FAILed or ERRORed); reads repo/stale/; uses the cross-repo upstream/ cache",
+  state: "rotates $XDG_CONFIG_HOME/raycast-harness/generations/<root hash>.json first, then deletes and later writes repo/receipt.json { fingerprints, inputs, results, steps, data, subject, generation, rxVersion, at, attestation } (only when no step FAILed or ERRORed); reads repo/stale/; uses the cross-repo upstream/ cache; creates the attestation key $XDG_CONFIG_HOME/raycast-harness/attest.key on first need",
   checks: {
     ...stale.spec.checks,
     ...scan.spec.checks,
@@ -53,6 +60,7 @@ export const spec = {
     build: "`npm run build` exits 0 (first error lines in details on FAIL)",
     tsc: "`npx --no-install tsc --noEmit` exits 0 (first error lines in details on FAIL)",
     lint: "`npm run lint` exits 0 (first error lines in details on FAIL)",
+    "attest-key": "ERROR when the attestation key exists but is unusable (not a regular file, not 32 bytes, accessible to group or other), or its directory or generations/ exists with group or other access; rx never replaces the key or chmods a directory it did not create",
   },
   data: {
     receipt: "string | null — the receipt path when written, null when a step blocked it",
@@ -139,27 +147,42 @@ async function toolStep(name, root, results, env, log) {
 
 /**
  * Called by the dispatcher when the arguments fail to parse (a missing `--forbidden`, an unknown
- * flag): the previous receipt goes then too, as it would at the start of run().
+ * flag): the generation rotates and the previous receipt goes then too, as at the start of run().
  * @type {NonNullable<import("../cli.mjs").CommandModule["invalidate"]>}
  */
 export async function invalidate({ root }) {
-  if (root) rmSync(await repoStatePath(root, "receipt.json"), { force: true });
+  if (!root) return;
+  try {
+    rotateGeneration(root);
+  } finally {
+    rmSync(await repoStatePath(root, "receipt.json"), { force: true });
+  }
 }
 
 /** @type {import("../cli.mjs").CommandModule["run"]} */
 export async function run(ctx) {
   const { args, results, cwd, env, log, version } = ctx;
   const root = /** @type {string} */ (ctx.root);
-  // 1. No receipt survives the start of a run: deleted before any input is even validated, so a
-  //    run that fails on its arguments cannot leave an old authorization behind.
+  // 1. A new generation, then no receipt survives the start of a run: both before any input is
+  //    even validated, so a run that fails cannot leave an old authorization behind, and a receipt
+  //    saved before this attempt cannot be restored into authority afterward. A rotation that
+  //    fails (a config directory open to group or other) still deletes the receipt.
   const receiptPath = await repoStatePath(root, "receipt.json");
-  rmSync(receiptPath, { force: true });
+  /** @type {string} */
+  let generation;
+  try {
+    generation = rotateGeneration(root);
+  } finally {
+    rmSync(receiptPath, { force: true });
+  }
 
   const presetPath = resolve(cwd, /** @type {string} */ (args.flags["--preset"]));
   const forbiddenPath = resolve(cwd, /** @type {string} */ (args.flags["--forbidden"]));
   for (const [flag, file] of [["--preset", presetPath], ["--forbidden", forbiddenPath]]) {
     if (!existsSync(file)) throw new RxError(`${flag} ${file} does not exist`, { id: "input" });
   }
+  // The attestation key, created on first need; a bad key stops the run before any step.
+  const key = loadOrCreateKey();
 
   // The tree as it is before any step runs. Build and lint may write into the payload (generated
   // assets, an autofix); the receipt must describe what scan and preflight inspected, so the
@@ -214,12 +237,14 @@ export async function run(ctx) {
       results: results.items,
       steps: steps.map((s) => s.name),
       data: { stale: staleRun.data },
+      subject: await subjectOf(root),
+      generation,
       rxVersion: version,
       at: new Date().toISOString(),
     };
     mkdirSync(dirname(receiptPath), { recursive: true });
     const tmp = `${receiptPath}.${process.pid}.tmp`;
-    writeFileSync(tmp, JSON.stringify(doc, null, 2) + "\n");
+    writeFileSync(tmp, JSON.stringify(attest(doc, key), null, 2) + "\n");
     renameSync(tmp, receiptPath);
     receipt = receiptPath;
     log(`gates: receipt written to ${receiptPath}\n`);

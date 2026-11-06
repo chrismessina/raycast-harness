@@ -2,6 +2,8 @@
 
 Tested, explicit-verdict checks for building and shipping [Raycast](https://www.raycast.com) extensions.
 
+New to rx? Read the [user guide](docs/guide.md) for what it is, how to run it and the common recipes.
+
 Most of the procedure around a Store submission is deterministic: is the published copy older than mine, does every README image resolve, does the CHANGELOG carry exactly one `{PR_MERGE_DATE}`, is this screenshot pixel-identical to the published one, did a contributor actually change code or only the CHANGELOG, may I reply to this review finding yet. Agents and people used to re-type those procedures as shell, and most defects came from the re-typing: a `grep -P` erroring into a false pass, a shell not word-splitting a variable, `ls` hiding a dotfile. `rx` moves each procedure into a Node command with one verdict per check.
 
 ## Install and run
@@ -20,9 +22,9 @@ Every command prints one line per check and exits by the worst verdict:
 
 ```
 PASS   schema            package.json $schema is the Raycast extension schema
-FAIL   readme-assets     1 image path does not resolve
-       README.md:12  metadata/missing.png
-N/A    changelog-updated not published; pass --published
+FAIL   readme-links      1 relative link does not resolve
+       README.md:12  media/missing.png
+N/A    changelog-updated no published copy given; pass --published <dir> (rx stale prints it)
 ```
 
 | Verdict | Means | Exit |

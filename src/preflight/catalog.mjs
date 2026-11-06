@@ -50,10 +50,10 @@ export const CHECKS = {
   logger: { class: "preset", level: "FAIL", description: "the preset's logger package is a dependency, imported, with its checkbox preference declared" },
   "logger-verbose-copy": { class: "preset", level: "FAIL", description: "the verboseLogging preference equals the preset's block, every field" },
   "logger-strict-redaction": { class: "preset", level: "FAIL", description: "the strictRedaction preference equals the preset's block, every field" },
-  "agents-md-paths": { class: "preset", level: "FAIL", description: "every backticked repo path in AGENTS.md / CONCEPTS.md exists" },
-  "agents-md-scripts": { class: "preset", level: "FAIL", description: "every `npm run <x>` in AGENTS.md / CONCEPTS.md is a package.json script" },
+  "agents-md-paths": { class: "preset", level: "FAIL", description: "every backticked repo path in AGENTS.md / CONCEPTS.md exists (repo file extensions only; <!-- rx-ignore agents-md --> exempts a line)" },
+  "agents-md-scripts": { class: "preset", level: "FAIL", description: "every `npm run <x>` in AGENTS.md / CONCEPTS.md is a package.json script (<!-- rx-ignore agents-md --> exempts a line)" },
   "agents-md-no-home-paths": { class: "preset", level: "FAIL", description: "no home-directory path (a machine path under the user's home) in AGENTS.md / CONCEPTS.md" },
-  "agents-md-symbols": { class: "preset", level: "FAIL", description: "every backticked symbol() in AGENTS.md / CONCEPTS.md exists under src/" },
+  "agents-md-symbols": { class: "preset", level: "FAIL", description: "every backticked symbol() in AGENTS.md / CONCEPTS.md exists under src/ (<!-- rx-ignore agents-md --> exempts a line)" },
 };
 
 export const CHECK_IDS = Object.keys(CHECKS);

@@ -11,7 +11,7 @@ import { GREPTILE_JUDGMENT_RULES, greptileJudgmentRules } from "../src/audit/gre
 import { dispositionKey, parseEntries } from "../src/audit/entries.mjs";
 import { _setRuntimePaths } from "../src/commands/shortcuts.mjs";
 import { REPO, rx } from "./helpers.mjs";
-import { auditRecord, buildGated, byId, fullEntries, gates, stateDir, validPng, withGatedEnv, writeEntries } from "./gates-helpers.mjs";
+import { auditRecord, buildGated, byId, fullEntries, gates, stateDir, validPng, withGatedEnv, writeAttested, writeEntries } from "./gates-helpers.mjs";
 import { commit } from "./upstream-fixtures.mjs";
 
 const SHIM = join(REPO, "test", "fixtures", "shortcuts", "shim", "index.js");
@@ -123,7 +123,7 @@ test("audit record: a receipt whose fingerprints no longer match the tree → ER
     const receiptPath = join(await stateDir(root), "receipt.json");
     const receipt = JSON.parse(readFileSync(receiptPath, "utf8"));
     receipt.steps = receipt.steps.filter((/** @type {string} */ s) => s !== "tsc");
-    writeFileSync(receiptPath, JSON.stringify(receipt));
+    writeAttested(receiptPath, receipt); // past provenance, so the shape check is what answers
     const r2 = await auditRecord(root, writeEntries(dir, fullEntries()));
     assert.equal(r2.code, 2);
     assert.match(byId(r2)["audit-receipt"].message, /the receipt lacks step tsc/);
@@ -233,11 +233,22 @@ test("audit record: an external effect in src/ needs a verification entry; its f
     assert.equal(partial.code, 1);
     assert.match(byId(partial)["audit-verification"].message, /0 external effect\(s\) unverified, 1 failed/);
     assert.deepEqual(partial.json.data.blocking, ["verification: web-requests failed"]);
+    // Finding 5: a written audit that blocks says so plainly.
+    assert.match(partial.stdout + partial.stderr, /audit: written to .*audit\.json with 1 blocking reason\(s\); rx guard will refuse a publish until they are resolved/);
+
+    // Finding 4a: an n-a verification is recorded, not verified, and counted apart from pass.
+    const na = await auditRecord(root, writeEntries(dir, fullEntries({ extra: [exportEntry, { verification: "writes-files", result: "pass", evidence: "ran save(); /tmp/x exists" }, { verification: "web-requests", result: "n-a", evidence: "the request is behind a preference this build leaves off" }] })));
+    assert.equal(na.code, 0, na.stdout);
+    assert.equal(byId(na)["audit-verification"].verdict, "PASS");
+    assert.match(byId(na)["audit-verification"].message, /^2 external effect\(s\) recorded: 1 pass, 1 n-a$/);
+    assert.doesNotMatch(byId(na)["audit-verification"].message, /verified/);
 
     const ok = await auditRecord(root, writeEntries(dir, fullEntries({ extra: [exportEntry, { verification: "writes-files", result: "pass", evidence: "ran save(); /tmp/x exists" }, { verification: "web-requests", result: "pass", evidence: "200 from example.com in the dev loop" }] })));
     assert.equal(ok.code, 0, ok.stdout);
     assert.equal(byId(ok)["audit-verification"].verdict, "PASS");
+    assert.match(byId(ok)["audit-verification"].message, /^2 external effect\(s\) recorded: 2 pass, 0 n-a$/);
     assert.deepEqual(ok.json.data.blocking, []);
+    assert.doesNotMatch(ok.stdout + ok.stderr, /blocking reason/, "a clean audit says nothing about blocking");
   });
 });
 
@@ -293,7 +304,7 @@ test("audit record: a malformed entries file or an unknown rule id is ERROR inpu
   });
 });
 
-test("audit show: N/A when nothing is recorded; WARN when the audit is tied to a different receipt", async () => {
+test("audit show: N/A when nothing is recorded; WARN when the audit is tied to a different (here: superseded) receipt", async () => {
   await withGatedEnv(async (dir) => {
     const { root } = await buildGated(dir);
     const none = await rx(["audit", "show", "--root", root, "--json"]);
@@ -306,7 +317,7 @@ test("audit show: N/A when nothing is recorded; WARN when the audit is tied to a
     await gates(root);
     const s = await rx(["audit", "show", "--root", root, "--json"]);
     assert.equal(byId(s)["audit-show"].verdict, "WARN");
-    assert.match(byId(s)["audit-show"].message, /different receipt/);
+    assert.equal(byId(s)["audit-show"].message, "audit.json was recorded against an earlier receipt.json; run rx audit record again");
     assert.equal(s.json.data.audit.entries.length, 38);
   });
 });

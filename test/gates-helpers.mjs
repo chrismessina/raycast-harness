@@ -1,11 +1,13 @@
 // Shared scaffolding for the gates / audit / guard / fingerprint tests: a compliant extension in
 // a git repo with fake local tooling, the cross-repo cache pointed at the temp dir, the upstream
-// fetch pointed at a local bare repo, and the npm registry lookup stubbed. Nothing here reaches
-// the network or touches ~/.cache.
+// fetch pointed at a local bare repo, the attestation key's XDG_CONFIG_HOME pointed at the temp
+// dir, and the npm registry lookup stubbed. Nothing here reaches the network or touches ~/.cache
+// or ~/.config.
 
-import { chmodSync, mkdirSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { _setRegistry } from "../src/commands/api-floor.mjs";
+import { attest, inspectKey } from "../src/attest.mjs";
 import { _setUpstreamForTests } from "../src/upstream.mjs";
 import { GREPTILE_JUDGMENT_RULES, GREPTILE_PREFIX } from "../src/audit/greptile.mjs";
 import { REPO, rx, withTempDir } from "./helpers.mjs";
@@ -37,23 +39,43 @@ export const FORBIDDEN = join(FIX, "forbidden.txt");
 _setRegistry(async () => null);
 
 /**
- * Run `fn` with XDG_CACHE_HOME pointed at a fresh temp dir and the upstream test hooks reset after.
+ * Run `fn` with XDG_CACHE_HOME and XDG_CONFIG_HOME pointed at a fresh temp dir and the upstream
+ * test hooks reset after.
  * @template T
  * @param {(dir: string) => Promise<T>} fn
  */
 export async function withGatedEnv(fn) {
   return withTempDir(async (dir) => {
     const saved = process.env.XDG_CACHE_HOME;
+    const savedConfig = process.env.XDG_CONFIG_HOME;
     process.env.XDG_CACHE_HOME = join(dir, "cache");
+    process.env.XDG_CONFIG_HOME = join(dir, "config");
     try {
       return await fn(dir);
     } finally {
       _setUpstreamForTests({ url: null, probe: null });
       if (saved === undefined) delete process.env.XDG_CACHE_HOME;
       else process.env.XDG_CACHE_HOME = saved;
+      if (savedConfig === undefined) delete process.env.XDG_CONFIG_HOME;
+      else process.env.XDG_CONFIG_HOME = savedConfig;
     }
   });
 }
+
+/**
+ * Write a state document re-attested with the (temp) machine key, as rx itself would: for tests
+ * of the checks that run AFTER provenance (a correctly attested receipt that still lies).
+ * @param {string} path @param {Record<string, unknown>} doc
+ */
+export function writeAttested(path, doc) {
+  const k = inspectKey();
+  if (k.status !== "ok") throw new Error(`writeAttested: no usable test key (${k.status})`);
+  const { attestation: _drop, ...rest } = /** @type {any} */ (doc);
+  writeFileSync(path, JSON.stringify(attest(rest, k)));
+}
+
+/** Read a JSON state document. @param {string} path */
+export const readJson = (path) => JSON.parse(readFileSync(path, "utf8"));
 
 /**
  * Fake local tooling: `node_modules/.bin/tsc` (a shell script) and `build` / `lint` scripts in

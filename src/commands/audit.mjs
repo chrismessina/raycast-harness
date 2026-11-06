@@ -15,19 +15,24 @@
 //                  unmatched one → FAIL audit-dispositions (F9)
 //   verifications  one per external effect the extension has (writes files, makes web requests,
 //                  calls Raycast AI, from the applicability context) → FAIL audit-verification
-//   receipt        no current receipt (missing, malformed, or its fingerprints no longer match
-//                  the tree) → ERROR audit-receipt; the audit is tied to the receipt's combined
-//                  fingerprint
+//   receipt        no current receipt → ERROR audit-receipt with the guard's own sentence: missing,
+//                  not attested by this machine's key, malformed, written for another checkout or
+//                  an earlier gates attempt (src/binding.mjs), stale fingerprints, or recording a
+//                  FAIL/ERROR; the audit is tied to the receipt's combined fingerprint, its subject,
+//                  its generation and its attestation MAC
 //
 // The previous audit.json is deleted as the first action of `record`, so a recording that fails
 // on its inputs never leaves an old authorization behind. audit.json is then written whenever the
 // inputs were valid, blocking failures included, so `rx guard` sees the latest judgment; `guard`
 // recomputes the decision from the stored parts (src/audit/evaluate.mjs) and never trusts the
-// stored `blocking` list. Evidence text may span lines: it goes into details, messages stay one
+// stored `blocking` list. The written audit carries an `attestation` (src/attest.mjs) that
+// `guard` verifies before anything else. Evidence text may span lines: it goes into details, messages stay one
 // line.
 
 import { existsSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve, sep } from "node:path";
+import { attest, inspectKey, loadOrCreateKey, verifyAttestation } from "../attest.mjs";
+import { auditBindingProblem, receiptBindingProblem, receiptFailures } from "../binding.mjs";
 import { RxError } from "../errors.mjs";
 import { computeFingerprints, diffFingerprints } from "../fingerprint.mjs";
 import { loadPreset } from "../preset/load.mjs";
@@ -47,7 +52,8 @@ const RECORD_CHECKS = {
   "audit-*": "audit-<rule id>: a rule whose entry says fail (FAIL for a block rule, WARN for a report rule)",
   "audit-dispositions": "every stale CHECK / NEW? path and png OLDER-SHOT image in this run has a disposition matching { path, localHash, baseline }",
   "audit-verification": "a destination / runtime verification entry per external effect the extension has (writes files, web requests, Raycast AI)",
-  "audit-receipt": { description: "ERROR when there is no current receipt (missing, malformed, or its fingerprints no longer match the tree)", levels: ["ERROR"] },
+  "audit-receipt": { description: "ERROR when there is no current receipt (missing, not attested by this machine's key, malformed, written for another checkout or an earlier gates attempt, its fingerprints no longer match the tree, or it records a FAIL/ERROR)", levels: ["ERROR"] },
+  "attest-key": { description: "ERROR when the attestation key exists but is unusable (not a regular file, not 32 bytes, accessible to group or other), or its directory exists with group or other access; rx never replaces the key or chmods a directory it did not create", levels: ["ERROR"] },
   ...shortcuts.spec.subcommands?.check.checks,
   ...png.spec.checks,
 };
@@ -59,7 +65,7 @@ export const spec = {
   root: "required",
   flags: { "--root": { type: "string", value: "<dir>", help: "extension root" } },
   network: "none",
-  state: "record deletes then writes repo/audit.json and reads repo/receipt.json (the fingerprint) and repo/stale/baseline.json; show reads both",
+  state: "record deletes then writes repo/audit.json (attested with the rx key, created on first need at $XDG_CONFIG_HOME/raycast-harness/attest.key) and reads repo/receipt.json (its attestation, subject, generation and fingerprint), the root's generation file under $XDG_CONFIG_HOME/raycast-harness/generations/ and repo/stale/baseline.json; rotates nothing; show reads the same and creates nothing",
   subcommands: {
     record: {
       name: "record",
@@ -86,7 +92,7 @@ export const spec = {
       summary: "print the recorded audit and whether it still matches the current receipt",
       flags: { "--root": { type: "string", value: "<dir>", help: "extension root" } },
       checks: {
-        "audit-show": { description: "PASS when audit.json exists, matches the current receipt's fingerprint and has no blocking failure; WARN when it is stale or blocking; N/A when none is recorded", levels: ["PASS", "WARN", "N/A"] },
+        "audit-show": { description: "PASS when audit.json exists, matches the current receipt's fingerprint and has no blocking failure; WARN when it is stale or blocking, or when the receipt's or the audit's provenance fails (the guard's sentence); N/A when none is recorded", levels: ["PASS", "WARN", "N/A"] },
       },
       data: { audit: "the recorded audit.json, or null", receipt: "{ present, fingerprint } for the current receipt" },
       examples: ["rx audit show"],
@@ -153,6 +159,8 @@ async function record(ctx) {
   // 1. The previous audit never survives the start of a recording.
   const auditPath = await repoStatePath(root, "audit.json");
   rmSync(auditPath, { force: true });
+  // The attestation key (src/attest.mjs), created on first need; a bad key is ERROR attest-key.
+  const key = loadOrCreateKey();
 
   // 2. Inputs.
   const loaded = loadPreset(/** @type {string} */ (args.flags["--preset"]), cwd);
@@ -167,15 +175,33 @@ async function record(ctx) {
     return empty(null);
   }
   const { receipt } = found;
+  // Provenance, as the guard checks it, before any of the receipt's inputs or stale rows are used:
+  // this machine's attestation, then shape, then the binding to this checkout and its latest gates
+  // attempt (src/binding.mjs). Each failure is the guard's own sentence.
+  const forged = verifyAttestation(receipt, { status: "ok", path: key.path, key: key.key, keyId: key.keyId, mode: 0o600 }, { name: "receipt.json", rerun: "rx gates, then rx audit record" });
+  if (forged) {
+    results.error("audit-receipt", forged);
+    return empty(null);
+  }
   const problem = validateReceipt(receipt, { version });
   if (problem) {
     results.error("audit-receipt", `${problem} (${found.path}); run rx gates again`);
+    return empty(null);
+  }
+  const unbound = await receiptBindingProblem(receipt, root);
+  if (unbound) {
+    results.error("audit-receipt", unbound);
     return empty(null);
   }
   const fresh = await computeFingerprints({ root, version, presetPath: receipt.inputs.preset, forbiddenPath: receipt.inputs.forbidden });
   const drift = diffFingerprints(receipt.fingerprints, fresh);
   if (drift.length) {
     results.error("audit-receipt", `the receipt at ${found.path} is stale: ${drift.filter((d) => d !== "combined").join(", ") || "fingerprints"} changed since rx gates ran; run rx gates again`);
+    return empty(fresh.combined);
+  }
+  const failures = receiptFailures(receipt);
+  if (failures) {
+    results.error("audit-receipt", failures);
     return empty(fresh.combined);
   }
   if (resolve(loaded.path) !== resolve(receipt.inputs.preset)) {
@@ -259,13 +285,17 @@ async function record(ctx) {
       ...d.failedEffects.flatMap((e) => evidenceDetails(byEffect.get(e)?.evidence ?? "", `${e}: fail — `)),
     ]);
   } else if (effects.length) {
-    results.pass("audit-verification", `${effects.length} external effect(s) verified${d.strayEffects.length ? ` (${d.strayEffects.join(", ")} recorded but not detected in src/)` : ""}`, effects.flatMap((e) => evidenceDetails(byEffect.get(e)?.evidence ?? "", `${e}: ${byEffect.get(e)?.result} — `)));
+    const nPass = effects.filter((e) => byEffect.get(e)?.result === "pass").length;
+    results.pass("audit-verification", `${effects.length} external effect(s) recorded: ${nPass} pass, ${effects.length - nPass} n-a${d.strayEffects.length ? ` (${d.strayEffects.join(", ")} recorded but not detected in src/)` : ""}`, effects.flatMap((e) => evidenceDetails(byEffect.get(e)?.evidence ?? "", `${e}: ${byEffect.get(e)?.result} — `)));
   } else results.na("audit-verification", `no external effect detected in src/ (${EFFECTS.join(", ")})${d.strayEffects.length ? `; ${d.strayEffects.join(", ")} recorded anyway` : ""}`);
 
   // 7. Write, blocking reasons included.
   const doc = {
     fingerprint: fresh.combined,
     receiptAt: receipt.at,
+    subject: receipt.subject,
+    receiptGeneration: receipt.generation,
+    receiptMac: receipt.attestation.mac,
     rxVersion: version,
     at: new Date().toISOString(),
     applicable: applicable.map((a) => ({ id: a.id, severity: a.severity })),
@@ -280,13 +310,28 @@ async function record(ctx) {
   };
   mkdirSync(dirname(auditPath), { recursive: true });
   const tmp = `${auditPath}.${process.pid}.tmp`;
-  writeFileSync(tmp, JSON.stringify(doc, null, 2) + "\n");
+  writeFileSync(tmp, JSON.stringify(attest(doc, key), null, 2) + "\n");
   renameSync(tmp, auditPath);
-  ctx.log(`audit: written to ${auditPath}${d.blocking.length ? ` with ${d.blocking.length} blocking reason(s)` : ""}\n`);
+  ctx.log(`audit: written to ${auditPath}${d.blocking.length ? ` with ${d.blocking.length} blocking reason(s); rx guard will refuse a publish until they are resolved` : ""}\n`);
   return {
     data: { written: true, fingerprint: fresh.combined, entries: file.entries.length, blocking: d.blocking, reportOnly: d.reportOnly, dispositions: required.length - d.unresolved.length, applicable: applicable.map((a) => a.id) },
     fingerprint: fresh.combined,
   };
+}
+
+/**
+ * The first provenance failure the guard would report for this receipt and audit (attestations,
+ * the receipt's binding to this checkout and gates attempt, the audit's binding to the receipt),
+ * or null. Reads the key; never creates it.
+ * @param {any} receipt @param {any} audit @param {string} root
+ * @returns {Promise<string | null>}
+ */
+async function provenanceProblem(receipt, audit, root) {
+  const key = inspectKey();
+  return verifyAttestation(receipt, key, { name: "receipt.json", rerun: "rx gates, then rx audit record" })
+    ?? verifyAttestation(audit, key, { name: "audit.json", rerun: "rx audit record" })
+    ?? (await receiptBindingProblem(receipt, root))
+    ?? auditBindingProblem(audit, receipt);
 }
 
 /** @param {import("../cli.mjs").CommandContext} ctx */
@@ -313,7 +358,9 @@ async function show({ results, root: r }) {
     ...(Array.isArray(audit.reportOnly) ? audit.reportOnly.map((/** @type {string} */ b) => ({ text: `report-only fail: ${b}` })) : []),
   ];
   const blocking = Array.isArray(audit.blocking) ? audit.blocking.length : 1;
+  const provenance = found ? await provenanceProblem(found.receipt, audit, root) : null;
   if (!found) results.warn("audit-show", "audit recorded but no receipt exists now; run rx gates and rx audit record again", details);
+  else if (provenance) results.warn("audit-show", provenance, details);
   else if (audit.fingerprint !== receiptInfo.fingerprint) results.warn("audit-show", "audit is tied to a different receipt than the current one; run rx audit record again", details);
   else if (blocking) results.warn("audit-show", `audit matches the current receipt but carries ${blocking} blocking reason(s)`, details);
   else results.pass("audit-show", `audit matches the current receipt (${String(audit.fingerprint).slice(0, 12)}) with no blocking failure`, details);

@@ -706,6 +706,63 @@ test("§11.1 agents-md checks: paths, npm scripts, /Users/ paths, symbols; forks
   });
 });
 
+test("agents-md-paths: a path whose extension no extension repo holds (another repo's PHP files) is not checked; a missing .ts path still is", async () => {
+  await withTempDir(async (dir) => {
+    const house = { preset: HOUSE_PRESET };
+    const doc = "# Agents\n\nThe companion server routes uploads through `server/app/Http/Controllers/UploadController.php` and boots from `server/bootstrap/start.php`.\nLocal entry: `src/index.tsx`.\n";
+    const r = await preflight(makeExt(join(dir, "a"), { files: { "AGENTS.md": doc, "src/index.tsx": "export default function Command() {}\n" } }), house);
+    assert.equal(r.verdict("agents-md-paths"), "PASS", r.by["agents-md-paths"].message);
+    assert.match(r.by["agents-md-paths"].message, /^1 backticked path/);
+    const missing = await preflight(makeExt(join(dir, "b"), { files: { "AGENTS.md": `${doc}Helper: \`src/lib/gone.ts\`.\n`, "src/index.tsx": "export default function Command() {}\n" } }), house);
+    assert.equal(missing.verdict("agents-md-paths"), "FAIL");
+    assert.deepEqual(missing.by["agents-md-paths"].details.map((d) => d.text), ["src/lib/gone.ts"]);
+  });
+});
+
+test("agents-md: <!-- rx-ignore agents-md --> on the line or alone on the line above exempts paths, symbols and scripts, never home paths", async () => {
+  await withTempDir(async (dir) => {
+    const house = { preset: HOUSE_PRESET };
+    const MARK = "<!-- rx-ignore agents-md -->";
+    const doc = [
+      "# Agents",
+      "",
+      `The server measures uploads with \`imagesize()\` before storing them. ${MARK}`,
+      MARK,
+      "Deploy it with `npm run deploy-server`; its routes live in `server/routes/api.ts`.",
+      "Local entry: `src/index.tsx`.",
+      "",
+    ].join("\n");
+    const r = await preflight(makeExt(join(dir, "a"), { files: { "AGENTS.md": doc, "src/index.tsx": "export default function Command() {}\n" } }), house);
+    assert.equal(r.verdict("agents-md-paths"), "PASS", r.by["agents-md-paths"].message);
+    assert.equal(r.verdict("agents-md-symbols"), "N/A", r.by["agents-md-symbols"].message);
+    assert.equal(r.verdict("agents-md-scripts"), "N/A", r.by["agents-md-scripts"].message);
+
+    // A marker two lines above, or not alone on the line above, exempts nothing; the failure names the escape.
+    const far = ["# Agents", MARK, "", "The server measures uploads with `imagesize()`.", `Note ${MARK}`, "Deploy it with `npm run deploy-server`.", ""].join("\n");
+    const f = await preflight(makeExt(join(dir, "b"), { files: { "AGENTS.md": far, "src/index.tsx": "export default function Command() {}\n" } }), house);
+    assert.equal(f.verdict("agents-md-symbols"), "FAIL");
+    assert.equal(f.verdict("agents-md-scripts"), "FAIL");
+    assert.match(f.by["agents-md-symbols"].message, /mark a reference to another repository with <!-- rx-ignore agents-md -->/);
+    assert.match(f.by["agents-md-scripts"].message, /mark a reference to another repository with <!-- rx-ignore agents-md -->/);
+    const missing = await preflight(makeExt(join(dir, "c"), { files: { "AGENTS.md": "# Agents\n\nSee `src/lib/gone.ts`.\n" } }), house);
+    assert.match(missing.by["agents-md-paths"].message, /mark a reference to another repository with <!-- rx-ignore agents-md -->/);
+
+    // The marker never exempts a home-directory path.
+    const home = await preflight(makeExt(join(dir, "d"), { files: { "AGENTS.md": `# Agents\n\nThe server lives at /Users/someone/server. ${MARK}\n` } }), house);
+    assert.equal(home.verdict("agents-md-no-home-paths"), "FAIL");
+  });
+});
+
+test("without --published, changelog-updated and command-renamed say no published copy was given, not that the extension is unpublished", async () => {
+  await withTempDir(async (dir) => {
+    const r = await preflight(ext(dir));
+    for (const id of ["changelog-updated", "command-renamed"]) {
+      assert.equal(r.verdict(id), "N/A", id);
+      assert.equal(r.by[id].message, "no published copy given; pass --published <dir> (rx stale prints it)", id);
+    }
+  });
+});
+
 test("applicability: an unknown context value (published, before rx stale) makes the bound check N/A naming the missing value; --published supplies it", async () => {
   await withTempDir(async (dir) => {
     const r = await preflight(makeExt(join(dir, "a"), { files: { LICENSE: "MIT\n" } }), { preset: HOUSE_PRESET });

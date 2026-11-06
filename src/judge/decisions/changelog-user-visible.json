@@ -31,7 +31,7 @@
         "context": "Three of the four slow paths shipped to the Store in the initial submission and stayed live across two releases. Nobody filed an issue, because a 32-second freeze reads to a user as Raycast hanging."
       },
       "expected": "user-visible",
-      "source": "~/Developer/GitHub/chrismessina/raycast-extensions-skills-harness/plugins/raycast-extensions/learnings/design-patterns/quadratic-accumulator-paths-in-text-reflow.md:136-144"
+      "source": "raycast-extensions-skills:plugins/raycast-extensions/learnings/design-patterns/quadratic-accumulator-paths-in-text-reflow.md:136-144"
     },
     {
       "inputs": {
@@ -39,7 +39,7 @@
         "context": "The defect came from the shared collection store and the legacy-data migration, both introduced by a 39-commit storage refactor on a branch that was never merged."
       },
       "expected": "branch-only-bug",
-      "source": "~/Developer/GitHub/chrismessina/raycast-extensions-skills-harness/plugins/raycast-extensions/learnings/architecture-patterns/bugs-concentrate-at-module-seams.md:38-73"
+      "source": "raycast-extensions-skills:plugins/raycast-extensions/learnings/architecture-patterns/bugs-concentrate-at-module-seams.md:38-73"
     },
     {
       "inputs": {
@@ -47,7 +47,7 @@
         "context": "Shift-Command-P is a long-standing user shortcut. The move to Shift-Command-S answered a reviewer's collision finding that turned out to be false, and it shipped; this change moves the shortcut back."
       },
       "expected": "user-visible",
-      "source": "~/Developer/GitHub/chrismessina/raycast-extensions-skills-harness/plugins/raycast-extensions/learnings/workflow-issues/verify-the-remedy-not-just-the-finding.md:238-243"
+      "source": "raycast-extensions-skills:plugins/raycast-extensions/learnings/workflow-issues/verify-the-remedy-not-just-the-finding.md:238-243"
     },
     {
       "inputs": {
@@ -55,7 +55,7 @@
         "context": "The unbounded version was the first cut of a review-round-7 correctness fix; on 1 MB of prose it took 32,056 ms. That code never reached a commit, so no published version had it."
       },
       "expected": "branch-only-bug",
-      "source": "~/Developer/GitHub/chrismessina/raycast-extensions-skills-harness/plugins/raycast-extensions/learnings/design-patterns/quadratic-accumulator-paths-in-text-reflow.md:200-206"
+      "source": "raycast-extensions-skills:plugins/raycast-extensions/learnings/design-patterns/quadratic-accumulator-paths-in-text-reflow.md:200-206"
     },
     {
       "inputs": {
@@ -63,7 +63,7 @@
         "context": "A 39-commit storage refactor of the extension; the commit itself replaces how hooks persist, not what they show."
       },
       "expected": "internal",
-      "source": "~/Developer/GitHub/chrismessina/raycast-extensions-skills-harness/plugins/raycast-extensions/learnings/architecture-patterns/bugs-concentrate-at-module-seams.md:38"
+      "source": "raycast-extensions-skills:plugins/raycast-extensions/learnings/architecture-patterns/bugs-concentrate-at-module-seams.md:38"
     },
     {
       "inputs": {
@@ -71,7 +71,7 @@
         "context": "The guard caught a 32,056 ms regression in a first cut of a correctness fix before that code reached a commit; the guard itself is a test."
       },
       "expected": "internal",
-      "source": "~/Developer/GitHub/chrismessina/raycast-extensions-skills-harness/plugins/raycast-extensions/learnings/design-patterns/quadratic-accumulator-paths-in-text-reflow.md:200-207"
+      "source": "raycast-extensions-skills:plugins/raycast-extensions/learnings/design-patterns/quadratic-accumulator-paths-in-text-reflow.md:200-207"
     }
   ]
 }

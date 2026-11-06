@@ -36,8 +36,9 @@ export const DECISION_SCHEMA = {
         properties: {
           inputs: { type: "object" },
           expected: { type: "string" },
-          // A `~/…:<line>[-<line>]` receipt, or `synthetic: <why>` when no real receipt exists.
-          source: { type: "string", pattern: "^(~/[^\\s]+:\\d+(-\\d+)?|synthetic: .+)$" },
+          // A `raycast-extensions-skills:<repo path>:<line>[-<line>]` receipt (a path inside that
+          // repository, never one on a machine), or `synthetic: <why>` when no real receipt exists.
+          source: { type: "string", pattern: "^(raycast-extensions-skills:[^\\s:]+:\\d+(-\\d+)?|synthetic: .+)$" },
         },
       },
     },

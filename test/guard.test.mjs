@@ -11,7 +11,7 @@ import { homedir } from "node:os";
 import { denyDocument, run as guardRun } from "../src/commands/guard.mjs";
 import { mentionsPublish, mentionsReady, readCommand } from "../src/audit/publish-command.mjs";
 import { Results } from "../src/verdict.mjs";
-import { auditRecord, bashPayload, buildGated, byId, fullEntries, gates, guard, stateDir, withGatedEnv, writeEntries } from "./gates-helpers.mjs";
+import { auditRecord, bashPayload, buildGated, byId, fullEntries, gates, guard, stateDir, withGatedEnv, writeAttested, writeEntries } from "./gates-helpers.mjs";
 import { rx } from "./helpers.mjs";
 
 const PUBLISH = "npm run publish";
@@ -50,7 +50,7 @@ test("guard payload 2: a current receipt that records a FAIL → block", async (
     const { root, receiptPath } = await gated(dir);
     const receipt = JSON.parse(readFileSync(receiptPath, "utf8"));
     receipt.results.find((/** @type {any} */ x) => x.id === "lint").verdict = "FAIL";
-    writeFileSync(receiptPath, JSON.stringify(receipt));
+    writeAttested(receiptPath, receipt);
     const r = await guard(bashPayload(PUBLISH, root));
     assert.equal(r.code, 1);
     assert.match(guardResult(r).message, /records 1 FAIL\/ERROR result\(s\) \(lint\)/);
@@ -64,7 +64,7 @@ test("guard payload 3: a receipt missing a required step → block", async () =>
     const { root, receiptPath } = await gated(dir);
     const receipt = JSON.parse(readFileSync(receiptPath, "utf8"));
     receipt.steps = receipt.steps.filter((/** @type {string} */ s) => s !== "scan" && s !== "tsc");
-    writeFileSync(receiptPath, JSON.stringify(receipt));
+    writeAttested(receiptPath, receipt);
     const r = await guard(bashPayload(PUBLISH, root));
     assert.equal(r.code, 1);
     assert.match(guardResult(r).message, /the receipt lacks step scan; run rx gates again/);
@@ -84,7 +84,7 @@ test("guard payload 4: a stale fingerprint (the tree changed after gates) → bl
     // The preset file changing also stales it (re-read from the receipt's recorded input path).
     const receipt = JSON.parse(readFileSync(join(await stateDir(root), "receipt.json"), "utf8"));
     receipt.fingerprints.preset = "0".repeat(64);
-    writeFileSync(join(await stateDir(root), "receipt.json"), JSON.stringify(receipt));
+    writeAttested(join(await stateDir(root), "receipt.json"), receipt);
     const r2 = await guard(bashPayload(PUBLISH, root));
     assert.match(guardResult(r2).message, /stale: preset changed/);
   });
@@ -118,7 +118,7 @@ test("guard payload 6: a valid receipt and an audit with a blocking failure → 
     // An audit tied to a different receipt.
     const audit = JSON.parse(readFileSync(auditPath, "utf8"));
     audit.fingerprint = "f".repeat(64);
-    writeFileSync(auditPath, JSON.stringify(audit));
+    writeAttested(auditPath, audit);
     const r3 = await guard(bashPayload(PUBLISH, root));
     assert.match(guardResult(r3).message, /tied to a different receipt/);
     assert.deepEqual(r3.json.data.audit, { present: true, fresh: false, blocking: true });
@@ -195,7 +195,7 @@ test("guard: other tools and other commands are N/A (allowed) without reading an
     }
     const write = await guard(JSON.stringify({ tool_name: "Write", tool_input: { file_path: "x", content: "ray publish" }, cwd: root }));
     assert.equal(guardResult(write).verdict, "N/A");
-    assert.match(guardResult(write).message, /not a Bash command/);
+    assert.match(guardResult(write).message, /Write of a path outside rx state/);
     const bad = await rx(["guard", "--json"], { stdin: "not json" });
     assert.equal(bad.code, 2);
     assert.deepEqual(bad.json.results.map((/** @type {any} */ x) => [x.id, x.verdict]), [["input", "ERROR"]]);
@@ -334,49 +334,230 @@ test("guard (Codex P1 #2): the `cd` directory of an allowed shape decides which 
 });
 
 test("guard (Codex P1 #4): hand-written or truncated artifacts never authorize; the audit decision is recomputed", async () => {
+  // Every forgery here is written WITH this machine's attestation (writeAttested), as if the key
+  // had been stolen: the checks after provenance must still hold on their own.
   await withGatedEnv(async (dir) => {
     const { root, receiptPath, auditPath } = await gated(dir);
     const receipt = JSON.parse(readFileSync(receiptPath, "utf8"));
     const audit = JSON.parse(readFileSync(auditPath, "utf8"));
 
     // Codex's exact bypass: fingerprints + step names, no results; audit { fingerprint, blocking: [] }.
-    writeFileSync(receiptPath, JSON.stringify({ fingerprints: receipt.fingerprints, steps: receipt.steps }));
-    writeFileSync(auditPath, JSON.stringify({ fingerprint: receipt.fingerprints.combined, blocking: [] }));
+    writeAttested(receiptPath, { fingerprints: receipt.fingerprints, steps: receipt.steps });
+    writeAttested(auditPath, { fingerprint: receipt.fingerprints.combined, blocking: [] });
     const r = await guard(bashPayload(PUBLISH, root));
     assert.equal(guardResult(r).verdict, "FAIL");
     assert.match(guardResult(r).message, /the receipt lacks inputs\.preset \/ inputs\.forbidden; run rx gates again/);
     assert.deepEqual(r.json.data.receipt, { present: false, fresh: false, complete: false });
 
     // A truncated receipt: every field present but lint's results gone.
-    writeFileSync(receiptPath, JSON.stringify({ ...receipt, results: receipt.results.filter((/** @type {any} */ x) => x.id !== "lint") }));
+    writeAttested(receiptPath, { ...receipt, results: receipt.results.filter((/** @type {any} */ x) => x.id !== "lint") });
     const t = await guard(bashPayload(PUBLISH, root));
     assert.match(guardResult(t).message, /lists step lint but holds none of its results/);
     for (const [field, value] of /** @type {[string, unknown][]} */ ([["results", []], ["rxVersion", "0.0.1"], ["data", {}], ["at", undefined]])) {
-      writeFileSync(receiptPath, JSON.stringify({ ...receipt, [field]: value }));
+      writeAttested(receiptPath, { ...receipt, [field]: value });
       assert.equal(guardResult(await guard(bashPayload(PUBLISH, root))).verdict, "FAIL", field);
     }
-    writeFileSync(receiptPath, JSON.stringify(receipt));
+    writeAttested(receiptPath, receipt);
 
     // The minimal audit against a good receipt: every missing field is named.
-    writeFileSync(auditPath, JSON.stringify({ fingerprint: receipt.fingerprints.combined, blocking: [] }));
+    writeAttested(auditPath, { fingerprint: receipt.fingerprints.combined, blocking: [] });
     const a = await guard(bashPayload(PUBLISH, root));
     assert.match(guardResult(a).message, /the audit was written by rx undefined, not the running/);
     // `blocking: []` is not believed: a block-rule fail inside the stored entries blocks.
     const lying = { ...audit, entries: audit.entries.map((/** @type {any} */ e) => (e.id === "copy-error" ? { ...e, result: "fail" } : e)), blocking: [] };
-    writeFileSync(auditPath, JSON.stringify(lying));
+    writeAttested(auditPath, lying);
     const l = await guard(bashPayload(PUBLISH, root));
     assert.equal(guardResult(l).verdict, "FAIL");
     assert.match(guardResult(l).message, /the audit carries 1 blocking reason\(s\): copy-error: fail/);
     // Dropping an entry, the shortcut evidence, or a required disposition is caught the same way.
-    writeFileSync(auditPath, JSON.stringify({ ...audit, entries: audit.entries.filter((/** @type {any} */ e) => e.id !== "kit") }));
+    writeAttested(auditPath, { ...audit, entries: audit.entries.filter((/** @type {any} */ e) => e.id !== "kit") });
     assert.match(guardResult(await guard(bashPayload(PUBLISH, root))).message, /coverage: kit/);
-    writeFileSync(auditPath, JSON.stringify({ ...audit, evidence: { shortcuts: [], png: audit.evidence.png } }));
+    writeAttested(auditPath, { ...audit, evidence: { shortcuts: [], png: audit.evidence.png } });
     assert.match(guardResult(await guard(bashPayload(PUBLISH, root))).message, /shortcut evidence missing/);
-    writeFileSync(auditPath, JSON.stringify({ ...audit, applicable: audit.applicable.filter((/** @type {any} */ x) => x.id !== "kit") }));
+    writeAttested(auditPath, { ...audit, applicable: audit.applicable.filter((/** @type {any} */ x) => x.id !== "kit") });
     assert.match(guardResult(await guard(bashPayload(PUBLISH, root))).message, /applicable rules differ/);
-    writeFileSync(auditPath, JSON.stringify({ ...audit, required: [{ path: "x.png", localHash: "sha256:0", baseline: "0", kind: "OLDER-SHOT" }] }));
+    writeAttested(auditPath, { ...audit, required: [{ path: "x.png", localHash: "sha256:0", baseline: "0", kind: "OLDER-SHOT" }] });
     assert.match(guardResult(await guard(bashPayload(PUBLISH, root))).message, /OLDER-SHOT dispositions do not match its png evidence/);
+    writeAttested(auditPath, audit);
+    assert.equal(guardResult(await guard(bashPayload(PUBLISH, root))).verdict, "PASS");
+  });
+});
+
+// ---- Plan §9 item 3: the two guard P3s ------------------------------------------------------
+
+test("guard P3 (a): a cd target that exists but is not a directory blocks with that sentence, before any root or receipt lookup", async () => {
+  await withGatedEnv(async (dir) => {
+    const { root } = await gated(dir); // fully gated: reaching the receipt check would ALLOW
+    for (const cmd of ["cd ./package.json && npm run publish", `cd ${join(root, "package.json")} && ray publish`]) {
+      const r = await guard(bashPayload(cmd, root));
+      assert.equal(guardResult(r).verdict, "FAIL", cmd);
+      assert.equal(guardResult(r).message, `publish blocked: the cd target ${join(root, "package.json")} is not a directory`, cmd);
+      assert.deepEqual(r.json.data.roots, [], cmd);
+      assert.equal(r.json.data.receipt, null, `${cmd}: no state is read`);
+    }
+  });
+});
+
+test("guard P3 (b): an extension found one level down through a symlinked child is reported and checked at its physical root", async () => {
+  await withGatedEnv(async (dir) => {
+    const { root } = await gated(dir);
+    const { symlinkSync } = await import("node:fs");
+    mkdirSync(join(dir, "ws"));
+    symlinkSync(root, join(dir, "ws", "linked"));
+    const r = await guard(bashPayload(PUBLISH, join(dir, "ws")));
+    assert.equal(guardResult(r).verdict, "PASS", guardResult(r).message);
+    assert.deepEqual(r.json.data.roots, [phys(root)]);
+    assert.ok(guardResult(r).message.endsWith(`for ${phys(root)}`), guardResult(r).message);
+    // A block names the physical root too.
+    rmSync(join(await stateDir(root), "audit.json"));
+    const b = await guard(bashPayload(PUBLISH, join(dir, "ws")));
+    assert.match(guardResult(b).message, new RegExp(`^publish of ${phys(root).replace(/[.*+?^${}()|[\]\\]/g, "\\$&")} blocked: no audit`));
+    assert.deepEqual(b.json.data.roots, [phys(root)]);
+  });
+});
+
+// ---- Plan §9 item 4: provenance ---------------------------------------------------------------
+
+test("guard provenance: a receipt or audit without this machine's attestation blocks before any other check", async () => {
+  await withGatedEnv(async (dir) => {
+    const { root, receiptPath, auditPath } = await gated(dir);
+    const receipt = JSON.parse(readFileSync(receiptPath, "utf8"));
+    const audit = JSON.parse(readFileSync(auditPath, "utf8"));
+    assert.equal(guardResult(await guard(bashPayload(PUBLISH, root))).verdict, "PASS");
+    const { attestation: _r, ...bareReceipt } = receipt;
+    const { attestation: _a, ...bareAudit } = audit;
+
+    // A receipt written before attestation existed (or forged with a valid shape): no attestation.
+    writeFileSync(receiptPath, JSON.stringify(bareReceipt, null, 2));
+    const pre = await guard(bashPayload(PUBLISH, root));
+    assert.equal(guardResult(pre).verdict, "FAIL");
+    assert.equal(guardResult(pre).message, `publish of ${phys(root)} blocked: receipt.json is not attested by this machine's rx key: re-run rx gates, then rx audit record`);
+    assert.deepEqual(pre.json.data.receipt, { present: false, fresh: false, complete: false });
+
+    // A forged receipt with a valid shape and a copied attestation, one value changed: bad MAC.
+    writeFileSync(receiptPath, JSON.stringify({ ...receipt, results: receipt.results.map((/** @type {any} */ x) => (x.id === "lint" ? { ...x, message: "edited" } : x)) }));
+    assert.match(guardResult(await guard(bashPayload(PUBLISH, root))).message, /blocked: receipt\.json's attestation does not verify against this machine's rx key \(the file changed after rx wrote it\): re-run rx gates/);
+    // Reformatted and key-reordered, the genuine receipt still verifies (canonical JSON).
+    const reordered = Object.fromEntries(Object.entries(receipt).reverse());
+    writeFileSync(receiptPath, JSON.stringify(reordered, null, 4));
+    assert.equal(guardResult(await guard(bashPayload(PUBLISH, root))).verdict, "PASS");
+
+    // A forged audit: valid shape, no attestation; then a changed value under the copied one.
+    writeFileSync(auditPath, JSON.stringify(bareAudit));
+    assert.match(guardResult(await guard(bashPayload(PUBLISH, root))).message, /blocked: audit\.json is not attested by this machine's rx key: re-run rx audit record$/);
+    writeFileSync(auditPath, JSON.stringify({ ...audit, blocking: ["x"] }));
+    assert.match(guardResult(await guard(bashPayload(PUBLISH, root))).message, /blocked: audit\.json's attestation does not verify/);
     writeFileSync(auditPath, JSON.stringify(audit));
     assert.equal(guardResult(await guard(bashPayload(PUBLISH, root))).verdict, "PASS");
+
+    // The audit's attestation is checked before the receipt's other checks: a receipt with a
+    // stale fingerprint and a forged audit reports the audit's provenance first.
+    writeFileSync(auditPath, JSON.stringify(bareAudit));
+    writeFileSync(join(root, "late.txt"), "x\n");
+    assert.match(guardResult(await guard(bashPayload(PUBLISH, root))).message, /audit\.json is not attested/);
+    rmSync(join(root, "late.txt"));
+    writeFileSync(auditPath, JSON.stringify(audit));
+
+    // A rotated key: the reason names both key ids. A missing key: its own sentence; never created.
+    const { keyPaths, loadOrCreateKey } = await import("../src/attest.mjs");
+    rmSync(keyPaths().file);
+    const missing = await guard(bashPayload(PUBLISH, root));
+    assert.match(guardResult(missing).message, /blocked: receipt\.json cannot be verified: this machine has no rx attestation key at .*attest\.key \(rx gates creates it\)/);
+    const { existsSync } = await import("node:fs");
+    assert.ok(!existsSync(keyPaths().file), "the guard never creates the key");
+    const rotated = loadOrCreateKey();
+    assert.equal(guardResult(await guard(bashPayload(PUBLISH, root))).message, `publish of ${phys(root)} blocked: receipt.json was attested by rx key ${receipt.attestation.keyId}, not this machine's key ${rotated.keyId}: re-run rx gates, then rx audit record`);
+  });
+});
+
+test("guard write protection: Write / Edit / MultiEdit / NotebookEdit into .git/rx or onto the attestation key block; other targets pass without reading state", async () => {
+  await withGatedEnv(async (dir) => {
+    const { root, receiptPath } = await gated(dir);
+    const { keyPaths } = await import("../src/attest.mjs");
+    const { symlinkSync } = await import("node:fs");
+    /** @param {string} tool @param {Record<string, unknown>} input @param {string} [cwd] */
+    const tp = (tool, input, cwd = root) => JSON.stringify({ session_id: "fixture", cwd, hook_event_name: "PreToolUse", tool_name: tool, tool_input: input, tool_use_id: "toolu_fixture" });
+    const state = await stateDir(root);
+    const blocked = [
+      ["Write", { file_path: receiptPath, content: "{}" }],
+      ["Write", { file_path: ".git/rx/receipt.json", content: "{}" }], // relative to the payload cwd
+      ["Write", { file_path: "./src/../.git/rx/audit.json", content: "{}" }],
+      ["Write", { file_path: join(root, ".GIT", "RX", "receipt.json"), content: "{}" }], // case-insensitive volume
+      ["Write", { file_path: join(state, "new", "deep.json"), content: "{}" }], // not yet existing
+      ["Write", { file_path: join(dir, "not-a-repo", ".git", "rx", "receipt.json"), content: "{}" }], // no repository: the segment rule alone
+      ["Edit", { file_path: receiptPath, old_string: "a", new_string: "b" }],
+      ["MultiEdit", { file_path: join(state, "audit.json"), edits: [] }],
+      ["NotebookEdit", { notebook_path: join(state, "x.ipynb"), new_source: "" }],
+      ["Write", { file_path: keyPaths().file, content: "x" }],
+      ["Write", { file_path: join(keyPaths().dir, "other"), content: "x" }],
+    ];
+    for (const [tool, input] of /** @type {[string, Record<string, unknown>][]} */ (blocked)) {
+      const r = await guard(tp(tool, input));
+      assert.equal(guardResult(r).verdict, "FAIL", `${tool} ${JSON.stringify(input)}`);
+      assert.match(guardResult(r).message, new RegExp(`^rx state is written only by rx: ${tool} of `), JSON.stringify(input));
+      assert.equal(r.json.data.decision, "block");
+      assert.equal(r.json.data.receipt, null);
+      assert.equal(typeof r.json.data.path, "string");
+    }
+    assert.match(guardResult(await guard(tp("Write", { file_path: keyPaths().file, content: "x" }))).message, /targets the rx attestation key or its directory/);
+    assert.match(guardResult(await guard(tp("Write", { file_path: receiptPath, content: "x" }))).message, /targets the rx state directory .*\.git\/rx; run the rx command that owns it/);
+
+    // Physical resolution: a symlink into .git/rx, and a dangling one whose target would be created.
+    symlinkSync(receiptPath, join(dir, "innocent.json"));
+    symlinkSync(join(state, "not-yet.json"), join(dir, "dangling.json"));
+    symlinkSync(state, join(dir, "statelink"));
+    for (const f of [join(dir, "innocent.json"), join(dir, "dangling.json"), join(dir, "statelink", "receipt.json")]) {
+      const r = await guard(tp("Write", { file_path: f, content: "{}" }, dir));
+      assert.equal(guardResult(r).verdict, "FAIL", f);
+      assert.equal(r.json.data.path.toLowerCase().includes(`${"/.git/rx/"}`), true, r.json.data.path);
+    }
+
+    // A repository whose git dir is not named .git: recognized through `git rev-parse --git-path rx`.
+    const { execFileSync } = await import("node:child_process");
+    const sep = join(dir, "sep");
+    mkdirSync(sep);
+    execFileSync("git", ["init", "-q", `--separate-git-dir=${join(dir, "sep-gitdir")}`], { cwd: sep });
+    const sepState = join(dir, "sep-gitdir", "rx", "receipt.json");
+    const viaGit = await guard(tp("Write", { file_path: sepState, content: "{}" }, sep));
+    assert.equal(guardResult(viaGit).verdict, "FAIL", guardResult(viaGit).message);
+    assert.match(guardResult(viaGit).message, /sep-gitdir\/rx/);
+
+    // Allowed, silently: ordinary files, git's own files, look-alike names, other tools, no path.
+    for (const [tool, input] of /** @type {[string, Record<string, unknown>][]} */ ([
+      ["Write", { file_path: join(root, "src", "index.tsx"), content: "x" }],
+      ["Edit", { file_path: join(root, "package.json"), old_string: "a", new_string: "b" }],
+      ["Write", { file_path: join(root, ".git", "rx-old", "receipt.json"), content: "x" }],
+      ["Write", { file_path: join(root, "docs", "rx", "receipt.json"), content: "x" }],
+      ["Write", { file_path: join(dir, "config", "raycast-harness-other", "attest.key"), content: "x" }],
+      ["NotebookEdit", { notebook_path: join(root, "n.ipynb"), new_source: "" }],
+      ["Write", { content: "x" }],
+      ["Read", { file_path: receiptPath }],
+    ])) {
+      const r = await guard(tp(tool, input));
+      assert.equal(guardResult(r).verdict, "N/A", `${tool} ${JSON.stringify(input)}: ${guardResult(r).message}`);
+      assert.equal(r.json.data.decision, "allow");
+      assert.equal(r.json.data.receipt, null);
+    }
+    // The hook transport for a blocked write: one deny document, exit 0.
+    const results = new Results();
+    const out = /** @type {any} */ (await guardRun({ args: { subcommand: null, positionals: {}, flags: {}, json: false, help: false }, root: null, cwd: root, env: process.env, results, stdin: async () => tp("Write", { file_path: receiptPath, content: "{}" }), log: () => {}, version: "0.1.0" }));
+    assert.equal(out.transport.exit, 0);
+    assert.match(JSON.parse(out.transport.stdout).hookSpecificOutput.permissionDecisionReason, /^rx state is written only by rx/);
+  });
+});
+
+test("guard state mentions: a Bash command that mentions .git/rx or the attestation key blocks; rx's own calls pass", async () => {
+  await withGatedEnv(async (dir) => {
+    const { root } = await gated(dir);
+    for (const cmd of ["echo x > .git/rx/receipt.json", "cat .git/rx/receipt.json", "cp /tmp/r.json ./.git/rx/receipt.json", 'echo "{}" > ".git/rx/audit.json"', "rm -rf .git/rx", "ls .git/rx/", "echo x >.git/r\\x/receipt.json", "cat ~/.config/raycast-harness/attest.key", "cp k ~/.config/raycast-harness/attest.key", "node -e \"require('fs').writeFileSync('.GIT/RX/receipt.json','{}')\""]) {
+      const r = await guard(bashPayload(cmd, root));
+      assert.equal(guardResult(r).verdict, "FAIL", cmd);
+      assert.match(guardResult(r).message, /^rx state is written only by rx: this command mentions \.git\/rx or the rx attestation key/, cmd);
+      assert.equal(r.json.data.receipt, null, cmd);
+    }
+    for (const cmd of ["node scripts/rx.mjs gates --preset presets/chrismessina.json --forbidden ../forbidden.txt", "node scripts/rx.mjs audit record --preset p.json --entries ../e.json", "node scripts/rx.mjs audit show", "git rev-parse --git-path rx", "ls .git/rx-old", "cat .git/config", "ls ~/.config/raycast-harness-other"]) {
+      const r = await guard(bashPayload(cmd, root));
+      assert.equal(guardResult(r).verdict, "N/A", `${cmd}: ${guardResult(r).message}`);
+    }
   });
 });

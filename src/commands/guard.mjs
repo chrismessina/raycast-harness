@@ -1,5 +1,6 @@
 // `rx guard [--json]` (docs/commands.md §4.9): the plugin's PreToolUse hook. Reads the hook
-// payload on stdin and decides whether a Bash command may run.
+// payload on stdin and decides whether a Bash command, or a Write / Edit / MultiEdit /
+// NotebookEdit, may run.
 //
 //   ready     the command's text mentions marking a PR ready for review (`gh pr ready`,
 //             `gh api … draft=false` / `ready_for_review`, the GraphQL markPullRequestReadyForReview
@@ -10,9 +11,14 @@
 //             in src/audit/publish-command.mjs; there is no shell parser). Checked against the
 //             extension that resolves from the `cd` directory, or from the payload's cwd. Allowed
 //             only when, for that root, (a) repo/receipt.json exists and is well-formed
-//             (src/audit/artifacts.mjs), (b) every fingerprint equals a fresh computation,
+//             (src/audit/artifacts.mjs) — after both files' attestations (src/attest.mjs) verify
+//             against this machine's key, which is checked before anything else in either file —
+//             and is bound to this checkout and its latest gates attempt (src/binding.mjs: its
+//             subject is this root and git common dir, its generation the current one),
+//             (b) every fingerprint equals a fresh computation,
 //             (c) every required step is present with its results and no FAIL / ERROR, and
-//             (d) repo/audit.json exists, is well-formed, carries the same combined fingerprint and
+//             (d) repo/audit.json exists, is well-formed, is bound to this receipt (its subject,
+//             generation and attestation MAC), carries the same combined fingerprint and
 //             its decision — RECOMPUTED here from the stored entries, dispositions, verifications
 //             and evidence (src/audit/evaluate.mjs), never read from its `blocking` list — has no
 //             blocking reason. Anything else blocks with one sentence naming what is missing or
@@ -22,13 +28,27 @@
 //             publish`, `git commit -m "ray publish"`, …): blocked, "write it as a plain command".
 //             Words that only contain publish (`--published`, `--record-publication`) are not
 //             mentions, so the plugin's own rx calls pass.
+//   state     the command's text mentions `.git/rx` or `raycast-harness/attest.key` (same
+//             normalization, plus `/./` and repeated `/` collapsed), or any path-like word in it
+//             resolves to a protected path (src/audit/protected-paths.mjs: rx state, a worktree's
+//             rx state, the whole $XDG_CONFIG_HOME/raycast-harness/ directory): blocked, "rx state
+//             is written only by rx".
+//   write     a Write, Edit, MultiEdit or NotebookEdit whose `tool_input.file_path` (NotebookEdit:
+//             `notebook_path`), resolved against the payload's cwd and then physically, lies in a
+//             repository's rx state directory or lies in the rx config directory (the attestation
+//             key and generations/)
+//             (src/audit/protected-paths.mjs): blocked, "rx state is written only by rx". Any other
+//             target: allowed, silently, without reading any state.
 //   other     any other tool or command: allowed, silently.
 //
 // Hook transport — recorded from https://code.claude.com/docs/en/hooks (Claude Code hooks
 // reference, "PreToolUse" and "Exit codes", read 2026-10-30) and
 // https://code.claude.com/docs/en/plugins-reference (`hooks/hooks.json`, `${CLAUDE_PLUGIN_ROOT}`):
 //   stdin   one JSON object: { session_id, transcript_path, cwd, hook_event_name: "PreToolUse",
-//           tool_name, tool_input: { command, description, … }, tool_use_id, … }
+//           tool_name, tool_input, tool_use_id, … }; tool_input is { command, description, … } for
+//           Bash, { file_path, content } for Write, { file_path, old_string, new_string, … } for
+//           Edit, { file_path, edits } for MultiEdit, { notebook_path, new_source, … } for
+//           NotebookEdit
 //   allow   exit 0, nothing on stdout (stdout is parsed as JSON only when it is a single object)
 //   block   exit 0 with one JSON object on stdout:
 //           { "hookSpecificOutput": { "hookEventName": "PreToolUse", "permissionDecision": "deny",
@@ -36,7 +56,8 @@
 //           `deny` prevents the tool call and the reason is shown to Claude. (The deprecated
 //           top-level `decision: "block"` form still maps to deny; the exit-2-with-stderr form
 //           blocks too but is not what this hook uses.) Precedence across hooks: deny > ask > allow.
-//   wiring  `$WP/hooks/hooks.json`: { "hooks": { "PreToolUse": [ { "matcher": "Bash", "hooks": [
+//   wiring  `$WP/hooks/hooks.json`: { "hooks": { "PreToolUse": [ { "matcher":
+//           "Bash|Write|Edit|MultiEdit|NotebookEdit", "hooks": [
 //           { "type": "command", "command": "node", "args": ["${CLAUDE_PLUGIN_ROOT}/scripts/rx.mjs",
 //           "guard"], "onFailure": "block" } ] } ] } } — exec form (`args` present), the form the
 //           docs recommend for a path placeholder; `CLAUDE_PLUGIN_ROOT` is also exported to the
@@ -46,8 +67,10 @@
 // host's transport wins). With `--json` the envelope carries `guard` as PASS (allow) / FAIL
 // (block) / N/A (not a publish or ready command) and exits per the verdict, for tests.
 
-import { existsSync, readFileSync, realpathSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { join } from "node:path";
+import { inspectKey, verifyAttestation } from "../attest.mjs";
+import { auditBindingProblem, receiptBindingProblem, receiptFailures } from "../binding.mjs";
 import { RxError } from "../errors.mjs";
 import { computeFingerprints, diffFingerprints } from "../fingerprint.mjs";
 import { loadPreset } from "../preset/load.mjs";
@@ -57,7 +80,8 @@ import { repoStatePathReadOnly } from "../state.mjs";
 import { validateAudit, validateReceipt } from "../audit/artifacts.mjs";
 import { dispositionKey, parseEntries } from "../audit/entries.mjs";
 import { applicableRules, decide as decideAudit, effectsOf, staleDispositions } from "../audit/evaluate.mjs";
-import { readCommand } from "../audit/publish-command.mjs";
+import { checkProtectedPath } from "../audit/protected-paths.mjs";
+import { classifyCommand } from "../audit/publish-command.mjs";
 
 export const HOOKS_DOC_URL = "https://code.claude.com/docs/en/hooks";
 export const PLUGINS_DOC_URL = "https://code.claude.com/docs/en/plugins-reference";
@@ -65,23 +89,27 @@ export const PLUGINS_DOC_URL = "https://code.claude.com/docs/en/plugins-referenc
 /** @type {import("../cli.mjs").CommandSpec} */
 export const spec = {
   name: "guard",
-  summary: "PreToolUse hook: allow `ray publish` / `npm run publish` only behind a current receipt and audit; always block `gh pr ready`",
+  summary: "PreToolUse hook: allow `ray publish` / `npm run publish` only behind a current, attested receipt and audit; always block `gh pr ready`; block writes to rx state and the attestation key",
   root: "none",
   network: "none",
-  state: "reads repo/receipt.json and repo/audit.json of the extension that resolves from the publish command's directory (the hook payload's cwd, or the one `cd <dir> &&` the allowed shapes admit); creates nothing",
+  state: "reads repo/receipt.json and repo/audit.json of the extension that resolves from the publish command's directory (the hook payload's cwd, or the one `cd <dir> &&` the allowed shapes admit), the attestation key $XDG_CONFIG_HOME/raycast-harness/attest.key and that root's generation file under $XDG_CONFIG_HOME/raycast-harness/generations/; creates nothing",
   checks: {
-    guard: { description: "PASS allow / FAIL block (with the one-sentence reason) / N/A not a publish or ready command", levels: ["PASS", "FAIL", "N/A"] },
+    guard: { description: "PASS allow / FAIL block (with the one-sentence reason) / N/A not a guarded command or target", levels: ["PASS", "FAIL", "N/A"] },
   },
   data: {
     decision: "\"allow\" | \"block\"",
     reason: "string — the sentence a block carries; \"allowed\" or why it was not a guarded command",
-    command: "string | null — the Bash command examined",
+    command: "string | null — the Bash command examined (null for any other tool)",
+    path: "string | null — the physical Write / Edit / MultiEdit / NotebookEdit target examined (null for Bash and other tools)",
     roots: "string[] — the extension root the publish resolved to (one element, or none when blocked before any state was read)",
     receipt: "{ present, fresh, complete } for the root checked; null until a root check begins (not a publish, blocked before any state was read, or no root resolves)",
     audit: "{ present, fresh, blocking } for the root checked; null on the same early returns as receipt",
   },
   examples: ["echo '{\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"npm run publish\"},\"cwd\":\".\"}' | rx guard --json"],
 };
+
+/** The file-writing tools whose target the guard checks against rx state and the key. */
+export const WRITE_TOOLS = new Set(["Write", "Edit", "MultiEdit", "NotebookEdit"]);
 
 /** The JSON decision document Claude Code reads on a block. @param {string} reason */
 export function denyDocument(reason) {
@@ -122,9 +150,36 @@ export async function checkRoot(root, version) {
   } catch (e) {
     return fail(`the receipt at ${receiptPath} is unreadable (${/** @type {Error} */ (e).message}); run rx gates again`);
   }
+
+  // Provenance first: both files must carry this machine's attestation before any other check
+  // reads them. The key is only read here, never created.
+  const key = inspectKey();
+  const receiptForged = verifyAttestation(receipt, key, { name: "receipt.json", rerun: "rx gates, then rx audit record" });
+  if (receiptForged) return fail(receiptForged);
+  const auditPath = await repoStatePathReadOnly(root, "audit.json");
+  /** @type {any} */
+  let audit;
+  /** @type {string | null} */
+  let auditUnreadable = null;
+  if (existsSync(auditPath)) {
+    try {
+      audit = JSON.parse(readFileSync(auditPath, "utf8"));
+    } catch (e) {
+      auditUnreadable = /** @type {Error} */ (e).message;
+    }
+    if (auditUnreadable === null) {
+      const auditForged = verifyAttestation(audit, key, { name: "audit.json", rerun: "rx audit record" });
+      if (auditForged) return fail(auditForged);
+    }
+  }
+
   const shape = validateReceipt(receipt, { version });
   if (shape) return fail(`${shape}; run rx gates again`);
   receiptState.present = true;
+  // Bound to this checkout and to its latest gates attempt (src/binding.mjs): a receipt copied
+  // from another clone, or saved and restored across a later gates attempt, blocks here.
+  const unbound = await receiptBindingProblem(receipt, root);
+  if (unbound) return fail(unbound);
 
   const fresh = await computeFingerprints({ root, version, presetPath: receipt.inputs.preset, forbiddenPath: receipt.inputs.forbidden });
   fp = fresh.combined;
@@ -132,22 +187,17 @@ export async function checkRoot(root, version) {
   if (drift.length) return fail(`the receipt is stale: ${drift.filter((d) => d !== "combined").join(", ") || "fingerprints"} changed since rx gates ran; run rx gates and rx audit record again`);
   receiptState.fresh = true;
 
-  const bad = receipt.results.filter((/** @type {any} */ r) => r.verdict === "FAIL" || r.verdict === "ERROR");
-  if (bad.length) return fail(`the receipt records ${bad.length} FAIL/ERROR result(s) (${[...new Set(bad.map((/** @type {any} */ r) => r.id))].slice(0, 5).join(", ")}); a receipt is only written clean, so this one was edited: run rx gates again`);
+  const failures = receiptFailures(receipt);
+  if (failures) return fail(failures);
   receiptState.complete = true;
 
-  const auditPath = await repoStatePathReadOnly(root, "audit.json");
-  if (!existsSync(auditPath)) return fail(`no audit at ${auditPath}; run rx audit record`);
-  /** @type {any} */
-  let audit;
-  try {
-    audit = JSON.parse(readFileSync(auditPath, "utf8"));
-  } catch (e) {
-    return fail(`the audit at ${auditPath} is unreadable (${/** @type {Error} */ (e).message}); run rx audit record again`);
-  }
+  if (audit === undefined && auditUnreadable === null) return fail(`no audit at ${auditPath}; run rx audit record`);
+  if (auditUnreadable !== null) return fail(`the audit at ${auditPath} is unreadable (${auditUnreadable}); run rx audit record again`);
   const auditShape = validateAudit(audit, { version });
   if (auditShape) return fail(`${auditShape}; run rx audit record again`);
   auditState.present = true;
+  const superseded = auditBindingProblem(audit, receipt);
+  if (superseded) return fail(superseded);
   if (audit.fingerprint !== fresh.combined) return fail("the audit is tied to a different receipt than the current tree; run rx audit record again");
   auditState.fresh = true;
 
@@ -195,17 +245,32 @@ export async function checkRoot(root, version) {
  * Decide for a hook payload.
  * @param {any} payload the parsed hook payload
  * @param {string} version the running rx version
- * @returns {Promise<{ decision: "allow" | "block", guarded: boolean, reason: string, command: string | null, roots: string[], receipt: ReceiptState | null, audit: AuditState | null, fingerprint: string | null }>}
+ * @returns {Promise<{ decision: "allow" | "block", guarded: boolean, reason: string, command: string | null, path: string | null, roots: string[], receipt: ReceiptState | null, audit: AuditState | null, fingerprint: string | null }>}
  */
 export async function decide(payload, version) {
-  const command = payload?.tool_name === "Bash" && typeof payload?.tool_input?.command === "string" ? payload.tool_input.command : null;
-  /** @type {{ command: string | null, roots: string[], receipt: null, audit: null, fingerprint: null }} */
-  const none = { command, roots: [], receipt: null, audit: null, fingerprint: null };
-  if (command === null) return { decision: "allow", guarded: false, reason: `not a Bash command (tool ${JSON.stringify(payload?.tool_name ?? null)})`, ...none };
+  const cwd = typeof payload?.cwd === "string" && payload.cwd ? payload.cwd : process.cwd();
+  const tool = payload?.tool_name;
 
-  const cwd = typeof payload.cwd === "string" && payload.cwd ? payload.cwd : process.cwd();
-  const read = readCommand(command, cwd);
+  // Write / Edit / MultiEdit / NotebookEdit: only rx state and the attestation key are guarded.
+  if (typeof tool === "string" && WRITE_TOOLS.has(tool)) {
+    const field = tool === "NotebookEdit" ? "notebook_path" : "file_path";
+    const target = payload?.tool_input?.[field];
+    const base = { command: null, roots: [], receipt: null, audit: null, fingerprint: null };
+    if (typeof target !== "string" || !target) return { decision: "allow", guarded: false, reason: `${tool} without a ${field}; nothing to guard`, path: null, ...base };
+    const p = await checkProtectedPath(target, cwd);
+    if (!p.protected) return { decision: "allow", guarded: false, reason: `${tool} of a path outside rx state`, path: p.path, ...base };
+    const where = p.what === "key" ? `the rx attestation key or its directory (${p.base})` : `the rx state directory ${p.base}`;
+    return { decision: "block", guarded: true, reason: `rx state is written only by rx: ${tool} of ${p.path} targets ${where}; run the rx command that owns it (rx gates, rx audit record) instead`, path: p.path, ...base };
+  }
+
+  const command = tool === "Bash" && typeof payload?.tool_input?.command === "string" ? payload.tool_input.command : null;
+  /** @type {{ command: string | null, path: null, roots: string[], receipt: null, audit: null, fingerprint: null }} */
+  const none = { command, path: null, roots: [], receipt: null, audit: null, fingerprint: null };
+  if (command === null) return { decision: "allow", guarded: false, reason: `not a guarded tool (tool ${JSON.stringify(tool ?? null)})`, ...none };
+
+  const read = await classifyCommand(command, cwd);
   if (read.kind === "ready") return { decision: "block", guarded: true, reason: "marking a PR ready for review is Chris's click, not the agent's; leave it a draft and hand him the link", ...none };
+  if (read.kind === "state") return { decision: "block", guarded: true, reason: "rx state is written only by rx: this command mentions .git/rx or the rx attestation key; use rx gates / rx audit record to write it and rx audit show to read it", ...none };
   if (read.kind === "unknown") return { decision: "block", guarded: true, reason: `cannot determine what this command runs: ${read.reason}`, ...none };
   if (read.kind === "other") return { decision: "allow", guarded: false, reason: "not a publish or ready command", ...none };
 
@@ -214,16 +279,21 @@ export async function decide(payload, version) {
   // directory that does not exist blocks (bash's `cd` would fail and nothing would run; still, the
   // guard never guesses).
   if (!existsSync(read.dir)) return { decision: "block", guarded: true, reason: `publish blocked: the directory ${read.dir} does not exist`, ...none };
+  // A target that exists but is not a directory (`cd ./package.json && …`): bash's cd fails, so
+  // nothing would publish; the guard says so before looking up any root or receipt.
+  if (!statSync(read.dir).isDirectory()) return { decision: "block", guarded: true, reason: `publish blocked: the cd target ${read.dir} is not a directory`, ...none };
   const dir = realpathSync(read.dir);
   /** @type {string} */
   let root;
   try {
-    root = resolveRoot({ cwd: dir });
+    // realpath again: resolveRoot's one-level-down search returns the lexical child, which is a
+    // symlink when the extension is linked in; the guard reports and checks the physical root.
+    root = realpathSync(resolveRoot({ cwd: dir }));
   } catch (e) {
     return { decision: "block", guarded: true, reason: `publish blocked: no extension root resolves from ${dir} (${/** @type {Error} */ (e).message}); run rx gates from the extension and publish from there`, ...none };
   }
   const check = await checkRoot(root, version);
-  const rest = { command, roots: [root], receipt: check.receipt, audit: check.audit, fingerprint: check.fingerprint };
+  const rest = { command, path: null, roots: [root], receipt: check.receipt, audit: check.audit, fingerprint: check.fingerprint };
   if (!check.ok) return { decision: "block", guarded: true, reason: `publish of ${root} blocked: ${check.reason}`, ...rest };
   return { decision: "allow", guarded: true, reason: `${check.reason} for ${root}`, ...rest };
 }
@@ -246,7 +316,7 @@ export async function run({ args, results, stdin, log, version }) {
   else results.fail("guard", d.reason);
   if (d.decision === "block") log(`rx guard: ${d.reason}\n`);
 
-  const data = { decision: d.decision, reason: d.reason, command: d.command, roots: d.roots, receipt: d.receipt, audit: d.audit };
+  const data = { decision: d.decision, reason: d.reason, command: d.command, path: d.path, roots: d.roots, receipt: d.receipt, audit: d.audit };
   /** @type {import("../cli.mjs").CommandOutput & { transport?: { stdout: string, exit: number } }} */
   const out = { data, fingerprint: d.fingerprint };
   // The hook transport (see the header). The dispatcher writes `transport.stdout` verbatim and
