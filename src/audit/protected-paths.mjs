@@ -89,7 +89,7 @@ export function resolveFsOrder(filePath, cwd) {
  * @param {string} p absolute
  * @returns {string}
  */
-export function physicalPath(p) {
+function physicalPath(p) {
   return resolveFsOrder(p, sep);
 }
 
@@ -112,7 +112,7 @@ function deepestDir(p) {
 const lower = (p) => p.toLowerCase();
 
 /** Is `p` at or under `base` (case-insensitive)? @param {string} p @param {string} base */
-export function within(p, base) {
+function within(p, base) {
   const a = lower(p);
   const b = lower(base).replace(/[\\/]+$/, "");
   return a === b || a.startsWith(b + sep);
@@ -122,27 +122,50 @@ export function within(p, base) {
  * The `…/.git/rx` prefix of a path containing the segment sequence `.git` / `rx`, or null.
  * @param {string} p
  */
-export function stateSegments(p) {
+function stateSegments(p) {
   const segs = p.split(sep);
   for (let i = 0; i + 1 < segs.length; i++) if (lower(segs[i]) === ".git" && lower(segs[i + 1]) === "rx") return segs.slice(0, i + 2).join(sep);
   return null;
 }
 
 /**
+ * What one guard decision has already looked up, so several targets in one command share it: the
+ * key directory's lexical and physical forms, and per directory the lexical and physical forms of
+ * its repository's `git rev-parse --git-path rx` (null outside a repository).
+ * @typedef {{ keyDirs: string[] | null, stateDirs: Map<string, Promise<string[] | null>> }} PathMemo
+ */
+
+/** A fresh memo for one decision. @returns {PathMemo} */
+export function pathMemo() {
+  return { keyDirs: null, stateDirs: new Map() };
+}
+
+/** @param {string} dir @returns {Promise<string[] | null>} */
+async function stateDirsOf(dir) {
+  const r = await git(["rev-parse", "--path-format=absolute", "--git-path", "rx"], { cwd: dir, allowFail: true });
+  if (r.code !== 0 || !r.stdout.trim()) return null;
+  const stateDir = r.stdout.trim();
+  return [stateDir, physicalPath(stateDir)];
+}
+
+/**
  * Decide whether a Write/Edit target is protected.
  * @param {string} filePath the tool's `file_path` / `notebook_path`
  * @param {string} cwd the hook payload's cwd
+ * @param {PathMemo} [memo] shared across the targets of one decision
  * @returns {Promise<{ path: string, protected: false } | { path: string, protected: true, what: "state" | "key", base: string }>}
  *   `path` is the physical target.
  */
-export async function checkProtectedPath(filePath, cwd) {
+export async function checkProtectedPath(filePath, cwd, memo = pathMemo()) {
   const lexical = resolve(cwd, filePath);
   const physical = resolveFsOrder(filePath, cwd);
   const forms = [...new Set([lexical, physical, physicalPath(lexical)])];
 
-  const { dir: keyDir } = keyPaths();
-  const keyDirs = [keyDir, physicalPath(keyDir)];
-  for (const f of forms) for (const k of keyDirs) if (within(f, k)) return { path: physical, protected: true, what: "key", base: k };
+  if (memo.keyDirs === null) {
+    const { dir: keyDir } = keyPaths();
+    memo.keyDirs = [keyDir, physicalPath(keyDir)];
+  }
+  for (const f of forms) for (const k of memo.keyDirs) if (within(f, k)) return { path: physical, protected: true, what: "key", base: k };
 
   for (const f of forms) {
     const base = stateSegments(f);
@@ -150,11 +173,13 @@ export async function checkProtectedPath(filePath, cwd) {
   }
 
   for (const d of new Set(forms.map(deepestDir))) {
-    const r = await git(["rev-parse", "--path-format=absolute", "--git-path", "rx"], { cwd: d, allowFail: true });
-    if (r.code === 0 && r.stdout.trim()) {
-      const stateDir = r.stdout.trim();
-      for (const s of [stateDir, physicalPath(stateDir)]) for (const f of forms) if (within(f, s)) return { path: physical, protected: true, what: "state", base: s };
+    let pending = memo.stateDirs.get(d);
+    if (pending === undefined) {
+      pending = stateDirsOf(d);
+      memo.stateDirs.set(d, pending);
     }
+    const stateDirs = await pending;
+    if (stateDirs) for (const s of stateDirs) for (const f of forms) if (within(f, s)) return { path: physical, protected: true, what: "state", base: s };
   }
   return { path: physical, protected: false };
 }

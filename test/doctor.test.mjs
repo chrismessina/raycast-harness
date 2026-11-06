@@ -2,33 +2,12 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { _setGhForTests } from "../src/commands/doctor.mjs";
-import { fakeExtension, rx, withTempDir } from "./helpers.mjs";
+import { fakeExtension, rx, withConfig } from "./helpers.mjs";
 
 // doctor is report-only: it may WARN or say N/A, it never FAILs. The gh probe is stubbed (no
 // network in tests); these tests only assert its verdict is PASS or WARN, never its content. Every
 // test points XDG_CONFIG_HOME at its temp dir so the attest-key check never reads the real
 // ~/.config.
-
-/**
- * withTempDir with XDG_CONFIG_HOME at <dir>/config, restored after.
- * @template T
- * @param {(dir: string) => Promise<T>} fn
- */
-async function withConfig(fn) {
-  return withTempDir(async (dir) => {
-    const saved = process.env.XDG_CONFIG_HOME;
-    process.env.XDG_CONFIG_HOME = join(dir, "config");
-    _setGhForTests(async () => ({ code: 1, stdout: "", stderr: "You are not logged into any GitHub hosts. To log in, run: gh auth login" }));
-    try {
-      return await fn(dir);
-    } finally {
-      _setGhForTests(null);
-      if (saved === undefined) delete process.env.XDG_CONFIG_HOME;
-      else process.env.XDG_CONFIG_HOME = saved;
-    }
-  });
-}
 
 test("doctor without a root: node PASS, ray N/A with reason, never FAIL", async () => {
   await withConfig(async (dir) => {

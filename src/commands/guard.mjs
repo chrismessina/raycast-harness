@@ -70,17 +70,10 @@
 import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { inspectKey, verifyAttestation } from "../attest.mjs";
-import { auditBindingProblem, receiptBindingProblem, receiptFailures } from "../binding.mjs";
 import { RxError } from "../errors.mjs";
-import { computeFingerprints, diffFingerprints } from "../fingerprint.mjs";
-import { loadPreset } from "../preset/load.mjs";
-import { buildApplyContext, loadSources, readLockfile, readPublished } from "../preflight/context.mjs";
 import { resolveRoot } from "../root.mjs";
 import { repoStatePathReadOnly } from "../state.mjs";
-import { validateAudit, validateReceipt } from "../audit/artifacts.mjs";
-import { dispositionKey, parseEntries } from "../audit/entries.mjs";
-import { applicableRules, decide as decideAudit, effectsOf, staleDispositions } from "../audit/evaluate.mjs";
-import { checkProtectedPath } from "../audit/protected-paths.mjs";
+import { checkProtectedPath, pathMemo } from "../audit/protected-paths.mjs";
 import { classifyCommand } from "../audit/publish-command.mjs";
 
 export const HOOKS_DOC_URL = "https://code.claude.com/docs/en/hooks";
@@ -117,6 +110,25 @@ export function denyDocument(reason) {
 }
 
 /**
+ * Did a read or stat of `path` fail because nothing is there? ENOENT, or any failure for which
+ * `existsSync` also says no (a missing or unreadable parent), so the "missing" sentences match the
+ * existsSync checks they replace.
+ * @param {unknown} e @param {string} path
+ */
+function isMissing(e, path) {
+  return /** @type {NodeJS.ErrnoException} */ (e).code === "ENOENT" || !existsSync(path);
+}
+
+/**
+ * The physical extension root that resolves from `dir`: resolveRoot's one-level-down search returns
+ * the lexical child, which is a symlink when the extension is linked in.
+ * @param {string} dir
+ */
+function physicalRoot(dir) {
+  return realpathSync(resolveRoot({ cwd: dir }));
+}
+
+/**
  * @typedef {{ present: boolean, fresh: boolean, complete: boolean }} ReceiptState
  * @typedef {{ present: boolean, fresh: boolean, blocking: boolean }} AuditState
  * @typedef {{ ok: boolean, reason: string, receipt: ReceiptState, audit: AuditState, fingerprint: string | null }} RootCheck
@@ -129,6 +141,25 @@ export function denyDocument(reason) {
  * @returns {Promise<RootCheck>}
  */
 export async function checkRoot(root, version) {
+  // Loaded here, not at the top: only a publish reaches this check, and the guard runs before
+  // every Bash and file-writing tool call.
+  const [
+    { auditBindingProblem, receiptBindingProblem, receiptFailures },
+    { computeFingerprints, diffFingerprints },
+    { loadPreset },
+    { buildApplyContext, loadSources, readLockfile, readPublished },
+    { validateAudit, validateReceipt },
+    { dispositionKey, parseEntries },
+    { applicableRules, decide: decideAudit, effectsOf, staleDispositions },
+  ] = await Promise.all([
+    import("../binding.mjs"),
+    import("../fingerprint.mjs"),
+    import("../preset/load.mjs"),
+    import("../preflight/context.mjs"),
+    import("../audit/artifacts.mjs"),
+    import("../audit/entries.mjs"),
+    import("../audit/evaluate.mjs"),
+  ]);
   const receiptState = { present: false, fresh: false, complete: false };
   const auditState = { present: false, fresh: false, blocking: true };
   /** @type {string | null} */
@@ -142,17 +173,15 @@ export async function checkRoot(root, version) {
   } catch (e) {
     return fail(`${root} has no rx state (${/** @type {Error} */ (e).message.split("\n")[0]}); it is not inside a git repository, so rx gates never ran there`);
   }
-  if (!existsSync(receiptPath)) return fail(`no gates receipt at ${receiptPath}; run rx gates, then rx audit record`);
   /** @type {any} */
   let receipt;
   try {
     receipt = JSON.parse(readFileSync(receiptPath, "utf8"));
   } catch (e) {
+    if (isMissing(e, receiptPath)) return fail(`no gates receipt at ${receiptPath}; run rx gates, then rx audit record`);
     return fail(`the receipt at ${receiptPath} is unreadable (${/** @type {Error} */ (e).message}); run rx gates again`);
   }
 
-  // Provenance first: both files must carry this machine's attestation before any other check
-  // reads them. The key is only read here, never created.
   const key = inspectKey();
   const receiptForged = verifyAttestation(receipt, key, { name: "receipt.json", rerun: "rx gates, then rx audit record" });
   if (receiptForged) return fail(receiptForged);
@@ -161,23 +190,19 @@ export async function checkRoot(root, version) {
   let audit;
   /** @type {string | null} */
   let auditUnreadable = null;
-  if (existsSync(auditPath)) {
-    try {
-      audit = JSON.parse(readFileSync(auditPath, "utf8"));
-    } catch (e) {
-      auditUnreadable = /** @type {Error} */ (e).message;
-    }
-    if (auditUnreadable === null) {
-      const auditForged = verifyAttestation(audit, key, { name: "audit.json", rerun: "rx audit record" });
-      if (auditForged) return fail(auditForged);
-    }
+  try {
+    audit = JSON.parse(readFileSync(auditPath, "utf8"));
+  } catch (e) {
+    if (!isMissing(e, auditPath)) auditUnreadable = /** @type {Error} */ (e).message;
+  }
+  if (audit !== undefined) {
+    const auditForged = verifyAttestation(audit, key, { name: "audit.json", rerun: "rx audit record" });
+    if (auditForged) return fail(auditForged);
   }
 
   const shape = validateReceipt(receipt, { version });
   if (shape) return fail(`${shape}; run rx gates again`);
   receiptState.present = true;
-  // Bound to this checkout and to its latest gates attempt (src/binding.mjs): a receipt copied
-  // from another clone, or saved and restored across a later gates attempt, blocks here.
   const unbound = await receiptBindingProblem(receipt, root);
   if (unbound) return fail(unbound);
 
@@ -250,6 +275,7 @@ export async function checkRoot(root, version) {
 export async function decide(payload, version) {
   const cwd = typeof payload?.cwd === "string" && payload.cwd ? payload.cwd : process.cwd();
   const tool = payload?.tool_name;
+  const memo = pathMemo();
 
   // Write / Edit / MultiEdit / NotebookEdit: only rx state and the attestation key are guarded.
   if (typeof tool === "string" && WRITE_TOOLS.has(tool)) {
@@ -257,7 +283,7 @@ export async function decide(payload, version) {
     const target = payload?.tool_input?.[field];
     const base = { command: null, roots: [], receipt: null, audit: null, fingerprint: null };
     if (typeof target !== "string" || !target) return { decision: "allow", guarded: false, reason: `${tool} without a ${field}; nothing to guard`, path: null, ...base };
-    const p = await checkProtectedPath(target, cwd);
+    const p = await checkProtectedPath(target, cwd, memo);
     if (!p.protected) return { decision: "allow", guarded: false, reason: `${tool} of a path outside rx state`, path: p.path, ...base };
     const where = p.what === "key" ? `the rx attestation key or its directory (${p.base})` : `the rx state directory ${p.base}`;
     return { decision: "block", guarded: true, reason: `rx state is written only by rx: ${tool} of ${p.path} targets ${where}; run the rx command that owns it (rx gates, rx audit record) instead`, path: p.path, ...base };
@@ -268,7 +294,7 @@ export async function decide(payload, version) {
   const none = { command, path: null, roots: [], receipt: null, audit: null, fingerprint: null };
   if (command === null) return { decision: "allow", guarded: false, reason: `not a guarded tool (tool ${JSON.stringify(tool ?? null)})`, ...none };
 
-  const read = await classifyCommand(command, cwd);
+  const read = await classifyCommand(command, cwd, memo);
   if (read.kind === "ready") return { decision: "block", guarded: true, reason: "marking a PR ready for review is Chris's click, not the agent's; leave it a draft and hand him the link", ...none };
   if (read.kind === "state") return { decision: "block", guarded: true, reason: "rx state is written only by rx: this command mentions .git/rx or the rx attestation key; use rx gates / rx audit record to write it and rx audit show to read it", ...none };
   if (read.kind === "unknown") return { decision: "block", guarded: true, reason: `cannot determine what this command runs: ${read.reason}`, ...none };
@@ -278,17 +304,20 @@ export async function decide(payload, version) {
   // repository, and the lexical parent of a symlink is not where npm looks for package.json. A
   // directory that does not exist blocks (bash's `cd` would fail and nothing would run; still, the
   // guard never guesses).
-  if (!existsSync(read.dir)) return { decision: "block", guarded: true, reason: `publish blocked: the directory ${read.dir} does not exist`, ...none };
-  // A target that exists but is not a directory (`cd ./package.json && …`): bash's cd fails, so
-  // nothing would publish; the guard says so before looking up any root or receipt.
-  if (!statSync(read.dir).isDirectory()) return { decision: "block", guarded: true, reason: `publish blocked: the cd target ${read.dir} is not a directory`, ...none };
+  /** @type {import("node:fs").Stats} */
+  let target;
+  try {
+    target = statSync(read.dir);
+  } catch (e) {
+    if (isMissing(e, read.dir)) return { decision: "block", guarded: true, reason: `publish blocked: the directory ${read.dir} does not exist`, ...none };
+    throw e;
+  }
+  if (!target.isDirectory()) return { decision: "block", guarded: true, reason: `publish blocked: the cd target ${read.dir} is not a directory`, ...none };
   const dir = realpathSync(read.dir);
   /** @type {string} */
   let root;
   try {
-    // realpath again: resolveRoot's one-level-down search returns the lexical child, which is a
-    // symlink when the extension is linked in; the guard reports and checks the physical root.
-    root = realpathSync(resolveRoot({ cwd: dir }));
+    root = physicalRoot(dir);
   } catch (e) {
     return { decision: "block", guarded: true, reason: `publish blocked: no extension root resolves from ${dir} (${/** @type {Error} */ (e).message}); run rx gates from the extension and publish from there`, ...none };
   }

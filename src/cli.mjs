@@ -4,7 +4,7 @@
 // a command module that fails to load, ends in an ERROR result and exit 2; nothing here calls
 // process.exit.
 
-import { readdirSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { helpText, parseArgs } from "./args.mjs";
@@ -47,7 +47,7 @@ export const PROTOCOL_IDS = new Set(["args", "root", "input", "tooling", "github
  * explicit root that cannot be read names no repository); it is best-effort and its own failure is
  * never reported, so the arguments stay the only result. `--help` with `--json` is an `ERROR args` that is a help request: it
  * invalidates nothing.
- * @typedef {{ spec: CommandSpec, run: (ctx: CommandContext) => Promise<CommandOutput>, invalidate?: (ctx: { root: string | null, subcommand: string | null, cwd: string }) => Promise<void> }} CommandModule
+ * @typedef {{ spec: CommandSpec, run: (ctx: CommandContext) => Promise<CommandOutput>, invalidate?: (ctx: { root: string | null, subcommand: string | null, cwd: string, log: (s: string) => void }) => Promise<void> }} CommandModule
  */
 
 export const COMMANDS_DIR = join(HERE, "commands");
@@ -61,18 +61,47 @@ export async function loadCommands(dir = COMMANDS_DIR) {
   /** @type {Map<string, CommandModule>} */
   const map = new Map();
   for (const f of files) {
-    /** @type {CommandModule} */
-    let mod;
-    try {
-      mod = await import(pathToFileURL(join(dir, f)).href);
-    } catch (e) {
-      throw new RxError(`command module ${f} failed to load: ${firstLine(/** @type {Error} */ (e).message)}`, { id: "protocol" });
-    }
-    if (!mod.spec?.name || typeof mod.run !== "function") throw new RxError(`command module ${f} must export spec and run`, { id: "protocol" });
+    const mod = await importCommand(dir, f);
     if (map.has(mod.spec.name)) throw new RxError(`duplicate command ${mod.spec.name} in ${f}`, { id: "protocol" });
     map.set(mod.spec.name, mod);
   }
   return map;
+}
+
+/**
+ * Import one command module file and check that it exports spec and run.
+ * @param {string} dir @param {string} f the file name
+ * @returns {Promise<CommandModule>}
+ */
+async function importCommand(dir, f) {
+  /** @type {CommandModule} */
+  let mod;
+  try {
+    mod = await import(pathToFileURL(join(dir, f)).href);
+  } catch (e) {
+    throw new RxError(`command module ${f} failed to load: ${firstLine(/** @type {Error} */ (e).message)}`, { id: "protocol" });
+  }
+  if (!mod.spec?.name || typeof mod.run !== "function") throw new RxError(`command module ${f} must export spec and run`, { id: "protocol" });
+  return mod;
+}
+
+/** Commands that read the whole registry; the dispatcher loads every module for them. */
+const REGISTRY_READERS = new Set(["commands", "preset"]);
+
+/**
+ * The registry the dispatcher needs for `name`: only `<name>.mjs` when that file exists and declares
+ * that name, else every command (loadCommands, which also runs the registry-wide checks). Usage,
+ * help, version and the registry readers always load everything.
+ * @param {string | undefined} name
+ * @param {string} [dir]
+ * @returns {Promise<Map<string, CommandModule>>}
+ */
+async function commandsFor(name, dir = COMMANDS_DIR) {
+  if (name && /^[a-z0-9][a-z0-9-]*$/.test(name) && !REGISTRY_READERS.has(name) && existsSync(join(dir, `${name}.mjs`))) {
+    const mod = await importCommand(dir, `${name}.mjs`);
+    if (mod.spec.name === name) return new Map([[name, mod]]);
+  }
+  return loadCommands(dir);
 }
 
 /** @param {string} s */
@@ -127,7 +156,7 @@ export async function runCli(argv, io = {}) {
   /** @type {Map<string, CommandModule>} */
   let commands;
   try {
-    commands = await loadCommands(io.commandsDir);
+    commands = await commandsFor(name, io.commandsDir);
   } catch (e) {
     return fromError(e, results, finish, log);
   }
@@ -157,7 +186,7 @@ export async function runCli(argv, io = {}) {
   try {
     args = parseArgs(rest, mod.spec);
   } catch (e) {
-    if (mod.invalidate && e instanceof ArgError) await invalidateOnArgError(mod, e, rest, cwd);
+    if (mod.invalidate && e instanceof ArgError) await invalidateOnArgError(mod, e, rest, cwd, log);
     return fromError(e, results, finish, log);
   }
   if (args.help) {
@@ -210,8 +239,9 @@ export async function runCli(argv, io = {}) {
  * @param {ArgError} e
  * @param {string[]} rest
  * @param {string} cwd
+ * @param {(s: string) => void} log
  */
-async function invalidateOnArgError(mod, e, rest, cwd) {
+async function invalidateOnArgError(mod, e, rest, cwd, log) {
   const partial = e.partial;
   const rootTokens = rest.filter((t) => t === "--root" || t.startsWith("--root=")).length;
   const parsedRoot = partial && typeof partial.flags["--root"] === "string" ? partial.flags["--root"] : null;
@@ -224,7 +254,7 @@ async function invalidateOnArgError(mod, e, rest, cwd) {
     // No root resolves: nothing to invalidate.
   }
   try {
-    await /** @type {NonNullable<CommandModule["invalidate"]>} */ (mod.invalidate)({ root, subcommand: partial?.subcommand ?? null, cwd });
+    await /** @type {NonNullable<CommandModule["invalidate"]>} */ (mod.invalidate)({ root, subcommand: partial?.subcommand ?? null, cwd, log });
   } catch {
     // Best-effort: the argument error is the result; a failed deletion must not hide it.
   }

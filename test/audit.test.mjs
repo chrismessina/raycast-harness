@@ -461,3 +461,28 @@ test("audit record (Codex P2 #9): an entries file inside the extension root is E
     assert.match(r2.json.results[0].message, /is inside the extension root/);
   });
 });
+
+// ---- 5A (Chris, 2026-11-06): a recording that removes a valid audit says so ----------------
+
+test("audit record: removing the previous audit is announced, on a bad input and on an argument error", async () => {
+  await withGatedEnv(async (dir) => {
+    const { root } = await buildGated(dir);
+    await gates(root);
+    const preset = join(REPO, "test", "fixtures", "gates", "preset.json");
+    const outside = join(dir, "entries.json");
+    writeFileSync(outside, JSON.stringify(fullEntries()));
+    const first = await rx(["audit", "record", "--root", root, "--preset", preset, "--entries", outside, "--json"]);
+    assert.ok(existsSync(await auditPath(root)), first.stdout + first.stderr);
+    const inside = join(root, "entries.json");
+    writeFileSync(inside, JSON.stringify(fullEntries()));
+    const r = await rx(["audit", "record", "--root", root, "--preset", preset, "--entries", inside, "--json"]);
+    rmSync(inside);
+    assert.equal(r.code, 2);
+    assert.match(r.stderr, /audit: removed the previous audit at .*audit\.json; a new one is written only when the inputs are valid/);
+    await rx(["audit", "record", "--root", root, "--preset", preset, "--entries", outside, "--json"]);
+    assert.ok(existsSync(await auditPath(root)));
+    const bad = await rx(["audit", "record", "--root", root, "--json"]);
+    assert.equal(bad.code, 2);
+    assert.match(bad.stderr, /audit: removed the previous audit at .*audit\.json \(the arguments did not parse\); run rx audit record again/);
+  });
+});

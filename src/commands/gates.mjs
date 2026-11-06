@@ -18,14 +18,14 @@
 // Network: stale's (GitHub API, git fetch), api-floor's optional npm read, and whatever the
 // project's own build and lint scripts do.
 
-import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { existsSync, readFileSync, rmSync } from "node:fs";
+import { join, resolve } from "node:path";
 import { attest, loadOrCreateKey } from "../attest.mjs";
 import { rotateGeneration, subjectOf } from "../binding.mjs";
 import { RxError } from "../errors.mjs";
 import { run as exec } from "../exec.mjs";
 import { computeFingerprints } from "../fingerprint.mjs";
-import { repoStatePath } from "../state.mjs";
+import { repoStatePath, writeJsonAtomic } from "../state.mjs";
 import { Results } from "../verdict.mjs";
 import { blocked, runStep } from "../audit/step.mjs";
 import * as apiFloor from "./api-floor.mjs";
@@ -150,9 +150,9 @@ async function toolStep(name, root, results, env, log) {
  * flag): the generation rotates and the previous receipt goes then too, as at the start of run().
  * @type {NonNullable<import("../cli.mjs").CommandModule["invalidate"]>}
  */
-export async function invalidate({ root }) {
+export async function invalidate({ root, log }) {
   if (!root) return;
-  await rotateThenDelete(root);
+  await rotateThenDelete(root, (receiptPath) => log(`gates: removed the previous receipt at ${receiptPath} (the arguments did not parse); run rx gates again\n`));
 }
 
 /**
@@ -160,10 +160,12 @@ export async function invalidate({ root }) {
  * git (the generation key is the root's realpath), so a git lookup or state-directory creation
  * that fails afterward cannot leave an old receipt/audit pair authorized. A rotation that fails
  * still deletes the receipt when the state path resolves, and its own error is the one reported.
+ * `announce` runs right after an existing receipt is deleted, before any rotation error is rethrown.
  * @param {string} root
+ * @param {(receiptPath: string) => void} announce
  * @returns {Promise<{ generation: string, receiptPath: string }>}
  */
-async function rotateThenDelete(root) {
+async function rotateThenDelete(root, announce) {
   /** @type {string | undefined} */
   let generation;
   /** @type {unknown} */
@@ -177,7 +179,9 @@ async function rotateThenDelete(root) {
   let receiptPath;
   try {
     receiptPath = await repoStatePath(root, "receipt.json");
+    const existed = existsSync(receiptPath);
     rmSync(receiptPath, { force: true });
+    if (existed) announce(receiptPath);
   } catch (e) {
     throw rotationError ?? e;
   }
@@ -194,14 +198,13 @@ export async function run(ctx) {
   //    that fails cannot leave an old authorization behind, and a receipt saved before this attempt
   //    cannot be restored into authority afterward. A rotation that fails (a config directory open
   //    to group or other) still deletes the receipt.
-  const { generation, receiptPath } = await rotateThenDelete(root);
+  const { generation, receiptPath } = await rotateThenDelete(root, (path) => log(`gates: removed the previous receipt at ${path}; a new one is written only when every step passes\n`));
 
   const presetPath = resolve(cwd, /** @type {string} */ (args.flags["--preset"]));
   const forbiddenPath = resolve(cwd, /** @type {string} */ (args.flags["--forbidden"]));
   for (const [flag, file] of [["--preset", presetPath], ["--forbidden", forbiddenPath]]) {
     if (!existsSync(file)) throw new RxError(`${flag} ${file} does not exist`, { id: "input" });
   }
-  // The attestation key, created on first need; a bad key stops the run before any step.
   const key = loadOrCreateKey();
 
   // The tree as it is before any step runs. Build and lint may write into the payload (generated
@@ -262,10 +265,7 @@ export async function run(ctx) {
       rxVersion: version,
       at: new Date().toISOString(),
     };
-    mkdirSync(dirname(receiptPath), { recursive: true });
-    const tmp = `${receiptPath}.${process.pid}.tmp`;
-    writeFileSync(tmp, JSON.stringify(attest(doc, key), null, 2) + "\n");
-    renameSync(tmp, receiptPath);
+    writeJsonAtomic(receiptPath, attest(doc, key));
     receipt = receiptPath;
     log(`gates: receipt written to ${receiptPath}\n`);
   } else {

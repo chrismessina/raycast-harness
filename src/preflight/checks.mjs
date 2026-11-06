@@ -696,15 +696,12 @@ function agentsMd(root, pkg, sources, c, ids) {
   };
   collect(root);
   const MIME = /^(text|application|image|audio|video|font|multipart|message|model)\//;
-  // Only these extensions are files an extension repo holds; `app/Http/Kernel.php` names another repo's file.
-  const REPO_EXT = /\.(md|json|ts|tsx|js|mjs|cjs|yml|yaml|png|svg)$/;
+  const EXTENSION_REPO_FILE_EXT = /\.(md|json|ts|tsx|js|mjs|cjs|yml|yaml|png|svg)$/;
   for (const f of files) {
     const text = read(join(root, f)) ?? "";
     const lines = text.split("\n");
     lines.forEach((line, i) => {
       if (/\/Users\//.test(line)) bad["agents-md-no-home-paths"].push({ file: f, line: i + 1, text: line.trim().slice(0, 120) });
-      // A reference to another repository opts out of the paths, scripts and symbols checks with the marker
-      // on the same line or alone on the line directly above it; the home-path check above still applies.
       if (line.includes(IGNORE_AGENTS_MD) || (i > 0 && lines[i - 1].trim() === IGNORE_AGENTS_MD)) return;
       for (const m of line.matchAll(/`([^`]+)`/g)) {
         const tok = m[1].trim();
@@ -716,7 +713,7 @@ function agentsMd(root, pkg, sources, c, ids) {
         const slashPath = /^(?![@~/]|https?:)[\w.-]+(?:\/[\w.-]+)+\/?$/.test(tok) && !MIME.test(tok) && !/^[a-z]\w*\.[a-z]/.test(tok.split("/")[0]);
         const bareFile = /^[\w-]+\.(md|json|ts|tsx|js|mjs|cjs|yml|yaml|png|svg)$/.test(tok);
         const last = tok.replace(/\/$/, "").split("/").pop() ?? "";
-        const foreignExt = /^[^.].*\.[^.]+$/.test(last) && !REPO_EXT.test(last); // a dotfile (`.env`) has no extension
+        const foreignExt = /^[^.].*\.[^.]+$/.test(last) && !EXTENSION_REPO_FILE_EXT.test(last); // a dotfile (`.env`) has no extension
         if ((slashPath || bareFile) && !foreignExt && !tok.includes("*")) {
           counts.paths++;
           const found = existsSync(join(root, tok)) || (bareFile && basenames.has(tok));

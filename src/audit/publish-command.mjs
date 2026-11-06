@@ -54,7 +54,7 @@
 
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
-import { checkProtectedPath } from "./protected-paths.mjs";
+import { checkProtectedPath, pathMemo } from "./protected-paths.mjs";
 
 /** A literal word: no quotes, no `$`, no backtick, no tilde, no glob character, no whitespace, no `=`. */
 const WORD = String.raw`[A-Za-z0-9_./+:,@-]+`;
@@ -102,7 +102,7 @@ export function mentionsReady(command) {
  * `.git/rx`.
  * @param {string} text
  */
-export function collapseSeparators(text) {
+function collapseSeparators(text) {
   let prev;
   do {
     prev = text;
@@ -206,12 +206,13 @@ export function pathWords(command) {
  * against `cwd`.
  * @param {string} command
  * @param {string} cwd
+ * @param {import("./protected-paths.mjs").PathMemo} [memo] shared across the words of one decision
  */
-export async function mentionsProtectedPath(command, cwd) {
+export async function mentionsProtectedPath(command, cwd, memo = pathMemo()) {
   for (const w of pathWords(command)) {
     const p = w === "~" ? homedir() : w.startsWith("~/") ? join(homedir(), w.slice(2)) : w.startsWith("~") ? null : w;
     if (p === null) continue;
-    if ((await checkProtectedPath(p, cwd)).protected) return true;
+    if ((await checkProtectedPath(p, cwd, memo)).protected) return true;
   }
   return false;
 }
@@ -263,11 +264,12 @@ export function readCommand(command, cwd) {
  * then state (text or path), then publish / unknown / other.
  * @param {string} command
  * @param {string} cwd
+ * @param {import("./protected-paths.mjs").PathMemo} [memo] the decision's lookups (pathMemo)
  * @returns {Promise<CommandReading>}
  */
-export async function classifyCommand(command, cwd) {
+export async function classifyCommand(command, cwd, memo = pathMemo()) {
   const read = readCommand(command, cwd);
   if (read.kind === "ready" || read.kind === "state") return read;
-  if (await mentionsProtectedPath(command, cwd)) return { kind: "state" };
+  if (await mentionsProtectedPath(command, cwd, memo)) return { kind: "state" };
   return read;
 }

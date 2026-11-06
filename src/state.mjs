@@ -4,9 +4,9 @@
 //   cross-repo   → $XDG_CACHE_HOME/raycast-harness (default ~/.cache/raycast-harness):
 //                  the sparse upstream checkout, the runtime shortcut table
 
-import { mkdirSync } from "node:fs";
+import { mkdirSync, renameSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { gitPath } from "./git.mjs";
 
 /**
@@ -32,10 +32,32 @@ export async function repoStatePathReadOnly(root, ...segments) {
   return join(base, ...segments);
 }
 
+/**
+ * An XDG base directory, read at call time: `$name` when it is set and not blank, else
+ * ~/`fallback`.
+ * @param {"XDG_CACHE_HOME" | "XDG_CONFIG_HOME"} name
+ * @param {string} fallback
+ */
+export function xdgBase(name, fallback) {
+  const v = process.env[name];
+  return v && v.trim() ? v : join(homedir(), fallback);
+}
+
 function cacheBase() {
-  return process.env.XDG_CACHE_HOME && process.env.XDG_CACHE_HOME.trim()
-    ? join(process.env.XDG_CACHE_HOME, "raycast-harness")
-    : join(homedir(), ".cache", "raycast-harness");
+  return join(xdgBase("XDG_CACHE_HOME", ".cache"), "raycast-harness");
+}
+
+/**
+ * Write `value` as indented JSON with a trailing newline, atomically: the parent directory is
+ * created on demand, then a temp file beside `path` is renamed over it.
+ * @param {string} path
+ * @param {unknown} value
+ */
+export function writeJsonAtomic(path, value) {
+  mkdirSync(dirname(path), { recursive: true });
+  const tmp = `${path}.${process.pid}.tmp`;
+  writeFileSync(tmp, JSON.stringify(value, null, 2) + "\n");
+  renameSync(tmp, path);
 }
 
 /**

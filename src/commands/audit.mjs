@@ -29,15 +29,15 @@
 // `guard` verifies before anything else. Evidence text may span lines: it goes into details, messages stay one
 // line.
 
-import { existsSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
-import { dirname, join, resolve, sep } from "node:path";
+import { existsSync, readFileSync, realpathSync, rmSync } from "node:fs";
+import { join, resolve, sep } from "node:path";
 import { attest, inspectKey, loadOrCreateKey, verifyAttestation } from "../attest.mjs";
 import { auditBindingProblem, receiptBindingProblem, receiptFailures } from "../binding.mjs";
 import { RxError } from "../errors.mjs";
 import { computeFingerprints, diffFingerprints } from "../fingerprint.mjs";
 import { loadPreset } from "../preset/load.mjs";
 import { buildApplyContext, loadSources, readLockfile, readPublished } from "../preflight/context.mjs";
-import { repoStatePath, repoStatePathReadOnly } from "../state.mjs";
+import { repoStatePath, repoStatePathReadOnly, writeJsonAtomic } from "../state.mjs";
 import { cachedUpstream } from "../upstream.mjs";
 import { validateReceipt } from "../audit/artifacts.mjs";
 import { EFFECTS, dispositionKey, readEntries } from "../audit/entries.mjs";
@@ -146,8 +146,12 @@ export function insideRoot(file, root) {
  * previous audit goes then too, as it would at the start of record(). `show` deletes nothing.
  * @type {NonNullable<import("../cli.mjs").CommandModule["invalidate"]>}
  */
-export async function invalidate({ root, subcommand }) {
-  if (root && subcommand === "record") rmSync(await repoStatePath(root, "audit.json"), { force: true });
+export async function invalidate({ root, subcommand, log }) {
+  if (!root || subcommand !== "record") return;
+  const auditPath = await repoStatePath(root, "audit.json");
+  const removed = existsSync(auditPath);
+  rmSync(auditPath, { force: true });
+  if (removed) log(`audit: removed the previous audit at ${auditPath} (the arguments did not parse); run rx audit record again\n`);
 }
 
 /** @param {import("../cli.mjs").CommandContext} ctx */
@@ -158,8 +162,9 @@ async function record(ctx) {
 
   // 1. The previous audit never survives the start of a recording.
   const auditPath = await repoStatePath(root, "audit.json");
+  const removed = existsSync(auditPath);
   rmSync(auditPath, { force: true });
-  // The attestation key (src/attest.mjs), created on first need; a bad key is ERROR attest-key.
+  if (removed) ctx.log(`audit: removed the previous audit at ${auditPath}; a new one is written only when the inputs are valid\n`);
   const key = loadOrCreateKey();
 
   // 2. Inputs.
@@ -175,10 +180,7 @@ async function record(ctx) {
     return empty(null);
   }
   const { receipt } = found;
-  // Provenance, as the guard checks it, before any of the receipt's inputs or stale rows are used:
-  // this machine's attestation, then shape, then the binding to this checkout and its latest gates
-  // attempt (src/binding.mjs). Each failure is the guard's own sentence.
-  const forged = verifyAttestation(receipt, { status: "ok", path: key.path, key: key.key, keyId: key.keyId, mode: 0o600 }, { name: "receipt.json", rerun: "rx gates, then rx audit record" });
+  const forged = verifyAttestation(receipt, key, { name: "receipt.json", rerun: "rx gates, then rx audit record" });
   if (forged) {
     results.error("audit-receipt", forged);
     return empty(null);
@@ -308,10 +310,7 @@ async function record(ctx) {
     blocking: d.blocking,
     reportOnly: d.reportOnly,
   };
-  mkdirSync(dirname(auditPath), { recursive: true });
-  const tmp = `${auditPath}.${process.pid}.tmp`;
-  writeFileSync(tmp, JSON.stringify(attest(doc, key), null, 2) + "\n");
-  renameSync(tmp, auditPath);
+  writeJsonAtomic(auditPath, attest(doc, key));
   ctx.log(`audit: written to ${auditPath}${d.blocking.length ? ` with ${d.blocking.length} blocking reason(s); rx guard will refuse a publish until they are resolved` : ""}\n`);
   return {
     data: { written: true, fingerprint: fresh.combined, entries: file.entries.length, blocking: d.blocking, reportOnly: d.reportOnly, dispositions: required.length - d.unresolved.length, applicable: applicable.map((a) => a.id) },

@@ -32,18 +32,17 @@
 // direct routes (a Write/Edit into .git/rx/ or onto the key, a Bash command that mentions either).
 
 import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
-import { chmodSync, closeSync, linkSync, lstatSync, mkdirSync, openSync, readFileSync, rmSync, writeSync } from "node:fs";
-import { homedir } from "node:os";
+import { chmodSync, linkSync, lstatSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { RxError } from "./errors.mjs";
+import { xdgBase } from "./state.mjs";
 
-export const KEY_BYTES = 32;
-export const ALG = "hmac-sha256";
+const KEY_BYTES = 32;
+const ALG = "hmac-sha256";
 
 /** The key's directory and file, from XDG_CONFIG_HOME at call time. */
 export function keyPaths() {
-  const base = process.env.XDG_CONFIG_HOME && process.env.XDG_CONFIG_HOME.trim() ? process.env.XDG_CONFIG_HOME : join(homedir(), ".config");
-  const dir = join(base, "raycast-harness");
+  const dir = join(xdgBase("XDG_CONFIG_HOME", ".config"), "raycast-harness");
   return { dir, file: join(dir, "attest.key") };
 }
 
@@ -55,9 +54,10 @@ export function keyIdOf(key) {
 /**
  * @typedef {{ status: "ok", path: string, key: Buffer, keyId: string, mode: number }
  *   | { status: "missing", path: string }
- *   | { status: "bad", path: string, problem: string, message: string }} KeyState
+ *   | { status: "bad", path: string, problem: string, detail: string, message: string }} KeyState
  *   `message` is the whole sentence (the key file's path and problem, or the directory's); `problem`
- *   is the part after the key's path, for the key-file cases, or the directory sentence itself.
+ *   is the part after the key's path, for the key-file cases, or the directory sentence itself;
+ *   `detail` is `message` without the key-file cases' "rx never replaces an existing key" advice.
  */
 
 /**
@@ -91,7 +91,6 @@ export function ensurePrivateDir(dir) {
   const before = privateDirProblem(dir);
   if (before) throw new RxError(before, { id: "attest-key" });
   const made = mkdirSync(dir, { recursive: true, mode: 0o700 });
-  // mkdirSync returns the first directory it created, or undefined when `dir` already existed.
   let created = false;
   if (made !== undefined) {
     // Exact 0700 whatever the umask, on every level rx created (never above `made`).
@@ -113,9 +112,12 @@ export function ensurePrivateDir(dir) {
 export function inspectKey() {
   const { dir, file } = keyPaths();
   const dirProblem = privateDirProblem(dir);
-  if (dirProblem) return { status: "bad", path: file, problem: dirProblem, message: dirProblem };
+  if (dirProblem) return { status: "bad", path: file, problem: dirProblem, detail: dirProblem, message: dirProblem };
   /** @param {string} problem @returns {KeyState} */
-  const bad = (problem) => ({ status: "bad", path: file, problem, message: `the rx attestation key ${file} ${problem}; rx never replaces an existing key, so fix or remove it by hand` });
+  const bad = (problem) => {
+    const detail = `the rx attestation key ${file} ${problem}`;
+    return { status: "bad", path: file, problem, detail, message: `${detail}; rx never replaces an existing key, so fix or remove it by hand` };
+  };
   /** @type {import("node:fs").Stats} */
   let st;
   try {
@@ -145,13 +147,24 @@ function badKeyError(s) {
 }
 
 /**
+ * Write `data` to a new private temp file (`wx`, 0600 whatever the umask). The caller publishes it
+ * (link or rename) and removes it.
+ * @param {string} tmp
+ * @param {string | Buffer} data
+ */
+export function writePrivateTemp(tmp, data) {
+  writeFileSync(tmp, data, { flag: "wx", mode: 0o600 });
+  chmodSync(tmp, 0o600);
+}
+
+/**
  * The key, created on first need (rx gates, rx audit record only). Throws RxError id `attest-key`
  * for a bad key or a key directory open to group or other.
- * @returns {{ path: string, key: Buffer, keyId: string, created: boolean }}
+ * @returns {Extract<KeyState, { status: "ok" }> & { created: boolean }}
  */
 export function loadOrCreateKey() {
   const first = inspectKey();
-  if (first.status === "ok") return { path: first.path, key: first.key, keyId: first.keyId, created: false };
+  if (first.status === "ok") return { ...first, created: false };
   if (first.status === "bad") throw badKeyError(first);
 
   const { dir, file } = keyPaths();
@@ -159,25 +172,18 @@ export function loadOrCreateKey() {
   const tmp = join(dir, `.attest.key.${process.pid}.${randomBytes(6).toString("hex")}.tmp`);
   let created = false;
   try {
-    const fd = openSync(tmp, "wx", 0o600);
-    try {
-      writeSync(fd, randomBytes(KEY_BYTES));
-    } finally {
-      closeSync(fd);
-    }
-    chmodSync(tmp, 0o600);
+    writePrivateTemp(tmp, randomBytes(KEY_BYTES));
     try {
       linkSync(tmp, file);
       created = true;
     } catch (e) {
       if (/** @type {NodeJS.ErrnoException} */ (e).code !== "EEXIST") throw e;
-      // Another first run won the race: use its key.
     }
   } finally {
     rmSync(tmp, { force: true });
   }
   const after = inspectKey();
-  if (after.status === "ok") return { path: after.path, key: after.key, keyId: after.keyId, created };
+  if (after.status === "ok") return { ...after, created };
   if (after.status === "bad") throw badKeyError(after);
   throw new RxError(`the rx attestation key ${file} could not be created`, { id: "attest-key" });
 }
@@ -231,7 +237,7 @@ export function attest(doc, k) {
  */
 export function verifyAttestation(doc, keyState, { name, rerun }) {
   if (keyState.status === "missing") return `${name} cannot be verified: this machine has no rx attestation key at ${keyState.path} (rx gates creates it); re-run ${rerun}`;
-  if (keyState.status === "bad") return `${name} cannot be verified: ${keyState.message.replace(/; rx never replaces an existing key, so fix or remove it by hand$/, "")}`;
+  if (keyState.status === "bad") return `${name} cannot be verified: ${keyState.detail}`;
   const a = doc && typeof doc === "object" && !Array.isArray(doc) ? doc.attestation : undefined;
   if (a === undefined || a === null || typeof a !== "object" || Array.isArray(a)) return `${name} is not attested by this machine's rx key: re-run ${rerun}`;
   if (a.alg !== ALG || typeof a.keyId !== "string" || typeof a.mac !== "string") return `${name} carries a malformed attestation (expected { alg: "${ALG}", keyId, mac }): re-run ${rerun}`;

@@ -8,30 +8,9 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, st
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { attest, canonicalJson, inspectKey, keyIdOf, keyPaths, loadOrCreateKey, macOf, verifyAttestation } from "../src/attest.mjs";
-import { _setGhForTests } from "../src/commands/doctor.mjs";
 import { RxError } from "../src/errors.mjs";
-import { REPO, rx, withTempDir } from "./helpers.mjs";
+import { REPO, rx, withConfig } from "./helpers.mjs";
 import { auditRecord, buildGated, byId, fullEntries, gates, stateDir, withGatedEnv, writeEntries } from "./gates-helpers.mjs";
-
-/**
- * withTempDir with XDG_CONFIG_HOME at <dir>/config, restored after.
- * @template T
- * @param {(dir: string) => Promise<T> | T} fn
- */
-async function withConfig(fn) {
-  return withTempDir(async (dir) => {
-    const saved = process.env.XDG_CONFIG_HOME;
-    process.env.XDG_CONFIG_HOME = join(dir, "config");
-    _setGhForTests(async () => ({ code: 1, stdout: "", stderr: "You are not logged into any GitHub hosts. To log in, run: gh auth login" }));
-    try {
-      return await fn(dir);
-    } finally {
-      _setGhForTests(null);
-      if (saved === undefined) delete process.env.XDG_CONFIG_HOME;
-      else process.env.XDG_CONFIG_HOME = saved;
-    }
-  });
-}
 
 test("attest: canonical JSON sorts keys recursively, keeps array order, has no whitespace", () => {
   assert.equal(canonicalJson({ b: 1, a: { d: [3, { z: 1, y: 2 }], c: "x" } }), '{"a":{"c":"x","d":[3,{"y":2,"z":1}]},"b":1}');

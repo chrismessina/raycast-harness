@@ -123,7 +123,6 @@ export async function run({ results, root }) {
   else if (process.platform === "darwin") results.na("raycast-app", `Raycast.app not found at ${RAYCAST_PLIST}`);
   else results.na("raycast-app", `not macOS (${process.platform}); Raycast.app is not expected`);
 
-  // The attestation key (src/attest.mjs): read only, never created here.
   const k = inspectKey();
   data.attestKey = { path: k.path, present: k.status !== "missing", keyId: k.status === "ok" ? k.keyId : null, error: k.status === "bad" ? k.problem : null };
   if (k.status === "ok") results.pass("attest-key", `${k.path} (mode ${k.mode.toString(8).padStart(4, "0")}, 32 bytes, keyId ${k.keyId})`);

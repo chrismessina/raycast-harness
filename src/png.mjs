@@ -189,8 +189,6 @@ export function comparePng(a, b) {
   // even when the headers alone would already decide UNDECIDED or DIFFERENT.
   const da = decodeRgba(a);
   const db = decodeRgba(b);
-  // Every difference is named, not just the one that decides the outcome; the outcome order is
-  // unchanged: 16-bit or a metadata difference → UNDECIDED, else size or pixels → DIFFERENT.
   const sixteen = ia.bitDepth > 8 || ib.bitDepth > 8;
   const differing = META_CHUNKS.filter((k) => ia[k] !== ib[k]);
   const sameSize = ia.width === ib.width && ia.height === ib.height;

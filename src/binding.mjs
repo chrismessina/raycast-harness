@@ -22,12 +22,12 @@
 //             deliberate multi-step evasion limitation (2) already names.
 
 import { createHash, randomBytes } from "node:crypto";
-import { chmodSync, closeSync, openSync, readFileSync, realpathSync, renameSync, rmSync, writeSync } from "node:fs";
+import { readFileSync, realpathSync, renameSync, rmSync } from "node:fs";
 import { join } from "node:path";
-import { ensurePrivateDir, keyPaths, privateDirProblem } from "./attest.mjs";
+import { ensurePrivateDir, keyPaths, privateDirProblem, writePrivateTemp } from "./attest.mjs";
 import { git } from "./git.mjs";
 
-export const GENERATION_BYTES = 32;
+const GENERATION_BYTES = 32;
 
 /** The sentences the guard and `rx audit record` share. */
 export const SENTENCES = {
@@ -71,13 +71,7 @@ export function rotateGeneration(root) {
     const generation = randomBytes(GENERATION_BYTES).toString("hex");
     const tmp = `${file}.${process.pid}.${randomBytes(6).toString("hex")}.tmp`;
     try {
-      const fd = openSync(tmp, "wx", 0o600);
-      try {
-        writeSync(fd, JSON.stringify({ root: real, generation }) + "\n");
-      } finally {
-        closeSync(fd);
-      }
-      chmodSync(tmp, 0o600);
+      writePrivateTemp(tmp, JSON.stringify({ root: real, generation }) + "\n");
       renameSync(tmp, file);
     } finally {
       rmSync(tmp, { force: true });
@@ -111,16 +105,6 @@ export function generationState(root) {
   } catch {
     return { generation: null, problem: null };
   }
-}
-
-/**
- * The current generation for this root, or null when there is none, the file is not one rx wrote
- * for this root, or its directory fails the private-directory check.
- * @param {string} root
- * @returns {string | null}
- */
-export function currentGeneration(root) {
-  return generationState(root).generation;
 }
 
 /**

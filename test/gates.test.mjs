@@ -232,3 +232,24 @@ test("gates (Codex P2 #10): the previous receipt is deleted before the inputs ar
     assert.equal(nowhere.json.results.length, 1);
   });
 });
+
+// ---- 5A (Chris, 2026-11-06): a run that removes a valid receipt says so --------------------
+
+test("gates: removing the previous receipt is announced, on a bad input and on an argument error", async () => {
+  await withGatedEnv(async (dir) => {
+    const { root } = await buildGated(dir);
+    const ok = await gates(root);
+    assert.equal(ok.code, 0, ok.stdout);
+    const r = await rx(["gates", "--root", root, "--preset", join(dir, "nope.json"), "--forbidden", join(FIX, "forbidden.txt"), "--json"]);
+    assert.equal(r.code, 2);
+    assert.match(r.stderr, /gates: removed the previous receipt at .*receipt\.json; a new one is written only when every step passes/);
+    // Nothing to remove now: no announcement.
+    const again = await rx(["gates", "--root", root, "--preset", join(dir, "nope.json"), "--forbidden", join(FIX, "forbidden.txt"), "--json"]);
+    assert.doesNotMatch(again.stderr, /removed the previous receipt/);
+    // The argument-error path (the dispatcher's invalidate), with a receipt present again.
+    assert.equal((await gates(root)).code, 0);
+    const bad = await rx(["gates", "--root", root, "--json"]);
+    assert.equal(bad.code, 2);
+    assert.match(bad.stderr, /gates: removed the previous receipt at .*receipt\.json \(the arguments did not parse\); run rx gates again/);
+  });
+});

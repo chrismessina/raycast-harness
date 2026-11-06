@@ -138,6 +138,13 @@
   the receipt's attestation, binding and clean results before using it, and `rx audit show`
   reports provenance failures. A key directory that already exists with group or other access
   is `ERROR attest-key` with the `chmod 700` fix. `docs/guide.md` ships in the package.
+- `rx gates` and `rx audit record` say on stderr when they removed a previous receipt or
+  audit, including when the arguments did not parse, so a mistyped command no longer
+  deletes valid state silently.
+- Simplify pass over Wave 7: the guard caches `git rev-parse` per directory within one
+  decision and loads its publish-only modules lazily, and a named command loads only its own
+  module (about 15–30 ms less per guard call); shared helpers for private temp files, atomic
+  JSON writes and XDG base directories. No message or check changed.
 - Replay fixes (Codex round W7r2): `rx gates` rotates the generation right after the root
   resolves, before any git call, so a gates attempt whose git lookup fails still supersedes a
   saved receipt and audit. A failed rotation unlinks the stored generation, and every reader

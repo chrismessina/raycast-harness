@@ -10,13 +10,12 @@ import { execFileSync } from "node:child_process";
 import { chmodSync, cpSync, existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { inspectKey, keyPaths, loadOrCreateKey } from "../src/attest.mjs";
-import { currentGeneration, generationPaths, rotateGeneration, subjectOf } from "../src/binding.mjs";
-import { _setGhForTests } from "../src/commands/doctor.mjs";
+import { generationPaths, generationState, rotateGeneration, subjectOf } from "../src/binding.mjs";
 import { RxError } from "../src/errors.mjs";
 import { checkProtectedPath, resolveFsOrder } from "../src/audit/protected-paths.mjs";
-import { classifyCommand, collapseSeparators, mentionsProtectedPath, mentionsState, pathWords, shellWords } from "../src/audit/publish-command.mjs";
+import { classifyCommand, mentionsProtectedPath, mentionsState, pathWords, shellWords } from "../src/audit/publish-command.mjs";
 import { FORBIDDEN, PRESET, auditRecord, bashPayload, buildGated, byId, fullEntries, gates, guard, stateDir, withGatedEnv, writeAttested, writeEntries } from "./gates-helpers.mjs";
-import { rx, withTempDir } from "./helpers.mjs";
+import { rx, withConfig, withTempDir } from "./helpers.mjs";
 
 const PUBLISH = "npm run publish";
 const STATE_SENTENCE = "rx state is written only by rx: this command mentions .git/rx or the rx attestation key; use rx gates / rx audit record to write it and rx audit show to read it";
@@ -75,9 +74,9 @@ test("binding 1a: a receipt and audit copied into an identical clone block there
 test("binding 1b: gates rotates the generation on every attempt (args ERROR and failed runs included), 0600 in a 0700 directory", async () => {
   await withGatedEnv(async (dir) => {
     const { root } = await buildGated(dir);
-    assert.equal(currentGeneration(root), null);
+    assert.equal(generationState(root).generation, null);
     assert.equal((await gates(root)).code, 0);
-    const g1 = currentGeneration(root);
+    const g1 = generationState(root).generation;
     assert.match(String(g1), /^[0-9a-f]{64}$/);
     const { dir: genDir, file } = generationPaths(root);
     assert.equal(statSync(genDir).mode & 0o777, 0o700);
@@ -91,12 +90,12 @@ test("binding 1b: gates rotates the generation on every attempt (args ERROR and 
     // An argument error (missing --forbidden) rotates it too.
     const bad = await rx(["gates", "--root", root, "--preset", PRESET, "--json"]);
     assert.equal(bad.code, 2);
-    const g2 = currentGeneration(root);
+    const g2 = generationState(root).generation;
     assert.notEqual(g2, g1);
     // A run that ERRORs on its tooling rotates it.
     rmSync(join(root, "node_modules"), { recursive: true });
     assert.equal((await gates(root)).code, 2);
-    assert.notEqual(currentGeneration(root), g2);
+    assert.notEqual(generationState(root).generation, g2);
   });
 });
 
@@ -157,15 +156,6 @@ test("binding 1b: an audit recorded against a superseded receipt blocks, even wh
 
 // ---- 2. Bash mentions -----------------------------------------------------------------------
 
-test("Bash state rule: `/./` and repeated `/` collapse before the .git/rx text rule", () => {
-  assert.equal(collapseSeparators(".git/./rx"), ".git/rx");
-  assert.equal(collapseSeparators(".git//rx"), ".git/rx");
-  assert.equal(collapseSeparators(".git/././/./rx///receipt.json"), ".git/rx/receipt.json");
-  assert.ok(mentionsState("cp saved-receipt.json .git/./rx/receipt.json"));
-  assert.ok(mentionsState("cp saved-audit.json .git//rx/audit.json"));
-  assert.ok(!mentionsState("cp a .git/./rx-old/b"));
-});
-
 test("Bash state rule: Codex's three spellings, the config directory, and redirects or `=` targets block through the guard", async () => {
   await withGatedEnv(async (dir) => {
     const { root } = await gated(dir);
@@ -177,6 +167,7 @@ test("Bash state rule: Codex's three spellings, the config directory, and redire
     for (const cmd of [
       "cp saved-receipt.json .git/./rx/receipt.json",
       "cp saved-audit.json .git//rx/audit.json",
+      "cp saved-receipt.json .git/././/./rx///receipt.json",
       `cp saved-receipt.json ${wtState}`,
       `cp saved-receipt.json "${wtState}"`,
       `cat saved > ${wtState}`,
@@ -217,6 +208,7 @@ test("Bash state rule: rx's own runner calls, in the shapes the plugin's skills 
       `${runner} scan --forbidden "${join(dir, "scratch", "forbidden.txt")}" --pr-text "${join(work, "body.md")}"`,
       "git rev-parse --git-path rx",
       "ls .git/rx-old",
+      "cp a .git/./rx-old/b",
       "cat ./src/index.tsx",
       "cat ~/.config/raycast-harness-other/x",
       'gh api "repos/raycast/extensions/issues/$PR/timeline?per_page=100" --jq \'.[] | select(.event=="ready_for_review")\'',
@@ -320,26 +312,6 @@ test("audit record: an unattested, unbound or FAIL-recording receipt is ERROR au
 });
 
 // ---- 6. key directory mode ------------------------------------------------------------------
-
-/**
- * withTempDir with XDG_CONFIG_HOME at <dir>/config and the doctor's gh probe stubbed.
- * @template T
- * @param {(dir: string) => Promise<T> | T} fn
- */
-async function withConfig(fn) {
-  return withTempDir(async (dir) => {
-    const saved = process.env.XDG_CONFIG_HOME;
-    process.env.XDG_CONFIG_HOME = join(dir, "config");
-    _setGhForTests(async () => ({ code: 1, stdout: "", stderr: "You are not logged into any GitHub hosts." }));
-    try {
-      return await fn(dir);
-    } finally {
-      _setGhForTests(null);
-      if (saved === undefined) delete process.env.XDG_CONFIG_HOME;
-      else process.env.XDG_CONFIG_HOME = saved;
-    }
-  });
-}
 
 test("key directory: an existing directory open to group or other is ERROR attest-key naming it and the chmod 700 fix, never chmodded; doctor reports the same", async () => {
   await withConfig(async (dir) => {
@@ -446,6 +418,7 @@ test("W7r2 #2: a generations/ directory open to group or other invalidates the s
     assert.equal(r.code, 2, r.stdout);
     assert.equal(byId(r)["attest-key"].verdict, "ERROR");
     assert.ok(!existsSync(genFile), "the failed rotation revoked the stored generation");
+    assert.match(r.stderr, /gates: removed the previous receipt at .*receipt\.json; a new one is written only when every step passes/, "5A: announced even when the rotation fails");
     writeFileSync(receiptPath, savedReceipt);
     writeFileSync(auditPath, savedAudit);
     const want = `the rx attestation key directory ${genDir} has mode 0755; it must not be accessible to group or other, and rx does not change a directory it did not create: run chmod 700 ${genDir}`;
@@ -459,10 +432,18 @@ test("W7r2 #2: a generations/ directory open to group or other invalidates the s
     assert.equal((await auditRecord(root, writeEntries(dir, fullEntries()))).code, 0);
     assert.equal(guardResult(await guard(bashPayload(PUBLISH, root))).verdict, "PASS");
     chmodSync(genDir, 0o750);
-    assert.equal(currentGeneration(root), null);
+    assert.equal(generationState(root).generation, null);
     assert.match(guardResult(await guard(bashPayload(PUBLISH, root))).message, /generations has mode 0750; .*run chmod 700 /);
     chmodSync(genDir, 0o700);
     assert.equal(guardResult(await guard(bashPayload(PUBLISH, root))).verdict, "PASS");
+
+    // 5A on the argument-error path when the rotation fails: the removal is still announced.
+    chmodSync(genDir, 0o755);
+    const bad = await rx(["gates", "--root", root, "--json"]);
+    chmodSync(genDir, 0o700);
+    assert.equal(bad.code, 2);
+    assert.ok(!existsSync(receiptPath));
+    assert.match(bad.stderr, /gates: removed the previous receipt at .*receipt\.json \(the arguments did not parse\); run rx gates again/);
   });
 });
 
