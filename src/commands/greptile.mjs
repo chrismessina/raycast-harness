@@ -21,9 +21,10 @@
 // a root resolves, else under the cross-repo cache. `rounds/<updated_at>.json`, `etag`, `seen`,
 // `replies.json`.
 //
-// publication.json (read by can-reply --claims-fix; WRITTEN by the plugin runner's publish step,
-// not by rx): `repo/publication.json` = { repo: "owner/name", pr: <int>, remoteSha: "<40 hex>",
-// at: "<ISO-8601>" } — the remote head the runner observed after its publish succeeded.
+// publication.json (read by can-reply --claims-fix; written only by `rx publication record`, which
+// the plugin's ship flow runs after its publish succeeds): `repo/publication.json` = { repo:
+// "owner/name", pr: <int>, remoteSha: "<40 hex>", at: "<ISO-8601>" }. Both sides validate it with
+// src/publication.mjs; a malformed record is ERROR input, never evidence.
 //
 // All GitHub traffic goes through src/pr/transport.mjs.
 
@@ -35,6 +36,7 @@ import { RxError } from "../errors.mjs";
 import { SNAPSHOT_FILES, diffRuleSets, fetchLive, liveSource } from "../greptile/drift.mjs";
 import { buildRound, parseForbidden, scanReply, validateEvidence } from "../greptile/rounds.mjs";
 import { parsePrNumber, transport } from "../pr/transport.mjs";
+import { publicationPath, readPublication } from "../publication.mjs";
 import { cachePath, repoStatePath } from "../state.mjs";
 
 const REPO = "raycast/extensions";
@@ -87,7 +89,7 @@ export const spec = {
         "--forbidden": { type: "string", required: true, value: "<file>", help: "forbidden literals, one per line (blank lines and # comments ignored)" },
         "--reply": { type: "string", required: true, value: "<file>", help: "the exact reply bytes to post" },
         "--evidence": { type: "string", required: true, value: "<file>", help: "JSON { finding, disposition: fixed|partial|declined, artifact, explanation }" },
-        "--claims-fix": { type: "boolean", help: "the reply says a fix was published; requires repo/publication.json for this PR at a new remote SHA" },
+        "--claims-fix": { type: "boolean", help: "the reply says a fix was published; requires repo/publication.json (written by `rx publication record`) for this PR at a new remote SHA" },
       },
       state: `appends to replies.json in ${ROUND_STATE}; reads repo/publication.json with --claims-fix`,
       checks: {
@@ -276,23 +278,17 @@ async function canReply({ args, root, results }) {
   // Publication record, only for fix claims. A decline needs no new head (P1-3).
   if (!claimsFix) results.na("reply-publication", "not a fix claim");
   else {
-    const pubFile = root ? await repoStatePath(root, "publication.json") : null;
-    if (!pubFile || !existsSync(pubFile)) results.fail("reply-publication", root ? `no publication record at ${pubFile}; a fix claim needs the runner's publish step to have recorded this PR` : "no extension root resolved, so no publication record can be read; run from the extension or pass --root");
+    const pubFile = root ? await publicationPath(root) : null;
+    const pub = pubFile ? readPublication(pubFile) : null;
+    if (!pubFile || !pub) results.fail("reply-publication", root ? `no publication record at ${pubFile}; a fix claim needs \`rx publication record\` to have recorded this PR after its publish` : "no extension root resolved, so no publication record can be read; run from the extension or pass --root");
     else {
-      /** @type {any} */
-      let pub;
-      try {
-        pub = JSON.parse(readFileSync(pubFile, "utf8"));
-      } catch (e) {
-        throw new RxError(`publication record ${pubFile} is unreadable: ${/** @type {Error} */ (e).message}`, { id: "input" });
-      }
-      const remote = String(pub?.remoteSha ?? "").toLowerCase();
+      const remote = pub.remoteSha;
       const reviewed = String(round?.reviewedCommit ?? round?.head ?? "").toLowerCase();
-      if (pub?.repo !== REPO || Number(pub?.pr) !== n) results.fail("reply-publication", `publication record names ${pub?.repo ?? "?"}#${pub?.pr ?? "?"}, not ${REPO}#${n}`);
-      else if (!remote || remote !== head) results.fail("reply-publication", `publication record's remoteSha ${remote.slice(0, 7) || "(none)"} is not the current head ${head.slice(0, 7)}`);
+      if (pub.repo !== REPO || pub.pr !== n) results.fail("reply-publication", `publication record names ${pub.repo}#${pub.pr}, not ${REPO}#${n}`);
+      else if (remote !== head) results.fail("reply-publication", `publication record's remoteSha ${remote.slice(0, 7)} is not the current head ${head.slice(0, 7)}`);
       else if (reviewed && (remote === reviewed || remote.startsWith(reviewed) || reviewed.startsWith(remote))) results.fail("reply-publication", `remote head ${remote.slice(0, 7)} is the commit Greptile already reviewed; no new revision landed`);
       else if (!reviewed) results.fail("reply-publication", `stored round ${roundKey} records no reviewed commit or head to compare the published SHA against`);
-      else results.pass("reply-publication", `published ${remote.slice(0, 7)} at ${pub.at ?? "?"}, newer than reviewed ${reviewed.slice(0, 7)}`);
+      else results.pass("reply-publication", `published ${remote.slice(0, 7)} at ${pub.at}, newer than reviewed ${reviewed.slice(0, 7)}`);
     }
   }
 

@@ -35,7 +35,7 @@ N/A    changelog-updated no published copy given; pass --published <dir> (rx sta
 | `FAIL` | the check ran and found a problem | 1 |
 | `ERROR` | the check could not run (bad argument, unreadable input, missing tool, network); outranks FAIL | 2 |
 
-Silence is never a pass. Unknown arguments are an `ERROR`. `--json` prints one envelope `{ command, version, fingerprint, data, results, exit }`. The full contract for every command, including its root rule, network boundary and state location, is in [`docs/commands.md`](docs/commands.md).
+Silence is never a pass. Unknown arguments are an `ERROR`. `--json` (an alias of `--format json`) prints one envelope `{ command, version, fingerprint, data, results, exit }`, and `--format md` prints the same verdicts as a Markdown report; every format exits with the same code. The full contract for every command, including its root rule, network boundary and state location, is in [`docs/commands.md`](docs/commands.md).
 
 ## Commands
 
@@ -54,6 +54,7 @@ Silence is never a pass. Unknown arguments are an `ERROR`. `--json` prints one e
 | `rx audit` | records the judgment evidence the receipt cannot hold |
 | `rx pr` | verifies a Store PR's author, branch, base and files; edits its body without clobbering hand edits |
 | `rx holdout` | moves untracked local-only files out of the payload and verifies their return |
+| `rx publication` | `record`: writes the plain record of which PR and remote head a publish produced, for `rx greptile can-reply --claims-fix` |
 | `rx greptile` | fetches review rounds, waits for the next one, authorizes a reply, detects rule drift |
 | `rx shortcuts` | `runtime`: the installed app's `Keyboard.Shortcut.Common` table into the cache; `check`: panels and toast actions against it |
 | `rx preset` | validates a preset and regenerates the rule matrix it describes |

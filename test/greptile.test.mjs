@@ -448,7 +448,7 @@ test("can-reply --claims-fix: needs publication.json naming this PR at the curre
     const ext = gitExtension(dir);
     storeRound(ext);
     mkdirSync(join(ext, ".git", "rx"), { recursive: true });
-    writeFileSync(join(ext, ".git", "rx", "publication.json"), JSON.stringify({ repo: "raycast/extensions", pr: 12345, remoteSha: HEAD, at: "x" }));
+    writeFileSync(join(ext, ".git", "rx", "publication.json"), JSON.stringify({ repo: "raycast/extensions", pr: 12345, remoteSha: HEAD, at: "2026-10-02T10:00:00Z" }));
     const f = replyFiles(dir, { disposition: "fixed" });
     const prev = setTransport(fakeGitHub().t);
     try {
@@ -456,6 +456,61 @@ test("can-reply --claims-fix: needs publication.json naming this PR at the curre
       const by = Object.fromEntries(out.json.results.map((x) => [x.id, x]));
       assert.equal(by["reply-publication"].verdict, "FAIL");
       assert.match(by["reply-publication"].message, /already reviewed; no new revision landed/);
+    } finally {
+      setTransport(prev);
+    }
+  });
+});
+
+test("can-reply --claims-fix reads the record with the writer's validator: `rx publication record`'s output PASSes; a malformed record is ERROR input", async () => {
+  const newHead = "fedcba9876543210fedcba9876543210fedcba98";
+  await withTempDir(async (dir) => {
+    const ext = gitExtension(dir);
+    storeRound(ext);
+    const f = replyFiles(dir, { disposition: "fixed", reply: "@greptile Fixed in fedcba9: the empty state now renders a List.EmptyView." });
+    const argv = replyArgv(f, ["--claims-fix"]).map((a) => (a === HEAD ? newHead : a));
+    const pub = join(ext, ".git", "rx", "publication.json");
+    const prev = setTransport(fakeGitHub({ prHeadSha: newHead }).t);
+    try {
+      const wrote = await rx(["publication", "record", "raycast/extensions", PR, newHead, "--json"], { cwd: ext });
+      assert.equal(wrote.code, 0, wrote.stdout);
+      let out = await rx([...argv, "--json"], { cwd: ext });
+      assert.equal(out.code, 0, out.stdout);
+      assert.equal(Object.fromEntries(out.json.results.map((x) => [x.id, x]))["reply-publication"].verdict, "PASS");
+      // Each of these is a record `rx publication record` refuses to write; the reader refuses it too.
+      const good = JSON.parse(readFileSync(pub, "utf8"));
+      for (const bad of [{ ...good, at: "x" }, { ...good, pr: String(good.pr) }, { ...good, signature: "s" }, { ...good, remoteSha: newHead.toUpperCase() }]) {
+        writeFileSync(pub, JSON.stringify(bad));
+        out = await rx([...argv, "--json"], { cwd: ext });
+        assert.equal(out.code, 2, JSON.stringify(bad));
+        assert.deepEqual(out.json.results.filter((x) => x.verdict === "ERROR").map((x) => x.id), ["input"], JSON.stringify(bad));
+        assert.match(out.stdout, /publication record .* is malformed/);
+      }
+    } finally {
+      setTransport(prev);
+    }
+  });
+});
+
+test("can-reply --claims-fix reads the record `rx publication record` wrote from a multi-extension repository root, from an extension inside it: state is per repository", async () => {
+  const newHead = "fedcba9876543210fedcba9876543210fedcba98";
+  await withTempDir(async (dir) => {
+    const repo = join(dir, "checkout");
+    mkdirSync(repo);
+    execFileSync("git", ["init", "-q"], { cwd: repo });
+    const ext = fakeExtension(repo, "ext-a");
+    fakeExtension(repo, "ext-b"); // two extensions: the root itself resolves to no single extension
+    storeRound(repo); // the round lives in the repository's state, as `fetch` from either extension writes it
+    const f = replyFiles(dir, { disposition: "fixed", reply: "@greptile Fixed in fedcba9: the empty state now renders a List.EmptyView." });
+    const argv = replyArgv(f, ["--claims-fix"]).map((a) => (a === HEAD ? newHead : a));
+    const prev = setTransport(fakeGitHub({ prHeadSha: newHead }).t);
+    try {
+      const wrote = await rx(["publication", "record", "raycast/extensions", PR, newHead, "--json"], { cwd: repo });
+      assert.equal(wrote.code, 0, wrote.stdout);
+      assert.ok(existsSync(join(repo, ".git", "rx", "publication.json")), "the record is in the repository's state");
+      const out = await rx([...argv, "--json"], { cwd: ext });
+      assert.equal(out.code, 0, out.stdout);
+      assert.equal(Object.fromEntries(out.json.results.map((x) => [x.id, x]))["reply-publication"].verdict, "PASS");
     } finally {
       setTransport(prev);
     }

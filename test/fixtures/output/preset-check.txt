@@ -1,0 +1,5 @@
+PASS   preset-schema    valid against schema/preset.schema.json
+PASS   preset-ids       12 unique rule ids
+PASS   preset-anchors   12 anchors resolve
+PASS   preset-bindings  15 rx, 0 eslint, 0 judgment bindings resolve (no eslint bindings; registry not consulted)
+PASS   preset-severity  no binding downgrades a core check

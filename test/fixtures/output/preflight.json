@@ -1,0 +1,327 @@
+{
+  "command": "preflight",
+  "version": "<VERSION>",
+  "fingerprint": null,
+  "data": {
+    "root": "<REPO>/test/fixtures/extensions/readme-links-missing",
+    "published": false,
+    "publishedDir": null,
+    "preset": null,
+    "checks": {
+      "package-json": "core",
+      "schema": "core",
+      "categories": "core",
+      "platforms": "core",
+      "preference-type": "core",
+      "shortcut-platform-case": "core",
+      "changelog-exists": "core",
+      "changelog-order": "core",
+      "changelog-updated": "core",
+      "command-renamed": "core",
+      "eslint-config": "core",
+      "lockfile": "core",
+      "npm-registry": "core",
+      "native-fetch": "core",
+      "unused-dependencies": "core",
+      "readme-assets": "core",
+      "screenshots": "core",
+      "launch-command": "core",
+      "favicon": "core",
+      "trash": "core",
+      "localization": "core",
+      "prettierrc": "preset",
+      "hand-typed-preferences": "preset",
+      "title-case": "preset",
+      "agent-scaffolding": "preset",
+      "dev-material": "preset",
+      "generated-files": "preset",
+      "screenshot-count": "core",
+      "screenshot-format": "core",
+      "screenshot-size": "core",
+      "icon-size": "core",
+      "readme-links": "core",
+      "changelog-placeholder": "core",
+      "pref-description-length": "preset",
+      "pref-label-length": "preset",
+      "logger": "preset",
+      "logger-verbose-copy": "preset",
+      "logger-strict-redaction": "preset",
+      "agents-md-paths": "preset",
+      "agents-md-scripts": "preset",
+      "agents-md-no-home-paths": "preset",
+      "agents-md-symbols": "preset"
+    },
+    "selfAuthored": null
+  },
+  "results": [
+    {
+      "id": "package-json",
+      "verdict": "PASS",
+      "message": "package.json parses and its list fields are arrays of objects",
+      "details": []
+    },
+    {
+      "id": "schema",
+      "verdict": "PASS",
+      "message": "$schema is https://www.raycast.com/schemas/extension.json",
+      "details": []
+    },
+    {
+      "id": "categories",
+      "verdict": "PASS",
+      "message": "categories: Productivity",
+      "details": []
+    },
+    {
+      "id": "platforms",
+      "verdict": "PASS",
+      "message": "platforms: macOS",
+      "details": []
+    },
+    {
+      "id": "preference-type",
+      "verdict": "PASS",
+      "message": "1 preference type valid",
+      "details": []
+    },
+    {
+      "id": "shortcut-platform-case",
+      "verdict": "N/A",
+      "message": "no shortcuts declared in src/",
+      "details": []
+    },
+    {
+      "id": "changelog-exists",
+      "verdict": "PASS",
+      "message": "CHANGELOG.md exists",
+      "details": []
+    },
+    {
+      "id": "changelog-order",
+      "verdict": "PASS",
+      "message": "2 entries, dates descend",
+      "details": []
+    },
+    {
+      "id": "changelog-updated",
+      "verdict": "N/A",
+      "message": "no published copy given; pass --published <dir> (rx stale prints it)",
+      "details": []
+    },
+    {
+      "id": "command-renamed",
+      "verdict": "N/A",
+      "message": "no published copy given; pass --published <dir> (rx stale prints it)",
+      "details": []
+    },
+    {
+      "id": "eslint-config",
+      "verdict": "PASS",
+      "message": "eslint.config.js is a flat config",
+      "details": []
+    },
+    {
+      "id": "lockfile",
+      "verdict": "PASS",
+      "message": "package-lock.json is the only lock file",
+      "details": []
+    },
+    {
+      "id": "npm-registry",
+      "verdict": "PASS",
+      "message": "every package resolves from registry.npmjs.org",
+      "details": []
+    },
+    {
+      "id": "native-fetch",
+      "verdict": "PASS",
+      "message": "no fetch polyfill imported",
+      "details": []
+    },
+    {
+      "id": "unused-dependencies",
+      "verdict": "PASS",
+      "message": "1 dependency is imported",
+      "details": []
+    },
+    {
+      "id": "readme-assets",
+      "verdict": "PASS",
+      "message": "1 README image, none in metadata/ or assets/",
+      "details": []
+    },
+    {
+      "id": "screenshots",
+      "verdict": "PASS",
+      "message": "1 screenshot in metadata/",
+      "details": []
+    },
+    {
+      "id": "launch-command",
+      "verdict": "PASS",
+      "message": "no hits in src/",
+      "details": []
+    },
+    {
+      "id": "favicon",
+      "verdict": "PASS",
+      "message": "no hits in src/",
+      "details": []
+    },
+    {
+      "id": "trash",
+      "verdict": "PASS",
+      "message": "no hits in src/",
+      "details": []
+    },
+    {
+      "id": "localization",
+      "verdict": "PASS",
+      "message": "no hits in src/",
+      "details": []
+    },
+    {
+      "id": "prettierrc",
+      "verdict": "N/A",
+      "message": "no preset (core enforces only Store facts)",
+      "details": []
+    },
+    {
+      "id": "hand-typed-preferences",
+      "verdict": "N/A",
+      "message": "no preset (core enforces only Store facts)",
+      "details": []
+    },
+    {
+      "id": "title-case",
+      "verdict": "N/A",
+      "message": "no preset (core enforces only Store facts)",
+      "details": []
+    },
+    {
+      "id": "agent-scaffolding",
+      "verdict": "N/A",
+      "message": "no preset (core enforces only Store facts)",
+      "details": []
+    },
+    {
+      "id": "dev-material",
+      "verdict": "N/A",
+      "message": "no preset (core enforces only Store facts)",
+      "details": []
+    },
+    {
+      "id": "generated-files",
+      "verdict": "N/A",
+      "message": "no preset (core enforces only Store facts)",
+      "details": []
+    },
+    {
+      "id": "screenshot-count",
+      "verdict": "PASS",
+      "message": "1 of at most 6 screenshots",
+      "details": []
+    },
+    {
+      "id": "screenshot-format",
+      "verdict": "PASS",
+      "message": "every file under metadata/ is a .png",
+      "details": []
+    },
+    {
+      "id": "screenshot-size",
+      "verdict": "PASS",
+      "message": "every screenshot is 2000×1250",
+      "details": []
+    },
+    {
+      "id": "icon-size",
+      "verdict": "PASS",
+      "message": "1 icon 512×512",
+      "details": []
+    },
+    {
+      "id": "readme-links",
+      "verdict": "FAIL",
+      "message": "3 relative links do not resolve",
+      "details": [
+        {
+          "text": "docs/missing.md",
+          "file": "README.md",
+          "line": 3
+        },
+        {
+          "text": "LICENSE",
+          "file": "README.md",
+          "line": 3
+        },
+        {
+          "text": "./diagram.png",
+          "file": "docs/guide.md",
+          "line": 3
+        }
+      ]
+    },
+    {
+      "id": "changelog-placeholder",
+      "verdict": "PASS",
+      "message": "one {PR_MERGE_DATE}, in the top entry's heading",
+      "details": []
+    },
+    {
+      "id": "pref-description-length",
+      "verdict": "N/A",
+      "message": "no preset (core enforces only Store facts)",
+      "details": []
+    },
+    {
+      "id": "pref-label-length",
+      "verdict": "N/A",
+      "message": "no preset (core enforces only Store facts)",
+      "details": []
+    },
+    {
+      "id": "logger",
+      "verdict": "N/A",
+      "message": "no preset (core enforces only Store facts)",
+      "details": []
+    },
+    {
+      "id": "logger-verbose-copy",
+      "verdict": "N/A",
+      "message": "no preset (core enforces only Store facts)",
+      "details": []
+    },
+    {
+      "id": "logger-strict-redaction",
+      "verdict": "N/A",
+      "message": "no preset (core enforces only Store facts)",
+      "details": []
+    },
+    {
+      "id": "agents-md-paths",
+      "verdict": "N/A",
+      "message": "no preset (core enforces only Store facts)",
+      "details": []
+    },
+    {
+      "id": "agents-md-scripts",
+      "verdict": "N/A",
+      "message": "no preset (core enforces only Store facts)",
+      "details": []
+    },
+    {
+      "id": "agents-md-no-home-paths",
+      "verdict": "N/A",
+      "message": "no preset (core enforces only Store facts)",
+      "details": []
+    },
+    {
+      "id": "agents-md-symbols",
+      "verdict": "N/A",
+      "message": "no preset (core enforces only Store facts)",
+      "details": []
+    }
+  ],
+  "exit": 1
+}

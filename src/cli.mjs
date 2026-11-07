@@ -10,7 +10,8 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { helpText, parseArgs } from "./args.mjs";
 import { ArgError, RootError, RxError } from "./errors.mjs";
 import { resolveRoot } from "./root.mjs";
-import { Results, emit } from "./verdict.mjs";
+import { FORMATS, emit } from "./output.mjs";
+import { Results } from "./verdict.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 export const PKG = JSON.parse(readFileSync(join(HERE, "..", "package.json"), "utf8"));
@@ -36,7 +37,7 @@ export const PROTOCOL_IDS = new Set(["args", "root", "input", "tooling", "github
  *   (guard reads it from the hook payload) calls resolveRoot itself. `log` writes progress to
  *   stderr, never to stdout.
  * `transport` is the documented exception for `guard` (docs/commands.md §4.9 "Transport"): when present
- * and `--json` was not given, the dispatcher writes `transport.stdout` verbatim and returns
+ * and no output format was given (neither `--format` nor `--json`), the dispatcher writes `transport.stdout` verbatim and returns
  * `transport.exit` instead of rendering verdict lines. The check-id registry is still enforced.
  * @typedef {{ data?: Record<string, unknown>, fingerprint?: string | null, transport?: { stdout: string, exit: number } } | void} CommandOutput
  * `invalidate` is optional: a command whose run() begins by deleting a prior authorization
@@ -141,7 +142,10 @@ export async function runCli(argv, io = {}) {
 
   const [name, ...rest] = argv;
   const results = new Results();
-  const json = rest.includes("--json") || name === "--json";
+  // The format for output produced before the arguments parse (a module that fails to load, an
+  // unknown command, an argument error); once they parse, the parsed format replaces it.
+  /** @type {import("./output.mjs").Format} */
+  let format = requestedFormat(argv);
   /** The ids this command declared; filled in once the (sub)command is known. */
   /** @type {Record<string, unknown>} */
   let checks = {};
@@ -150,7 +154,7 @@ export async function runCli(argv, io = {}) {
   const finish = (/** @type {Record<string, unknown>} */ data = {}, /** @type {string | null} */ fingerprint = null) => {
     const stray = results.items.find((r) => !PROTOCOL_IDS.has(r.id) && !declared(r.id, checks));
     if (stray) results.error("protocol", `${name} emitted undeclared check id ${JSON.stringify(stray.id)}; declare it in spec.checks and docs/commands.md`);
-    return emit({ command: name ?? "", version: VERSION, fingerprint, data, results, json, write });
+    return emit({ command: name ?? "", version: VERSION, fingerprint, data, results, format, write });
   };
 
   /** @type {Map<string, CommandModule>} */
@@ -161,7 +165,8 @@ export async function runCli(argv, io = {}) {
     return fromError(e, results, finish, log);
   }
 
-  // Informational paths. Unknown tokens are still errors; --json has no meaning here and is one too.
+  // Informational paths. Unknown tokens are still errors; --json and --format have no meaning here
+  // and are errors too.
   if (!name || name === "--help" || name === "-h" || name === "--version" || name === "-v") {
     if (rest.length) {
       results.error("args", `unknown argument ${JSON.stringify(rest[0])}`);
@@ -189,9 +194,11 @@ export async function runCli(argv, io = {}) {
     if (mod.invalidate && e instanceof ArgError) await invalidateOnArgError(mod, e, rest, cwd, log);
     return fromError(e, results, finish, log);
   }
+  format = args.format ?? "text";
   if (args.help) {
-    if (args.json) {
-      results.error("args", "--help prints text; it cannot be combined with --json");
+    if (format !== "text") {
+      const given = rest.includes("--json") ? "--json" : `--format ${format}`;
+      results.error("args", `--help prints text; it cannot be combined with ${given}`);
       return finish();
     }
     write(helpText(mod.spec, args.subcommand ?? undefined));
@@ -215,7 +222,7 @@ export async function runCli(argv, io = {}) {
   try {
     const out = await mod.run({ args, root, cwd, env, results, stdin: defaultStdin(io.stdin), log, version: VERSION });
     if (results.items.length === 0) results.error("protocol", `${name} produced no results; silence is never a pass`);
-    if (out?.transport && !json) {
+    if (out?.transport && !args.format) {
       const stray = results.items.find((r) => !PROTOCOL_IDS.has(r.id) && !declared(r.id, checks));
       // A protocol error outranks the transport: the ERROR line prints and exit 2 blocks the hook.
       if (stray) return finish(out.data ?? {}, out.fingerprint ?? null);
@@ -283,6 +290,26 @@ function fromError(e, results, finish, log) {
     results.items.push({ id: "internal", verdict: "ERROR", message: `error while reporting an error: ${firstLine(/** @type {Error} */ (inner).message)}`, details: [] });
   }
   return finish();
+}
+
+/**
+ * The output format the raw tokens ask for, for output written before they parse: JSON whenever
+ * `--json` is among them (an argument error a JSON consumer causes still reaches it as an envelope),
+ * else the last valid `--format` value, else text. A conflicting or invalid pair is the parser's
+ * ERROR to report; this only picks how that ERROR prints.
+ * @param {string[]} argv
+ * @returns {import("./output.mjs").Format}
+ */
+export function requestedFormat(argv) {
+  if (argv.includes("--json")) return "json";
+  /** @type {import("./output.mjs").Format} */
+  let found = "text";
+  for (let i = 0; i < argv.length; i++) {
+    const t = argv[i];
+    const value = t === "--format" ? argv[i + 1] : t.startsWith("--format=") ? t.slice("--format=".length) : undefined;
+    if (value !== undefined && (/** @type {readonly string[]} */ (FORMATS)).includes(value)) found = /** @type {import("./output.mjs").Format} */ (value);
+  }
+  return found;
 }
 
 /** @param {Map<string, CommandModule>} commands */

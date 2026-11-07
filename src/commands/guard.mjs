@@ -62,10 +62,11 @@
 //           "guard"], "onFailure": "block" } ] } ] } } — exec form (`args` present), the form the
 //           docs recommend for a path placeholder; `CLAUDE_PLUGIN_ROOT` is also exported to the
 //           process; `onFailure: "block"` (v2.1.295+) makes a hook that crashes block too.
-// Without `--json` this command returns `transport: { stdout, exit }` for the dispatcher to write
-// verbatim instead of verdict lines (the one documented exception to the verdict protocol: the
-// host's transport wins). With `--json` the envelope carries `guard` as PASS (allow) / FAIL
-// (block) / N/A (not a publish or ready command) and exits per the verdict, for tests.
+// Without an output format (neither `--format` nor `--json`) this command returns
+// `transport: { stdout, exit }` for the dispatcher to write verbatim instead of verdict lines (the
+// one documented exception to the verdict protocol: the host's transport wins). With `--json` or
+// an explicit `--format text|json|md` the report carries `guard` as PASS (allow) / FAIL (block) /
+// N/A (not a publish or ready command) and exits per the verdict, for tests and diagnosis.
 
 import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { join } from "node:path";
@@ -349,7 +350,8 @@ export async function run({ args, results, stdin, log, version }) {
   /** @type {import("../cli.mjs").CommandOutput & { transport?: { stdout: string, exit: number } }} */
   const out = { data, fingerprint: d.fingerprint };
   // The hook transport (see the header). The dispatcher writes `transport.stdout` verbatim and
-  // exits `transport.exit` when it is present and --json was not given.
-  if (!args.json) out.transport = { stdout: d.decision === "block" ? denyDocument(d.reason) : "", exit: 0 };
+  // exits `transport.exit` when it is present and no output format was given; an explicit
+  // `--format text|json|md` (or `--json`) selects the ordinary report instead.
+  if (!args.json && !args.format) out.transport = { stdout: d.decision === "block" ? denyDocument(d.reason) : "", exit: 0 };
   return out;
 }

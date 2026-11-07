@@ -1,0 +1,45 @@
+PASS   package-json             package.json parses and its list fields are arrays of objects
+PASS   schema                   $schema is https://www.raycast.com/schemas/extension.json
+PASS   categories               categories: Productivity
+PASS   platforms                platforms: macOS
+PASS   preference-type          1 preference type valid
+N/A    shortcut-platform-case   no shortcuts declared in src/
+PASS   changelog-exists         CHANGELOG.md exists
+PASS   changelog-order          2 entries, dates descend
+N/A    changelog-updated        no published copy given; pass --published <dir> (rx stale prints it)
+N/A    command-renamed          no published copy given; pass --published <dir> (rx stale prints it)
+PASS   eslint-config            eslint.config.js is a flat config
+PASS   lockfile                 package-lock.json is the only lock file
+PASS   npm-registry             every package resolves from registry.npmjs.org
+PASS   native-fetch             no fetch polyfill imported
+PASS   unused-dependencies      1 dependency is imported
+PASS   readme-assets            1 README image, none in metadata/ or assets/
+PASS   screenshots              1 screenshot in metadata/
+PASS   launch-command           no hits in src/
+PASS   favicon                  no hits in src/
+PASS   trash                    no hits in src/
+PASS   localization             no hits in src/
+N/A    prettierrc               no preset (core enforces only Store facts)
+N/A    hand-typed-preferences   no preset (core enforces only Store facts)
+N/A    title-case               no preset (core enforces only Store facts)
+N/A    agent-scaffolding        no preset (core enforces only Store facts)
+N/A    dev-material             no preset (core enforces only Store facts)
+N/A    generated-files          no preset (core enforces only Store facts)
+PASS   screenshot-count         1 of at most 6 screenshots
+PASS   screenshot-format        every file under metadata/ is a .png
+PASS   screenshot-size          every screenshot is 2000×1250
+PASS   icon-size                1 icon 512×512
+FAIL   readme-links             3 relative links do not resolve
+       README.md:3  docs/missing.md
+       README.md:3  LICENSE
+       docs/guide.md:3  ./diagram.png
+PASS   changelog-placeholder    one {PR_MERGE_DATE}, in the top entry's heading
+N/A    pref-description-length  no preset (core enforces only Store facts)
+N/A    pref-label-length        no preset (core enforces only Store facts)
+N/A    logger                   no preset (core enforces only Store facts)
+N/A    logger-verbose-copy      no preset (core enforces only Store facts)
+N/A    logger-strict-redaction  no preset (core enforces only Store facts)
+N/A    agents-md-paths          no preset (core enforces only Store facts)
+N/A    agents-md-scripts        no preset (core enforces only Store facts)
+N/A    agents-md-no-home-paths  no preset (core enforces only Store facts)
+N/A    agents-md-symbols        no preset (core enforces only Store facts)

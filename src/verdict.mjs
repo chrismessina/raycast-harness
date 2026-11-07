@@ -3,7 +3,9 @@
 //   VERDICT  check-id  message            one line per check, VERDICT in PASS FAIL WARN N/A ERROR
 //   exit 0 = only PASS/WARN/N/A, 1 = any FAIL, 2 = any ERROR (outranks FAIL)
 //
-// --json prints one envelope: { command, version, fingerprint, data, results, exit }.
+// --json prints one envelope: { command, version, fingerprint, data, results, exit }. Rendering
+// (text, JSON, Markdown) lives in output.mjs; this module owns the results, the exit code and the
+// envelope shape.
 // Domain outcomes (SAME-PIXELS, OURS-SAFE, MINE …) live in `data` or a result's `details`;
 // they are never extra verdicts.
 
@@ -73,36 +75,9 @@ export function exitCodeFor(items) {
 }
 
 /**
- * The `--json` document.
+ * The envelope every format renders (`--format json` prints it as is).
  * @param {{ command: string, version: string, fingerprint?: string | null, data?: object, results: Results }} p
  */
 export function envelope({ command, version, fingerprint = null, data = {}, results }) {
   return { command, version, fingerprint, data, results: results.items, exit: results.exit };
-}
-
-/**
- * Text form: one line per result, details indented beneath it.
- * @param {Results} results
- */
-export function renderText(results) {
-  const width = Math.min(28, results.items.reduce((w, r) => Math.max(w, r.id.length), 0));
-  const lines = [];
-  for (const r of results.items) {
-    lines.push(`${r.verdict.padEnd(5)}  ${r.id.padEnd(width)}  ${r.message}`);
-    for (const d of r.details) {
-      const where = d.file ? `${d.file}${d.line !== undefined ? `:${d.line}` : ""}  ` : "";
-      lines.push(`       ${where}${d.text}`);
-    }
-  }
-  return lines.join("\n") + (lines.length ? "\n" : "");
-}
-
-/**
- * Print the results in text or JSON and return the exit code. Commands never call process.exit.
- * @param {{ command: string, version: string, fingerprint?: string | null, data?: object, results: Results, json: boolean, write: (s: string) => void }} p
- */
-export function emit({ command, version, fingerprint = null, data = {}, results, json, write }) {
-  if (json) write(JSON.stringify(envelope({ command, version, fingerprint, data, results }), null, 2) + "\n");
-  else write(renderText(results));
-  return results.exit;
 }

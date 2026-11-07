@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { Results, VERDICTS, envelope, exitCodeFor, renderText } from "../src/verdict.mjs";
+import { renderText } from "../src/output.mjs";
+import { Results, VERDICTS, envelope, exitCodeFor } from "../src/verdict.mjs";
 
 test("exit 0 when only PASS, WARN and N/A", () => {
   const r = new Results().pass("a", "ok").warn("b", "meh").na("c", "nothing to inspect");
@@ -39,7 +40,7 @@ test("envelope carries command, version, fingerprint, data, results and exit", (
 });
 
 test("text form is VERDICT  id  message with details indented", () => {
-  const text = renderText(new Results().na("png", "no published copy").fail("scan", "2 hits", [{ file: "CHANGELOG.md", line: 9, text: "example@x" }]));
+  const text = renderText(new Results().na("png", "no published copy").fail("scan", "2 hits", [{ file: "CHANGELOG.md", line: 9, text: "example@x" }]).items);
   assert.match(text, /^N\/A {4}png {3}no published copy\n/);
   assert.match(text, /\nFAIL {3}scan {2}2 hits\n {7}CHANGELOG\.md:9 {2}example@x\n$/);
 });

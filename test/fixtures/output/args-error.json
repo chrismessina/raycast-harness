@@ -1,0 +1,15 @@
+{
+  "command": "doctor",
+  "version": "<VERSION>",
+  "fingerprint": null,
+  "data": {},
+  "results": [
+    {
+      "id": "args",
+      "verdict": "ERROR",
+      "message": "unknown argument \"--published\"",
+      "details": []
+    }
+  ],
+  "exit": 2
+}

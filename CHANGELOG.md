@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+- `--format md` escapes block syntax and GitHub-flavored autolinks as well as inline syntax, so
+  a detail such as `+ added.d.ts`, `- removed.d.ts`, `# note`, `1. item`, `&copy;`, a bare URL,
+  a `www.` address or an email address renders as literal text. `rx publication record` needs no
+  extension: it records into the git repository containing `--root` or the working directory,
+  including a multi-extension checkout root, and a missing git is reported as such. The plugin
+  runner records a publication without loading the registry or reaching the network; when rx's
+  bytes are not on the machine it exits 2 and says the record was not written.
+- Every command takes `--format text|json|md`. `--json` stays as an exact alias of
+  `--format json`, and pairing it with `--format text|md` is `ERROR args`. `md` prints a
+  Markdown report of the results (a verdict table, then the details with `file:line` as inline
+  code, then the exit code) and does not render `data`. Text and JSON output are byte-identical
+  to before. `rx guard` keeps its hook transport when no format is given.
+- `rx publication record <repo> <pr> <sha> [--root <dir>]` writes the plain publication record
+  `repo/publication.json` (`{repo, pr, remoteSha, at}`; no attestation, no network). Its writer
+  and `rx greptile can-reply --claims-fix` share one validator, and a malformed record is now
+  `ERROR input` rather than evidence. The plugin runner's `--record-publication` forwards to it.
 - Initial scaffold: verdict protocol, argument parser, root resolution,
   `rx commands --json`, `rx doctor`, commit-message hook.
 - `rx preflight`: the skills plugin's `scripts/preflight.mjs` ported with every one of its

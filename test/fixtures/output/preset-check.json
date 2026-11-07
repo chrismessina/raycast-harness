@@ -1,0 +1,48 @@
+{
+  "command": "preset",
+  "version": "<VERSION>",
+  "fingerprint": null,
+  "data": {
+    "rules": 12,
+    "bindings": {
+      "rx": 15,
+      "eslint": 0,
+      "judgment": 0
+    },
+    "errors": [],
+    "eslintRegistry": "not needed"
+  },
+  "results": [
+    {
+      "id": "preset-schema",
+      "verdict": "PASS",
+      "message": "valid against schema/preset.schema.json",
+      "details": []
+    },
+    {
+      "id": "preset-ids",
+      "verdict": "PASS",
+      "message": "12 unique rule ids",
+      "details": []
+    },
+    {
+      "id": "preset-anchors",
+      "verdict": "PASS",
+      "message": "12 anchors resolve",
+      "details": []
+    },
+    {
+      "id": "preset-bindings",
+      "verdict": "PASS",
+      "message": "15 rx, 0 eslint, 0 judgment bindings resolve (no eslint bindings; registry not consulted)",
+      "details": []
+    },
+    {
+      "id": "preset-severity",
+      "verdict": "PASS",
+      "message": "no binding downgrades a core check",
+      "details": []
+    }
+  ],
+  "exit": 0
+}

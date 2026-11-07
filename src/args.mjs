@@ -4,6 +4,7 @@
 // passed as a clean run. Here it is a hard stop.
 
 import { ArgError } from "./errors.mjs";
+import { FORMATS } from "./output.mjs";
 
 /**
  * @typedef {{ name: string, required?: boolean, help: string }} Positional
@@ -34,13 +35,18 @@ import { ArgError } from "./errors.mjs";
  *   positionals: Record<string, string>,
  *   flags: Record<string, string | boolean | number | string[]>,
  *   json: boolean,
+ *   format?: import("./output.mjs").Format | null,
  *   help: boolean,
  * }} ParsedArgs
+ *   `format` is the output format the arguments asked for, or null (or absent) when neither
+ *   `--format` nor `--json` was given, which means text. `--json` is an exact alias of
+ *   `--format json`: either sets `json: true` and `format: "json"`.
  */
 
 /** Accepted by every command and never listed in a schema. */
 export const GLOBAL_FLAGS = /** @type {Record<string, Flag>} */ ({
-  "--json": { type: "boolean", help: "print the JSON envelope instead of verdict lines" },
+  "--json": { type: "boolean", help: "print the JSON envelope instead of verdict lines (same as --format json)" },
+  "--format": { type: "string", value: "<text|json|md>", help: "output format: text (verdict lines, the default), json (the envelope) or md (a Markdown report of the results)" },
   "--help": { type: "boolean", help: "show this help" },
 });
 
@@ -51,7 +57,7 @@ export const GLOBAL_FLAGS = /** @type {Record<string, Flag>} */ ({
  */
 export function parseArgs(argv, schema) {
   /** @type {ParsedArgs} */
-  const out = { subcommand: null, positionals: {}, flags: {}, json: false, help: false };
+  const out = { subcommand: null, positionals: {}, flags: {}, json: false, format: null, help: false };
   try {
     return parse(argv, schema, out);
   } catch (e) {
@@ -134,7 +140,7 @@ function parseTokens(tokens, flags, positionals, out) {
       seen.add(name);
       if (def.type === "boolean") {
         if (inline !== undefined) throw new ArgError(`${name} takes no value`);
-        if (name === "--json") out.json = true;
+        if (name === "--json") setFormat(out, "--json", "json");
         else if (name === "--help") out.help = true;
         else out.flags[name] = true;
         continue;
@@ -148,6 +154,11 @@ function parseTokens(tokens, flags, positionals, out) {
       if (value.startsWith("--") && !inline) throw new ArgError(`${name} needs a value, got ${JSON.stringify(value)}`);
       /** @type {string | number} */
       let v = value;
+      if (name === "--format") {
+        if (!(/** @type {readonly string[]} */ (FORMATS)).includes(value)) throw new ArgError(`--format must be one of ${FORMATS.join(", ")}, got ${JSON.stringify(value)}`);
+        setFormat(out, `--format ${value}`, /** @type {import("./output.mjs").Format} */ (value));
+        continue;
+      }
       if (def.type === "int") {
         if (!/^\d+$/.test(value)) throw new ArgError(`${name} must be an integer, got ${JSON.stringify(value)}`);
         v = Number(value);
@@ -167,6 +178,21 @@ function parseTokens(tokens, flags, positionals, out) {
     if (tok === "") throw new ArgError(`<${def.name}> is empty (an unset shell variable?)`);
     out.positionals[def.name] = tok;
   }
+}
+
+/**
+ * Record the output format one flag asked for. `--json` is `--format json`, so the two agree only
+ * on json; any other pairing is an ArgError naming both flags.
+ * @param {ParsedArgs} out @param {string} given the flag as typed, e.g. "--format md"
+ * @param {import("./output.mjs").Format} format
+ */
+function setFormat(out, given, format) {
+  if (out.format && out.format !== format) {
+    const other = out.json ? "--json" : `--format ${out.format}`;
+    throw new ArgError(`${other} and ${given} conflict: --json is --format json; give one output format`);
+  }
+  out.format = format;
+  if (format === "json") out.json = true;
 }
 
 /** @param {ArgSchema} active @param {ParsedArgs} out */

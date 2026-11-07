@@ -17,7 +17,7 @@ The `raycast-extensions` Claude Code plugin is the other half. Its skills (`deve
   └─ PreToolUse hook (Bash | Write | Edit | MultiEdit | NotebookEdit)
         └─ node <plugin>/scripts/rx.mjs guard           ← reads the tool call on stdin, allows or denies
 
-  rx  →  verdict lines / --json envelope, exit 0 | 1 | 2
+  rx  →  verdict lines / JSON envelope / Markdown report, exit 0 | 1 | 2
      →  repo state in .git/rx/ (receipt, audit, stale baseline, holdout)
      →  cross-repo cache in ~/.cache/raycast-harness/ (published copies, shortcut table)
 ```
@@ -58,7 +58,7 @@ Skills never type a bare `rx`. They run `node "<plugin>/scripts/rx.mjs" <command
 | `RX_TARBALL=<raycast-harness-*.tgz>` | an isolated `npm install` of that tarball under `~/.cache/raycast-harness/runner/tarball/<hash>/`, keyed by the tarball's bytes; test-only, never set in shipped config |
 | neither | `npx -y raycast-harness@<version>`, where the version is pinned in the plugin's `rx-version.json` |
 
-The runner appends `--preset <plugin>/presets/chrismessina.json` whenever the addressed command or subcommand accepts `--preset` (it learns this from `rx commands --json`); a `--preset` you pass yourself wins. It also has two modes of its own: `--runner-version` prints the pinned version, and `--record-publication <owner/name> <pr> <remoteSha>` writes `.git/rx/publication.json` after a successful publish so that `rx greptile can-reply --claims-fix` can check it. A runner failure prints one line starting `rx runner:` and exits 2.
+The runner appends `--preset <plugin>/presets/chrismessina.json` whenever the addressed command or subcommand accepts `--preset` (it learns this from `rx commands --json`); a `--preset` you pass yourself wins. It also has two modes of its own: `--runner-version` prints the pinned version, and `--record-publication <owner/name> <pr> <remoteSha>` is a compatibility form that forwards to `rx publication record <owner/name> <pr> <remoteSha>`, which writes `.git/rx/publication.json` after a successful publish so that `rx greptile can-reply --claims-fix` can check it. The record is per git repository, so it works from an extension or from the root of a checkout that holds several. Recording never reaches the network: for `publication` the runner reads no registry and fetches nothing, and runs only an rx whose bytes are already on this machine (`RX_DEV`, an `RX_TARBALL` install already in the cache, or the pinned package already in npm's cache, run with `npx --offline`, which may unpack it from that cache onto local disk). When none is there, it exits 2 saying the record was not written; run any rx command through the runner once, then retry. A runner failure prints one line starting `rx runner:` and exits 2.
 
 ## 3. Concepts
 
@@ -74,17 +74,27 @@ The runner appends `--preset <plugin>/presets/chrismessina.json` whenever the ad
 
 Silence is never a pass, and an unknown argument is an `ERROR args`. Detail lines under a verdict are indented and usually `file:line  text`. `--json` replaces the lines with one envelope, `{ command, version, fingerprint, data, results, exit }`.
 
+### Output formats
+
+Every command takes `--format text|json|md`. `text` is the verdict lines and is the default. `json` is the envelope, and `--json` is the same thing spelled shorter, so a script that already passes `--json` keeps working. `md` is a Markdown report you can paste into a PR or a handoff: a table of verdicts, checks and messages, the details as a list with `file:line` in inline code, and the exit code. The format never changes a verdict or the exit code. The Markdown report leaves out `data`; use `--format json` when you need it. Giving `--json` together with `--format text` or `--format md` is an `ERROR args`.
+
+```sh
+rx preflight --format md > preflight.md
+```
+
+`rx guard` is the one exception to the default: run as the hook, with no format, it prints nothing on allow and a deny document on block. Give it any `--format` to see its ordinary report instead.
+
 ### Root resolution
 
 Every command whose root rule is `required` or `optional` finds the extension like this: `--root <dir>` wins; otherwise rx walks up from the current directory to the nearest `package.json` with a `commands` array; if there is none, it looks one level down. More than one candidate is always an `ERROR root` that asks for `--root`, and so is a `--root` that is not an existing directory. Finding no extension at all is an `ERROR root` only for a `required` command; an `optional` one (`rx doctor`, `rx greptile fetch`, `wait` and `can-reply`) runs without a root and reports the checks that need one as `N/A`, so `rx doctor` works outside any extension. It never guesses.
 
 ### State locations
 
-- **Repo state** lives in `git rev-parse --git-path rx` of the extension's repository, which is `.git/rx/` in a normal checkout: `receipt.json` (gates), `audit.json` (audit), `stale/baseline.json` (stale), `holdout/` (holdout), `publication.json` (the runner) and Greptile round stores. It is never inside the payload and never inside the npm install.
+- **Repo state** lives in `git rev-parse --git-path rx` of the extension's repository, which is `.git/rx/` in a normal checkout: `receipt.json` (gates), `audit.json` (audit), `stale/baseline.json` (stale), `holdout/` (holdout), `publication.json` (`rx publication record`) and Greptile round stores. It is never inside the payload and never inside the npm install.
 - **rx config** lives in `$XDG_CONFIG_HOME/raycast-harness`, by default `~/.config/raycast-harness`, outside every repository: the attestation key `attest.key` and one generation file per extension root under `generations/` (see "Receipt attestation").
 - **Cross-repo cache** lives in `$XDG_CACHE_HOME/raycast-harness`, by default `~/.cache/raycast-harness`: the sparse checkout of `raycast/extensions` under `upstream/`, the runtime shortcut table under `shortcuts/`, the runner's tarball installs and registry cache under `runner/`, and PR-body snapshots.
 
-Only rx writes rx state. Never hand-edit `receipt.json`, `audit.json` or `publication.json`, and never copy them between checkouts or restore saved copies. `receipt.json` and `audit.json` are bound to the checkout and the `rx gates` attempt they were made for. `publication.json` is a plain record, `{repo, pr, remoteSha, at}`, written by the plugin runner, and it carries no binding.
+Only rx writes rx state. Never hand-edit `receipt.json`, `audit.json` or `publication.json`, and never copy them between checkouts or restore saved copies. `receipt.json` and `audit.json` are bound to the checkout and the `rx gates` attempt they were made for. `publication.json` is a plain record, `{repo, pr, remoteSha, at}`, written only by `rx publication record`, and it carries no binding or attestation; `rx greptile can-reply` refuses a record that `rx publication record` would not write.
 
 ### Presets versus core
 
@@ -151,7 +161,7 @@ rx shortcuts runtime                                     # once per installed Ra
 rx audit record --preset "$PRESET" --entries "$WORK/entries.json"
 rx audit show                                            # does the audit still match the receipt?
 npm run publish                                          # the guard checks receipt + audit here
-node "<plugin>/scripts/rx.mjs" --record-publication raycast/extensions "$PR" "$REMOTE_SHA"
+rx publication record raycast/extensions "$PR" "$REMOTE_SHA"   # the record can-reply --claims-fix reads
 rx holdout in                                            # restore and verify every held-out entry
 ```
 
