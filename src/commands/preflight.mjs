@@ -8,7 +8,7 @@ import { RxError } from "../errors.mjs";
 import { specChecks } from "../preflight/catalog.mjs";
 import { runPreflight } from "../preflight/checks.mjs";
 import { loadPreset } from "../preset/load.mjs";
-import { insideUpstreamCache, withUpstreamLock } from "../upstream.mjs";
+import { withPublishedCopy } from "../published-copy.mjs";
 
 /** @type {import("../cli.mjs").CommandSpec} */
 export const spec = {
@@ -43,11 +43,12 @@ export async function run({ args, root, cwd, results }) {
     throw new RxError(`--published ${JSON.stringify(pubFlag)} is not a directory`, { id: "input" });
   const presetFlag = typeof args.flags["--preset"] === "string" ? args.flags["--preset"] : null;
   const preset = presetFlag === null ? null : loadPreset(presetFlag, cwd);
-  // A published copy inside the shared upstream cache is read under the cache's reader lock, so a
-  // concurrent `rx stale` for another extension cannot swap the tree mid-run. A published
-  // directory anywhere else needs no lock.
-  const work = () => runPreflight({ root, publishedDir, preset });
-  const { outcomes, data } = publishedDir !== null && insideUpstreamCache(publishedDir) ? await withUpstreamLock(work) : await work();
+  // The published-copy service reads a copy inside the shared upstream cache under its lock, so a
+  // concurrent `rx stale` for another extension cannot swap the tree mid-run; a directory anywhere
+  // else is neither locked nor refreshed.
+  const { outcomes, data } = publishedDir === null
+    ? await runPreflight({ root, publishedDir, preset })
+    : await withPublishedCopy({ directory: publishedDir }, (copy) => runPreflight({ root, publishedDir: copy.directory, preset }));
   for (const o of outcomes) results.add(o.verdict, o.id, o.message, o.details);
   return { data };
 }

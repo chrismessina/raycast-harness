@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Published-copy access is one scoped operation (`src/published-copy.mjs` `withPublishedCopy`):
+  the service owns cache detection, the upstream lock for the whole read and exact-baseline
+  validation, and `stale`, `preflight`, `png`, `changelog`, `contributions`, `gates` and
+  `audit record` read through it. `repo/stale/baseline.json` is `{ name, published, baseline, at }`
+  with no cache path (an older file with one still reads). An external `--published` is neither
+  locked nor refreshed, `changelog --published` inside the cache is read under the lock, and
+  `gates` reports `ERROR github` when the cache moved between `stale` and `preflight`.
 - One completion kernel (`src/command-execution.mjs`) is shared by the dispatcher and by the
   in-process steps of `rx gates` and `rx audit record`: results recorded before a throw, silence
   as `ERROR protocol` and the conversion of thrown errors are defined once. Two existing

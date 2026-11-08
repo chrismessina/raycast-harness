@@ -14,7 +14,8 @@ import { PLACEHOLDER, isHeading, parseChangelog, sameEntry } from "../changelog/
 import { RxError } from "../errors.mjs";
 import { run as exec } from "../exec.mjs";
 import { git, topLevel } from "../git.mjs";
-import { skipSegment, withUpstreamLock } from "../upstream.mjs";
+import { withPublishedCopy } from "../published-copy.mjs";
+import { skipSegment } from "../upstream.mjs";
 
 /** @type {import("../cli.mjs").CommandSpec} */
 export const spec = {
@@ -45,9 +46,10 @@ export async function run({ results, root, args }) {
   const dir = /** @type {string} */ (root);
   const publishedDir = resolve(String(args.flags["--published"]));
   if (!nonEmptyDir(publishedDir)) throw new RxError(`--published ${publishedDir} is missing or empty; run rx stale first`, { id: "contributions" });
-  // The published copy normally lives in the shared upstream cache; hold its lock for the whole
-  // comparison so a concurrent fetch cannot swap the tree under this read.
-  return withUpstreamLock(() => decide(dir, publishedDir, results));
+  // The published copy normally lives in the shared upstream cache; the published-copy service
+  // holds its lock for the whole comparison so a concurrent fetch cannot swap the tree under this
+  // read. A directory outside the cache is neither locked nor refreshed.
+  return withPublishedCopy({ directory: publishedDir }, (copy) => decide(dir, /** @type {string} */ (copy.directory), results));
 }
 
 /**

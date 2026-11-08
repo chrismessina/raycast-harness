@@ -4,11 +4,12 @@
 // heading structure (Q6: a stamped heading on one side and the placeholder on the other name the
 // same entry; any other boundary is an ERROR and nothing is written).
 
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { PLACEHOLDER, bodyHash, parseChangelog, placeholderProblems, sameEntry } from "../changelog/parse.mjs";
 import { RxError } from "../errors.mjs";
 import { git } from "../git.mjs";
+import { withPublishedCopy } from "../published-copy.mjs";
 
 export const BULLET_MAX = 280;
 
@@ -50,7 +51,7 @@ export async function run({ results, root, args }) {
 
   // Every input is read and validated before anything is written: the published copy, the
   // redactions (above), and with --merge both sides of the merge.
-  const published = readPublished(publishedDir);
+  const published = await readPublished(publishedDir);
 
   let merged = false;
   /** @type {string} */
@@ -135,14 +136,14 @@ function readText(file) {
 
 /**
  * The published CHANGELOG.md: null when there is no --published or the copy has none (N/A later);
- * `ERROR input` when it exists but cannot be read.
+ * `ERROR input` when it exists but cannot be read. Read through the published-copy service, so a
+ * copy inside the shared upstream cache is read under its lock.
  * @param {string | null} publishedDir
+ * @returns {Promise<string | null>}
  */
-function readPublished(publishedDir) {
+async function readPublished(publishedDir) {
   if (!publishedDir) return null;
-  const pubFile = join(publishedDir, "CHANGELOG.md");
-  if (!existsSync(pubFile)) return null;
-  return readText(pubFile);
+  return withPublishedCopy({ directory: publishedDir }, async (copy) => (copy.exists("CHANGELOG.md") ? readText(copy.path("CHANGELOG.md")) : null));
 }
 
 /** @param {string} text */

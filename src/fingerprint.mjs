@@ -24,12 +24,12 @@
 // takes no flags, can re-read the same files. A file that has since vanished hashes as `missing`.
 
 import { createHash } from "node:crypto";
-import { existsSync, readFileSync, statSync } from "node:fs";
+import { readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { resolvePublishTag } from "./publish-tag.mjs";
 import { git, isWorkTree } from "./git.mjs";
 import { listPayload, readPayloadBytes } from "./payload.mjs";
-import { repoStatePathReadOnly } from "./state.mjs";
+import { readStaleBaseline } from "./published-copy.mjs";
 
 /**
  * @typedef {{
@@ -116,11 +116,10 @@ export function fileFingerprint(file) {
  */
 export async function readBaseline(root) {
   try {
-    const file = await repoStatePathReadOnly(root, "stale", "baseline.json");
-    if (!existsSync(file)) return "unknown";
-    const j = JSON.parse(readFileSync(file, "utf8"));
-    if (j?.published === false) return "unpublished";
-    if (j?.published === true && typeof j.baseline === "string" && j.baseline) return j.baseline;
+    const j = await readStaleBaseline(root);
+    if (j === null) return "unknown";
+    if (j.published === false) return "unpublished";
+    if (j.published === true && typeof j.baseline === "string" && j.baseline) return j.baseline;
     return "unknown";
   } catch {
     return "unknown";

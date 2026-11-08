@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdirSync, readFileSync, readdirSync, rmSync } from "node:fs";
+import { cpSync, mkdirSync, readFileSync, readdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { rx, withTempDir } from "./helpers.mjs";
 import { _setUpstreamForTests, upstreamDir } from "../src/upstream.mjs";
@@ -314,7 +314,11 @@ test("contributions holds the upstream cache lock while comparing: a foreign loc
     mkdirSync(join(upstreamDir(), ".rx-lock"));
     _setUpstreamForTests({ lockWaitMs: 300 });
     try {
-      const { ext, published } = await buildMerge(dir, "contributions-equal");
+      const { ext, published: fixtureCopy } = await buildMerge(dir, "contributions-equal");
+      // The lock guards the shared cache, so the published copy is read from inside it (where rx
+      // stale puts it); a directory outside the cache is read as given (next test).
+      const published = join(upstreamDir(), "extensions", "contributions-equal");
+      cpSync(fixtureCopy, published, { recursive: true });
       const r = await rx(["contributions", "--published", published, "--json"], { cwd: ext });
       assert.equal(r.code, 2, r.stdout);
       assert.equal(r.json.results[0].id, "github");

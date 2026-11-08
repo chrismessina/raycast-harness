@@ -132,7 +132,7 @@ A just-merged extension with no pending change FAILs `changelog-placeholder`, be
 rx stale --json        # network: GitHub API and a sparse git fetch of raycast/extensions
 ```
 
-`stale` writes `.git/rx/stale/baseline.json`; its `publishedDir` is the published copy in the cache. Feed that directory to the comparison checks:
+`stale` writes `.git/rx/stale/baseline.json`, which records whether the extension is published and the baseline commit, never a path. Its JSON output's `data.publishedDir` is the published copy in the cache for this run. Feed that directory to the comparison checks:
 
 ```sh
 PUB="$(rx stale --json | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>console.log(JSON.parse(s).data.publishedDir))')"

@@ -77,13 +77,15 @@ test("stale: every classifier class lands on its documented verdict, and baselin
     assert.match(by["stale-mine"].details.find((d) => d.file === "package.json").text, /uncommitted/);
     assert.match(by["stale-unhandled"].details.find((d) => d.file === "scripts/run.sh").text, /mode 100644 published, 100755 local/);
 
-    // State: repo/stale/baseline.json with the exact shape rx api-floor reads.
+    // State: repo/stale/baseline.json with the exact shape rx api-floor reads, and no cache path.
     const stateDir = (await g(local, ["rev-parse", "--path-format=absolute", "--git-path", "rx"])).stdout;
     const baseline = JSON.parse(readFileSync(join(stateDir, "stale", "baseline.json"), "utf8"));
-    assert.deepEqual(Object.keys(baseline).sort(), ["at", "baseline", "name", "published", "publishedDir"]);
+    assert.deepEqual(Object.keys(baseline).sort(), ["at", "baseline", "name", "published"]);
     assert.equal(baseline.published, true);
     assert.equal(baseline.baseline, up.sha);
-    assert.equal(baseline.publishedDir, r.json.data.publishedDir);
+    assert.equal(baseline.publishedDir, undefined);
+    // `data.publishedDir` stays in the output for this run's consumers; it is only not persisted.
+    assert.equal(r.json.data.publishedDir, join(upstreamDir(), "extensions", "alpha"));
     // Read-only outside the cache and the state dir: the local tree is untouched (symlink, overlay still there).
     assert.ok(existsSync(join(local, "link.txt")));
     assert.equal((await g(local, ["status", "--porcelain"])).stdout.split("\n").filter(Boolean).length, 2); // package.json modified, link.txt untracked

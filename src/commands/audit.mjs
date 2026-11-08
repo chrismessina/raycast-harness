@@ -44,12 +44,13 @@ import { computeFingerprints, diffFingerprints } from "../fingerprint.mjs";
 import { loadPreset } from "../preset/load.mjs";
 import { buildApplyContext, loadSources, readLockfile, readPublished } from "../preflight/context.mjs";
 import { repoStatePath, repoStatePathReadOnly, writeJsonAtomic } from "../state.mjs";
-import { cachedUpstream } from "../upstream.mjs";
+import { PublishedCopyChanged, withPublishedCopy } from "../published-copy.mjs";
 import { validateReceipt } from "../audit/artifacts.mjs";
 import { EFFECTS, dispositionKey, readEntries } from "../audit/entries.mjs";
 import { freshGreptileRulesStamp, greptileRulesAgreementProblem, greptileRulesStamp, receiptRulesProblem, stampOf, withGreptileRulesSnapshot } from "../audit/greptile.mjs";
 import { GREPTILE_PREFIX, applicableRules, decide, effectsOf, knownRuleIds, pngDispositions, staleDispositions } from "../audit/evaluate.mjs";
 import { runStep } from "../audit/step.mjs";
+import { Results } from "../verdict.mjs";
 import * as png from "./png.mjs";
 import * as shortcuts from "./shortcuts.mjs";
 
@@ -269,21 +270,36 @@ async function recordWith(ctx, auditPath, rules) {
   let pngResults = [];
   /** @type {any[]} */
   let pngFiles = [];
-  let cacheGone = false;
-  if (staleData.published === true && typeof staleData.publishedDir === "string") {
-    const cached = typeof staleData.name === "string" ? await cachedUpstream(staleData.name) : null;
-    if (!cached || cached.baseline !== staleData.baseline) {
-      results.error("png", `the upstream cache no longer holds baseline ${String(staleData.baseline).slice(0, 12)} for ${staleData.name}; run rx gates again`);
-      pngResults = results.items.filter((r) => r.id === "png");
-      cacheGone = true;
-    } else pngFlags["--published"] = staleData.publishedDir;
-  }
-  if (!cacheGone) {
+  const runPng = async () => {
     const pngRun = await runStep(png, ctx, { root, flags: pngFlags });
     results.merge(pngRun.results);
     pngResults = pngRun.results.items;
     pngFiles = /** @type {any[]} */ (pngRun.data.files ?? []);
-  }
+  };
+  if (staleData.published === true) {
+    // The receipt's exact baseline, read through the published-copy service: validated and read
+    // under one hold of the upstream lock, so the png evidence is against the copy gates judged.
+    let entered = false;
+    try {
+      if (typeof staleData.name !== "string") throw new PublishedCopyChanged(staleData.name, staleData.baseline);
+      await withPublishedCopy({ name: staleData.name, expectedBaseline: String(staleData.baseline) }, async (copy) => {
+        entered = true;
+        pngFlags["--published"] = /** @type {string} */ (copy.directory);
+        await runPng();
+      });
+    } catch (e) {
+      if (e instanceof PublishedCopyChanged) {
+        results.error("png", e.message);
+        pngResults = results.items.filter((r) => r.id === "png");
+      } else if (!entered && e instanceof RxError && e.id === "github") {
+        // The lock wait gave up: reported as the png step's own ERROR, as when png held the lock.
+        const r = new Results();
+        r.error(e.id, e.message);
+        results.merge(r);
+        pngResults = r.items;
+      } else throw e;
+    }
+  } else await runPng();
   const required = [...pngDispositions(pngFiles), ...staleDispositions(staleData)];
 
   // 6. The decision, from the same function rx guard recomputes with.

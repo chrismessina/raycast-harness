@@ -3,7 +3,7 @@
 
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { extname, join, relative } from "node:path";
-import { repoStatePathReadOnly } from "../state.mjs";
+import { readStaleBaseline } from "../published-copy.mjs";
 import { stripComments } from "./lexer.mjs";
 
 const SOURCE_EXT = new Set([".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"]);
@@ -110,9 +110,7 @@ export function readLockfile(root) {
  */
 export async function readPublished(root) {
   try {
-    const file = await repoStatePathReadOnly(root, "stale", "baseline.json");
-    if (!existsSync(file)) return null;
-    const j = JSON.parse(readFileSync(file, "utf8"));
+    const j = await readStaleBaseline(root);
     return typeof j?.published === "boolean" ? j.published : null;
   } catch {
     return null;

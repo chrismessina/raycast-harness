@@ -1,7 +1,7 @@
 // The shared sparse checkout of `raycast/extensions` (docs/commands.md §1, state table:
 // `cache/upstream/`). One partial clone for every extension; `extensions/<name>` is added to the
-// cone on demand. `rx stale` fills it and `gates`, `preflight --published`, `png` and
-// `contributions` read from it.
+// cone on demand. `rx stale` fills it and `gates`, `audit record`, `preflight --published`,
+// `png`, `changelog` and `contributions` read from it, all through src/published-copy.mjs.
 //
 // Fail closed: a fetch that errors, or a checkout that leaves the extension directory missing or
 // empty, is an RxError (`github`), never "no differences". Publication is decided by the GitHub
@@ -14,12 +14,13 @@
 // gives up after `lockWaitMs` (default 120 s) with `ERROR github`; a lock older than `lockStaleMs`
 // (default 10 min) is treated as abandoned and removed.
 //
-// For other commands (`preflight --published`, `png`, `gates`): wrap any read of a directory under
-// `upstreamDir()` in `withUpstreamLock(async () => …)`. Nesting is safe (reentrant in-process, so a
-// caller already holding it may call `ensureUpstream` or another locked helper inside); the
-// callback's return value and exceptions pass through; the lock is released in `finally`. A wait
-// longer than `lockWaitMs` throws `RxError` id `github` (`ERROR github` at the dispatcher); do not
-// catch it into a pass. `lockHeld()` reports whether this process currently holds it.
+// Commands do not call this module to read a published copy: they go through
+// `withPublishedCopy` (src/published-copy.mjs), the one consumer of `ensureUpstream`,
+// `cachedUpstream` and `withUpstreamLock`, which holds the lock for the whole read. Nesting is safe
+// (reentrant in-process); the callback's return value and exceptions pass through; the lock is
+// released in `finally`. A wait longer than `lockWaitMs` throws `RxError` id `github`
+// (`ERROR github` at the dispatcher); do not catch it into a pass. `lockHeld()` reports whether
+// this process currently holds it.
 
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";

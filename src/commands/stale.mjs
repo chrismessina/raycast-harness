@@ -12,12 +12,12 @@
 // CHECK and NEW? are WARN "requiring an audit disposition" keyed by { path, localHash, baseline }
 // (data.files[]), which `rx audit record` matches.
 
-import { lstatSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
-import { dirname, join, relative } from "node:path";
+import { lstatSync, readFileSync, readdirSync } from "node:fs";
+import { join, relative } from "node:path";
 import { RxError } from "../errors.mjs";
 import { git } from "../git.mjs";
-import { repoStatePath } from "../state.mjs";
-import { blobId, ensureUpstream, skipSegment, withUpstreamLock } from "../upstream.mjs";
+import { withPublishedCopy, writeStaleBaseline } from "../published-copy.mjs";
+import { blobId, skipSegment } from "../upstream.mjs";
 
 /** @type {import("../cli.mjs").CommandSpec} */
 export const spec = {
@@ -26,7 +26,7 @@ export const spec = {
   root: "required",
   flags: { "--root": { type: "string", value: "<dir>", help: "extension root" } },
   network: "GitHub API (publication lookup) and `git fetch` of raycast/extensions into the cross-repo cache",
-  state: "reads/writes cache/upstream/ (sparse checkout); writes repo/stale/baseline.json { name, baseline, publishedDir, published, at }",
+  state: "reads/writes cache/upstream/ (sparse checkout); writes repo/stale/baseline.json { name, published, baseline, at } (no cache path)",
   checks: {
     stale: { description: "N/A when the extension is not published (no baseline to compare)", levels: ["N/A"] },
     "stale-mine": { description: "published == local HEAD for these paths (PASS)", levels: ["PASS"] },
@@ -39,7 +39,7 @@ export const spec = {
   data: {
     name: "string — package.json name",
     published: "boolean",
-    publishedDir: "string | null — cache path of the published copy",
+    publishedDir: "string | null — cache path of the published copy (a convenience for this run; never persisted)",
     baseline: "string | null — raycast/extensions main commit the comparison used",
     files: "[{ path, class, localHash, publishedHash | null, note }] — class ∈ MINE CHECK NEW? UPSTREAM ONLY-PUB UNHANDLED; localHash is the git blob id of the on-disk bytes (null when absent locally)",
   },
@@ -62,28 +62,24 @@ const CLASSES = /** @type {const} */ ({
 export async function run({ results, root, log }) {
   const dir = /** @type {string} */ (root);
   const name = readName(dir);
-  // The lock is held from the fetch through the whole comparison: another rx fetching a different
-  // extension would otherwise move the shared tree while this one reads it.
-  return withUpstreamLock(() => compare(dir, name, results, log));
+  // The service holds the upstream lock from the fetch through the whole comparison: another rx
+  // fetching a different extension would otherwise move the shared tree while this one reads it.
+  return withPublishedCopy({ name, refresh: true, log }, (copy) => compare(dir, name, copy, results));
 }
 
 /**
- * @param {string} dir @param {string} name @param {import("../verdict.mjs").Results} results @param {(s: string) => void} log
+ * @param {string} dir @param {string} name @param {import("../published-copy.mjs").PublishedCopy} copy @param {import("../verdict.mjs").Results} results
  * @returns {Promise<import("../cli.mjs").CommandOutput>}
  */
-async function compare(dir, name, results, log) {
-  const info = await ensureUpstream(name, { log });
+async function compare(dir, name, copy, results) {
+  await writeStaleBaseline(dir, { name, published: copy.published, baseline: copy.baseline, at: /** @type {string} */ (copy.at) });
 
-  const baselineFile = await repoStatePath(dir, "stale", "baseline.json");
-  mkdirSync(dirname(baselineFile), { recursive: true });
-  writeFileSync(baselineFile, JSON.stringify({ name, baseline: info.baseline, publishedDir: info.publishedDir, published: info.published, at: info.at }, null, 2) + "\n");
-
-  if (!info.published) {
+  if (!copy.published) {
     results.na("stale", `not published: extensions/${name} is not on raycast/extensions main; no baseline`);
     return { data: { name, published: false, publishedDir: null, baseline: null, files: [] } };
   }
 
-  const publishedDir = /** @type {string} */ (info.publishedDir);
+  const publishedDir = /** @type {string} */ (copy.directory);
   const files = await classify(dir, publishedDir);
 
   /** @type {Map<Class, FileRow[]>} */
@@ -94,7 +90,7 @@ async function compare(dir, name, results, log) {
     byClass.set(f.class, list);
   }
   const allMine = files.length > 0 && files.every((f) => f.class === "MINE" && f.note === "identical");
-  if (allMine) results.pass("stale-mine", `identical to published (${files.length} files, baseline ${info.baseline?.slice(0, 12)})`);
+  if (allMine) results.pass("stale-mine", `identical to published (${files.length} files, baseline ${copy.baseline?.slice(0, 12)})`);
   else if (files.length === 0) results.fail("stale-unhandled", "neither side has any file to compare");
   else {
     for (const cls of /** @type {Class[]} */ (Object.keys(CLASSES))) {
@@ -104,7 +100,7 @@ async function compare(dir, name, results, log) {
       results.add(verdict, id, `${rows.length} ${rows.length === 1 ? "path" : "paths"}: ${summary}`, rows.map((r) => ({ file: r.path, text: `${cls} ${r.note}` })));
     }
   }
-  return { data: { name, published: true, publishedDir, baseline: info.baseline, files } };
+  return { data: { name, published: true, publishedDir, baseline: copy.baseline, files } };
 }
 
 /** @param {string} dir */

@@ -18,7 +18,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PngError, comparePng, decodeRgba, readPngInfo } from "../png.mjs";
 import { git, isWorkTree } from "../git.mjs";
-import { insideUpstreamCache, withUpstreamLock } from "../upstream.mjs";
+import { withPublishedCopy } from "../published-copy.mjs";
 
 /** @type {import("../cli.mjs").CommandSpec} */
 export const spec = {
@@ -146,10 +146,10 @@ export async function run({ args, root, results, log }) {
   /** @type {boolean | null} */
   let inGit = null;
 
-  // A published dir inside the shared upstream cache is read under its lock so a concurrent
-  // `rx stale` for another extension cannot swap the tree between two of this run's reads.
-  const insideCache = published !== null && insideUpstreamCache(published);
-  const compareAll = async () => {
+  // Every read of the published copy happens inside the published-copy service: a dir inside the
+  // shared upstream cache is read under its lock so a concurrent `rx stale` for another extension
+  // cannot swap the tree between two of this run's reads; any other dir is read as given.
+  const compareAll = async (/** @type {import("../published-copy.mjs").PublishedCopy | null} */ copy) => {
   for (const path of targets) {
     const localPath = join(rootDir, path);
     /** @type {Buffer} */
@@ -168,7 +168,7 @@ export async function run({ args, root, results, log }) {
       files.push(row({ path, outcome: "ERROR", localHash }));
       continue;
     }
-    const pubPath = published ? join(published, path) : null;
+    const pubPath = copy && published ? copy.path(path) : null;
     if (!pubPath || !existsSync(pubPath) || !statSync(pubPath).isFile()) {
       results.na("png", `${path}: LOCAL-ONLY, keep local (${published ? "no published copy of this path" : "no --published given"})`, [{ file: path, text: "LOCAL-ONLY keep local" }]);
       files.push(row({ path, outcome: "LOCAL-ONLY", local, localHash }));
@@ -247,7 +247,7 @@ export async function run({ args, root, results, log }) {
     }
   }
   };
-  if (insideCache) await withUpstreamLock(compareAll);
-  else await compareAll();
+  if (published !== null) await withPublishedCopy({ directory: published }, compareAll);
+  else await compareAll(null);
   return { data: { published: published !== null, files } };
 }

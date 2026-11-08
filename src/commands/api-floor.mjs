@@ -2,14 +2,14 @@
 // dependency policy sets for this extension? Policy comes only from the preset (plan 4.7, 4.16;
 // plan-review-1 #7; Q8). Publication status comes only from rx stale's baseline.json.
 
-import { existsSync, readFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { RxError } from "../errors.mjs";
 import { run as exec } from "../exec.mjs";
 import { compareSemver } from "../preset/applies.mjs";
 import { loadPreset } from "../preset/load.mjs";
 import { readLockfile } from "../preflight/context.mjs";
-import { repoStatePathReadOnly } from "../state.mjs";
+import { readStaleBaseline } from "../published-copy.mjs";
 
 const PKG = "@raycast/api";
 
@@ -145,11 +145,8 @@ export async function run({ args, root, cwd, results, log }) {
   /** @type {"new" | "existing" | "unknown"} */
   let publication = "unknown";
   try {
-    const file = await repoStatePathReadOnly(root, "stale", "baseline.json");
-    if (existsSync(file)) {
-      const j = JSON.parse(readFileSync(file, "utf8"));
-      if (typeof j?.published === "boolean") publication = j.published ? "existing" : "new";
-    }
+    const j = await readStaleBaseline(root);
+    if (typeof j?.published === "boolean") publication = j.published ? "existing" : "new";
   } catch (e) {
     log(`api-floor: baseline unreadable: ${/** @type {Error} */ (e).message}\n`);
   }

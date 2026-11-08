@@ -13,7 +13,8 @@
 //      and the run continues on the copy in use, with nothing installed. The stamp
 //      { repo, sha, digest } (src/audit/greptile.mjs stampOf) of exactly the snapshot the step
 //      reported (the routine's `selected`, never a reload) goes into the receipt as `greptileRules`.
-//   3. stale → scan → preflight (--published <stale's dir> only when published) → api-floor,
+//   3. stale → scan → preflight (only when published: --published, the copy of stale's exact
+//      baseline, read through the published-copy service under the upstream lock) → api-floor,
 //      each run in-process (src/audit/step.mjs) and merged with its own ids
 //   4. `npm run build` → `npx --no-install tsc --noEmit` → `npm run lint` (build first: it
 //      generates raycast-env.d.ts, which tsc needs; Q1). Missing local tooling → ERROR tooling;
@@ -38,6 +39,7 @@ import { rotateGeneration, subjectOf } from "../binding.mjs";
 import { RxError } from "../errors.mjs";
 import { run as exec } from "../exec.mjs";
 import { computeFingerprints } from "../fingerprint.mjs";
+import { withPublishedCopy } from "../published-copy.mjs";
 import { sameGreptileRules, stampOf, stampSha7 } from "../audit/greptile.mjs";
 import { describeRules, loadGreptileRules } from "../greptile/rules.mjs";
 import { notInUseMessage, updateWithin, updatedMessage } from "../greptile/update.mjs";
@@ -325,8 +327,8 @@ export async function run(ctx) {
   // 3. The rx steps.
   const staleRun = await runStep(stale, ctx, { root, flags: { "--root": root } });
   record("stale", staleRun.results);
-  const published = staleRun.data.published === true && typeof staleRun.data.publishedDir === "string";
-  const publishedDir = published ? /** @type {string} */ (staleRun.data.publishedDir) : null;
+  const staleName = typeof staleRun.data.name === "string" ? staleRun.data.name : null;
+  const published = staleRun.data.published === true && typeof staleRun.data.baseline === "string" && staleName !== null;
   const baseline = staleRun.data.published === true && typeof staleRun.data.baseline === "string" ? staleRun.data.baseline : staleRun.data.published === false ? "unpublished" : undefined;
 
   const scanRun = await runStep(scan, ctx, { root, flags: { "--root": root, "--forbidden": forbiddenPath } });
@@ -334,9 +336,25 @@ export async function run(ctx) {
 
   /** @type {Record<string, string>} */
   const preflightFlags = { "--root": root, "--preset": presetPath };
-  if (publishedDir) preflightFlags["--published"] = publishedDir;
-  const preflightRun = await runStep(preflight, ctx, { root, flags: preflightFlags });
-  record("preflight", preflightRun.results);
+  /** @type {Results} */
+  let preflightResults;
+  if (published) {
+    // The copy stale compared, by its exact baseline: the service validates it and holds the
+    // upstream lock for the whole preflight step. A cache that moved meanwhile is ERROR github.
+    let entered = false;
+    try {
+      preflightResults = await withPublishedCopy({ name: /** @type {string} */ (staleName), expectedBaseline: /** @type {string} */ (staleRun.data.baseline) }, async (copy) => {
+        entered = true;
+        preflightFlags["--published"] = /** @type {string} */ (copy.directory);
+        return (await runStep(preflight, ctx, { root, flags: preflightFlags })).results;
+      });
+    } catch (e) {
+      if (entered || !(e instanceof RxError)) throw e;
+      preflightResults = new Results();
+      preflightResults.error(e.id, e.message);
+    }
+  } else preflightResults = (await runStep(preflight, ctx, { root, flags: preflightFlags })).results;
+  record("preflight", preflightResults);
 
   const apiFloorRun = await runStep(apiFloor, ctx, { root, flags: { "--root": root, "--preset": presetPath } });
   record("api-floor", apiFloorRun.results);
