@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- One completion kernel (`src/command-execution.mjs`) is shared by the dispatcher and by the
+  in-process steps of `rx gates` and `rx audit record`: results recorded before a throw, silence
+  as `ERROR protocol` and the conversion of thrown errors are defined once. Two existing
+  differences stay explicit options (only the dispatcher logs an unexpected error's stack and
+  contains a failure to record an ERROR). No output, verdict or exit code changes.
 - `rx gates` stamps the receipt with exactly the Greptile rules snapshot its `greptile-rules`
   step reported, and a final check, `gates-rules-changed`, run immediately before the receipt is
   written, FAILs with no receipt when another `rx greptile update` installed a copy while gates

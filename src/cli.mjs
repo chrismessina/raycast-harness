@@ -9,16 +9,17 @@ import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { helpText, parseArgs } from "./args.mjs";
 import { ArgError, RootError, RxError } from "./errors.mjs";
+import { CLI_ERRORS, appendThrownError, declaredChecks, executeCommand, strayResult, validateCompletion } from "./command-execution.mjs";
 import { resolveRoot } from "./root.mjs";
 import { FORMATS, emit } from "./output.mjs";
 import { Results } from "./verdict.mjs";
 
+// The completion kernel's registry helpers, re-exported where commands have always imported them.
+export { PROTOCOL_IDS, declared } from "./command-execution.mjs";
+
 const HERE = dirname(fileURLToPath(import.meta.url));
 export const PKG = JSON.parse(readFileSync(join(HERE, "..", "package.json"), "utf8"));
 export const VERSION = /** @type {string} */ (PKG.version);
-
-/** Ids the dispatcher itself may emit; a command need not declare them. */
-export const PROTOCOL_IDS = new Set(["args", "root", "input", "tooling", "github", "npm", "git", "protocol", "internal"]);
 
 /**
  * @typedef {import("./args.mjs").ArgSchema} CommandSpec
@@ -120,15 +121,6 @@ function defaultStdin(stdinReader) {
 }
 
 /**
- * Does `id` match a declared check id (exact, or a declared `prefix-*`)?
- * @param {string} id @param {Record<string, unknown>} checks
- */
-export function declared(id, checks) {
-  if (id in checks) return true;
-  return Object.keys(checks).some((k) => k.endsWith("*") && id.startsWith(k.slice(0, -1)));
-}
-
-/**
  * Run the CLI. Returns the exit code; never calls process.exit.
  * @param {string[]} argv tokens after the program name
  * @param {{ cwd?: string, env?: NodeJS.ProcessEnv, stdout?: (s: string) => void, stderr?: (s: string) => void, stdin?: () => Promise<string>, commandsDir?: string }} [io]
@@ -150,10 +142,9 @@ export async function runCli(argv, io = {}) {
   /** @type {Record<string, unknown>} */
   let checks = {};
   // Every path to stdout goes through here, so the check-id registry is enforced on completion
-  // and on every error path alike.
+  // and on every error path alike (src/command-execution.mjs validateCompletion).
   const finish = (/** @type {Record<string, unknown>} */ data = {}, /** @type {string | null} */ fingerprint = null) => {
-    const stray = results.items.find((r) => !PROTOCOL_IDS.has(r.id) && !declared(r.id, checks));
-    if (stray) results.error("protocol", `${name} emitted undeclared check id ${JSON.stringify(stray.id)}; declare it in spec.checks and docs/commands.md`);
+    validateCompletion(String(name), checks, results);
     return emit({ command: name ?? "", version: VERSION, fingerprint, data, results, format, write });
   };
 
@@ -206,7 +197,7 @@ export async function runCli(argv, io = {}) {
   }
 
   const sub = args.subcommand && mod.spec.subcommands ? mod.spec.subcommands[args.subcommand] : null;
-  checks = { ...(mod.spec.checks ?? {}), ...(sub?.checks ?? {}) };
+  checks = declaredChecks(mod.spec, args.subcommand);
   const rootMode = sub?.root ?? mod.spec.root ?? "none";
   /** @type {string | null} */
   let root = null;
@@ -219,20 +210,30 @@ export async function runCli(argv, io = {}) {
     }
   }
 
+  // The run and its completion are the shared kernel's (src/command-execution.mjs); what happens
+  // to stdout afterwards, the hook transport included, is the dispatcher's. Rendering stays inside
+  // this try so that output that cannot be rendered is itself reported as an ERROR.
+  /** @type {Awaited<ReturnType<typeof executeCommand>>} */
+  let out;
   try {
-    const out = await mod.run({ args, root, cwd, env, results, stdin: defaultStdin(io.stdin), log, version: VERSION });
-    if (results.items.length === 0) results.error("protocol", `${name} produced no results; silence is never a pass`);
-    if (out?.transport && !args.format) {
-      const stray = results.items.find((r) => !PROTOCOL_IDS.has(r.id) && !declared(r.id, checks));
-      // A protocol error outranks the transport: the ERROR line prints and exit 2 blocks the hook.
-      if (stray) return finish(out.data ?? {}, out.fingerprint ?? null);
-      if (out.transport.stdout) write(out.transport.stdout);
-      return out.transport.exit;
+    out = await executeCommand(mod, { args, root, cwd, env, results, stdin: defaultStdin(io.stdin), log, version: VERSION }, CLI_ERRORS);
+    if (!out.threw) {
+      if (out.transport && !args.format) {
+        const stray = strayResult(results, checks);
+        // A protocol error outranks the transport: the ERROR line prints and exit 2 blocks the hook.
+        if (stray) return finish(out.data, out.fingerprint);
+        if (out.transport.stdout) write(out.transport.stdout);
+        return out.transport.exit;
+      }
+      return finish(out.data, out.fingerprint);
     }
-    return finish(out?.data ?? {}, out?.fingerprint ?? null);
   } catch (e) {
     return fromError(e, results, finish, log);
   }
+  // The command threw and the kernel already recorded the ERROR. Its report is rendered outside the
+  // catch above, as the dispatcher always did: output that fails while reporting an error escapes
+  // after one write attempt instead of being reported a second time.
+  return finish(out.data, out.fingerprint);
 }
 
 /**
@@ -268,27 +269,15 @@ async function invalidateOnArgError(mod, e, rest, cwd, log) {
 }
 
 /**
- * Turn any thrown value into one ERROR result (first line as the message, the rest as details)
- * without ever throwing itself.
+ * Turn any thrown value into one ERROR result under the dispatcher's error policy (stack logged,
+ * never throws; src/command-execution.mjs appendThrownError) and print.
  * @param {unknown} e
  * @param {Results} results
  * @param {(data?: Record<string, unknown>, fingerprint?: string | null) => number} finish
  * @param {(s: string) => void} log
  */
 function fromError(e, results, finish, log) {
-  try {
-    const err = /** @type {Error & { id?: string }} */ (e);
-    const lines = String(err?.message ?? String(e)).split(/\r?\n/).filter((l) => l.trim());
-    const message = lines.shift()?.trim() ?? "(no message)";
-    const details = lines.map((text) => ({ text: text.trim() }));
-    if (e instanceof RxError) results.error(e.id, message, details);
-    else {
-      results.error("internal", `${err?.name ?? "Error"}: ${message}`, details);
-      if (err?.stack) log(err.stack + "\n");
-    }
-  } catch (inner) {
-    results.items.push({ id: "internal", verdict: "ERROR", message: `error while reporting an error: ${firstLine(/** @type {Error} */ (inner).message)}`, details: [] });
-  }
+  appendThrownError(results, e, log, CLI_ERRORS);
   return finish();
 }
 
