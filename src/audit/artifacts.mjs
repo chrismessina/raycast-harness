@@ -14,6 +14,7 @@ import { isResult } from "./evaluate.mjs";
 
 /** Does a result id belong to a step's output? @type {Record<string, (id: string) => boolean>} */
 export const STEP_RESULT_IDS = {
+  "greptile-rules": (id) => id === "greptile-rules",
   stale: (id) => id === "stale" || id.startsWith("stale-"),
   scan: (id) => id.startsWith("scan-"),
   preflight: (id) => id in (preflight.spec.checks ?? {}),
@@ -29,6 +30,15 @@ const isObj = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
 const str = (v) => typeof v === "string" && v.length > 0;
 
 /**
+ * A Greptile rules stamp `{ repo, sha (40 hex), digest (64 hex) }` (src/audit/greptile.mjs stampOf).
+ * @param {unknown} g
+ */
+const isRulesStamp = (g) => {
+  const x = /** @type {any} */ (g);
+  return isObj(x) && str(x.repo) && typeof x.sha === "string" && /^[0-9a-f]{40}$/.test(x.sha) && typeof x.digest === "string" && /^[0-9a-f]{64}$/.test(x.digest);
+};
+
+/**
  * @param {any} receipt
  * @param {{ version: string }} p
  * @returns {string | null}
@@ -40,6 +50,10 @@ export function validateReceipt(receipt, { version }) {
   if (!isObj(receipt.inputs) || !str(receipt.inputs.preset) || !str(receipt.inputs.forbidden)) return "the receipt lacks inputs.preset / inputs.forbidden";
   if (!Array.isArray(receipt.results) || receipt.results.length === 0) return "the receipt has no results";
   for (const r of receipt.results) if (!isResult(r)) return "the receipt holds a malformed result";
+  // Before the steps list: a receipt written before this field existed also lacks the
+  // greptile-rules step, and this is the sentence that says why.
+  if (receipt.greptileRules === undefined) return "the receipt was written before rx bound receipts to the Greptile rules";
+  if (!isRulesStamp(receipt.greptileRules)) return "the receipt's greptileRules is not { repo, sha (40 hex), digest (64 hex) }";
   if (!Array.isArray(receipt.steps) || !receipt.steps.every((/** @type {unknown} */ s) => typeof s === "string")) return "the receipt has no steps list";
   for (const step of REQUIRED_STEPS) {
     if (!receipt.steps.includes(step)) return `the receipt lacks step ${step}`;
@@ -80,8 +94,7 @@ export function validateAudit(audit, { version }) {
   // Absent (an audit written before the field existed) is the guard's "rules changed" sentence,
   // not a shape problem; present, it must be well-formed.
   if (audit.greptileRules !== undefined) {
-    const g = audit.greptileRules;
-    if (!isObj(g) || !str(g.repo) || typeof g.sha !== "string" || !/^[0-9a-f]{40}$/.test(g.sha) || typeof g.digest !== "string" || !/^[0-9a-f]{64}$/.test(g.digest)) return "the audit's greptileRules is not { repo, sha (40 hex), digest (64 hex) }";
+    if (!isRulesStamp(audit.greptileRules)) return "the audit's greptileRules is not { repo, sha (40 hex), digest (64 hex) }";
   }
   return null;
 }

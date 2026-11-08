@@ -591,22 +591,23 @@ test("guard (W9 finding 1): changed rule text under the same ids blocks a record
     assert.equal(guardResult(await guard(bashPayload(PUBLISH, root))).verdict, "PASS");
 
     // Same ids, one judgment rule's text changed: the applicable-id set is unchanged, so only the
-    // rules binding can catch it.
+    // rules binding can catch it. The receipt names the old rules too, so the recovery is
+    // rx gates, then rx audit record (W10 round 1 P3).
     const copy = cachedRules(dir, "cccccccccccccccccccccccccccccccccccccccc", (c) => {
       const r = c.rules.find((/** @type {any} */ x) => x.id === "no-silent-failure");
       r.rule += "\n\nAlso flag: a new requirement the audit never read.";
     });
     const blocked = await guard(bashPayload(PUBLISH, root));
     assert.equal(guardResult(blocked).verdict, "FAIL");
-    assert.match(guardResult(blocked).message, new RegExp(`the Greptile rules changed since the audit was recorded \\(${shipped} → ccccccc\\); run rx audit record again$`));
+    assert.match(guardResult(blocked).message, new RegExp(`the Greptile rules changed since the audit was recorded \\(${shipped} → ccccccc\\); run rx gates, then rx audit record$`));
     const show = await rx(["audit", "show", "--root", root, "--json"]);
     assert.equal(byId(show)["audit-show"].verdict, "WARN");
-    assert.equal(byId(show)["audit-show"].message, `the Greptile rules changed since the audit was recorded (${shipped} → ccccccc); run rx audit record again`);
+    assert.equal(byId(show)["audit-show"].message, `the Greptile rules changed since the audit was recorded (${shipped} → ccccccc); run rx gates, then rx audit record`);
 
     // The digest decides, not the sha: the same sha with different text still blocks.
     rmSync(copy, { recursive: true, force: true });
     cachedRules(dir, JSON.parse(readFileSync(join(SHIPPED_DIR, "SOURCE.json"), "utf8")).sha, (c) => { c.rules[0].rule += " (edited)"; });
-    assert.match(guardResult(await guard(bashPayload(PUBLISH, root))).message, new RegExp(`\\(${shipped} → ${shipped}\\); run rx audit record again$`));
+    assert.match(guardResult(await guard(bashPayload(PUBLISH, root))).message, new RegExp(`\\(${shipped} → ${shipped}\\); run rx gates, then rx audit record$`));
     rmSync(join(dir, "cache", "raycast-harness", "greptile", "rules"), { recursive: true, force: true });
     assert.equal(guardResult(await guard(bashPayload(PUBLISH, root))).verdict, "PASS", "the shipped rules again: the audit matches");
 

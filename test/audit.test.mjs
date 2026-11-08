@@ -561,7 +561,11 @@ test("audit record (W9 round 2 finding A): the Greptile rules change mid-recordi
     } finally {
       _setBeforeWriteHookForTests(null);
     }
-    // Recorded again against the new rules: written, stamped with them.
+    // The receipt was written under the old rules, so recording again is refused until rx gates
+    // runs under the new ones (W10); then it is written, stamped with them.
+    const refused = await auditRecord(root, writeEntries(dir, fullEntries()));
+    assert.equal(byId(refused)["audit-receipt"].verdict, "ERROR");
+    assert.equal((await gates(root)).code, 0);
     const again = await auditRecord(root, writeEntries(dir, fullEntries()));
     assert.equal(again.code, 0, again.stdout);
     assert.equal(JSON.parse(readFileSync(await auditPath(root), "utf8")).greptileRules.sha, "c".repeat(40));

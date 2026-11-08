@@ -40,8 +40,9 @@ import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, realpathSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { RxError } from "../errors.mjs";
-import { GREPTILE_REPO, diffRuleSets, fetchLive, liveSource } from "../greptile/compare.mjs";
-import { SHIPPED_DIR, describeRules, loadGreptileRules, readRuleDir, writeDestCopy, writeUpdatedCopy } from "../greptile/rules.mjs";
+import { GREPTILE_REPO } from "../greptile/compare.mjs";
+import { SHIPPED_DIR, describeRules, loadGreptileRules, readRuleDir, writeDestCopy } from "../greptile/rules.mjs";
+import { compareLive, notInUseMessage, updateCacheCopy, updatedMessage } from "../greptile/update.mjs";
 import { buildRound, parseForbidden, scanReply, validateEvidence } from "../greptile/rounds.mjs";
 import { parsePrNumber, transport } from "../pr/transport.mjs";
 import { publicationPath, readPublication } from "../publication.mjs";
@@ -347,27 +348,12 @@ async function canReply({ args, root, results }) {
   return { data: { authorized, record } };
 }
 
-/**
- * Where the live rules are, fetched and compared with `base`. `source moved` is a change like any
- * other: it leads data.changes, and details derive from it. Throws on any read or validation failure.
- * @param {import("../greptile/rules.mjs").RulesSource} from @param {import("../greptile/compare.mjs").RuleSet} base
- */
-async function compareLive(from, base) {
-  const where = await liveSource(GREPTILE_REPO, from.pr, transport());
-  // The copy was fetched at the commit that last touched .greptile/: nothing to fetch or compare.
-  if (where.source === from.origin && where.sha === from.sha) return { where, live: null, changes: /** @type {string[]} */ ([]) };
-  const live = await fetchLive(GREPTILE_REPO, where.sha, transport());
-  const changes = diffRuleSets(base, live.set);
-  if (where.source !== from.origin) changes.unshift(`source moved ${from.origin} → ${where.source}${where.source === "main" && from.pr ? ` (PR #${from.pr} merged)` : ""}`);
-  return { where, live, changes };
-}
-
 /** @param {import("../cli.mjs").CommandContext} ctx */
 async function outdated({ results, log }) {
   const inUse = loadGreptileRules({ warn: log });
   const data = { inUse: inUse.source, live: /** @type {{ source: string, sha: string, committed: string } | null} */ (null), changes: /** @type {string[]} */ ([]) };
   try {
-    const { where, changes } = await compareLive(inUse.source, inUse.rules);
+    const { where, changes } = await compareLive(inUse.source, inUse.rules, transport());
     data.live = { source: where.source, sha: where.sha, committed: where.committed };
     data.changes = changes;
   } catch (e) {
@@ -400,25 +386,26 @@ async function update({ args, results, log }) {
     if (same) throw new RxError(`--dest ${dest} is the running package's own shipped rules directory; point --dest at a separate maintainer checkout`, { id: "greptile-update" });
   }
 
-  // With --dest the copy being replaced is that checkout's; otherwise it is the copy in use.
+  // Without --dest: the one check-and-update routine rx gates shares (src/greptile/update.mjs).
+  if (!destDir) return updateCache(results, log);
+
+  // With --dest the copy being replaced is that checkout's.
   /** @type {import("../greptile/rules.mjs").LoadedRules} */
   let before;
-  if (destDir) {
-    try {
-      // An older checkout's SOURCE.json may predate `committed` (W9 round 2 finding E): it is
-      // accepted here and treated as older than any dated copy (the epoch).
-      const r = readRuleDir(destDir, "--dest", { legacy: true });
-      before = { rules: r.set, source: { kind: "shipped", repo: r.source.repo, sha: r.source.sha, committed: r.source.committed ?? LEGACY_COMMITTED, fetched: r.source.fetched, path: destDir, origin: r.source.source, pr: r.source.pr ?? null } };
-    } catch (e) {
-      throw new RxError(`--dest ${dest}: ${/** @type {Error} */ (e).message}`, { id: "input" });
-    }
-  } else before = loadGreptileRules({ warn: log });
+  try {
+    // An older checkout's SOURCE.json may predate `committed` (W9 round 2 finding E): it is
+    // accepted here and treated as older than any dated copy (the epoch).
+    const r = readRuleDir(destDir, "--dest", { legacy: true });
+    before = { rules: r.set, source: { kind: "shipped", repo: r.source.repo, sha: r.source.sha, committed: r.source.committed ?? LEGACY_COMMITTED, fetched: r.source.fetched, path: destDir, origin: r.source.source, pr: r.source.pr ?? null } };
+  } catch (e) {
+    throw new RxError(`--dest ${dest}: ${/** @type {Error} */ (e).message}`, { id: "input" });
+  }
 
   const data = { previous: before.source, live: /** @type {{ source: string, sha: string, committed: string } | null} */ (null), changes: /** @type {string[]} */ ([]), updated: /** @type {string | null} */ (null), inUse: /** @type {boolean | null} */ (null) };
   /** @type {Awaited<ReturnType<typeof compareLive>>} */
   let got;
   try {
-    got = await compareLive(before.source, before.rules);
+    got = await compareLive(before.source, before.rules, transport());
   } catch (e) {
     results.error("greptile-update", `could not read or validate the live rules; nothing written: ${/** @type {Error} */ (e).message}`);
     return { data };
@@ -427,47 +414,61 @@ async function update({ args, results, log }) {
   data.live = { source: where.source, sha: where.sha, committed: where.committed };
   data.changes = changes;
   if (!changes.length) {
-    data.inUse = destDir ? null : true;
     results.pass("greptile-update", `already current: ${describeRules(before.source)} matches ${where.label}`);
     return { data };
   }
   if (!live) throw new RxError("internal: changes without a fetched live copy", { id: "internal" });
   const details = changes.map((text) => ({ text }));
   const arrow = `${before.source.sha.slice(0, 7)} → ${where.sha.slice(0, 7)}`;
-  // A cache copy names a PR only when it came from one; a maintainer checkout keeps the PR its
-  // SOURCE.json already recorded (the provenance of the first copy).
-  const prOf = (/** @type {boolean} */ keep) => (before.source.pr && (keep || where.source === "pr") ? { pr: before.source.pr } : {});
-
-  if (destDir) {
-    // Second, independent guard at the write site: whatever happened above, the installed shipped
-    // copy is never written (2026-10-30: a test run with the first guard disabled rewrote it).
-    if (realpathSync(destDir) === realpathSync(SHIPPED_DIR)) throw new RxError(`refusing to write into the running package's shipped rules ${SHIPPED_DIR}`, { id: "greptile-update" });
-    const fetched = new Date().toISOString().slice(0, 10);
-    try {
-      writeDestCopy(destDir, live.raw, { repo: GREPTILE_REPO, ...prOf(true), source: where.source, sha: where.sha, committed: where.committed, fetched });
-    } catch (e) {
-      const partial = /** @type {any} */ (e).partial === true;
-      results.error("greptile-update", `could not write --dest ${destDir}; ${partial ? "some files could not be restored" : "nothing written"}: ${/** @type {Error} */ (e).message}`);
-      return { data };
-    }
-    data.updated = destDir;
-    results.pass("greptile-update", `updated: ${arrow}, ${changes.length} change(s) written to ${destDir}; carry them into the plugin mapping`, details);
-    return { data };
-  }
+  // A maintainer checkout keeps the PR its SOURCE.json already recorded (the provenance of the
+  // first copy).
+  const pr = before.source.pr ? { pr: before.source.pr } : {};
+  // Second, independent guard at the write site: whatever happened above, the installed shipped
+  // copy is never written (2026-10-30: a test run with the first guard disabled rewrote it).
+  if (realpathSync(destDir) === realpathSync(SHIPPED_DIR)) throw new RxError(`refusing to write into the running package's shipped rules ${SHIPPED_DIR}`, { id: "greptile-update" });
+  const fetched = new Date().toISOString().slice(0, 10);
   try {
-    data.updated = writeUpdatedCopy(live.raw, { repo: GREPTILE_REPO, ...prOf(false), source: where.source, sha: where.sha, committed: where.committed, fetched: new Date().toISOString() });
+    writeDestCopy(destDir, live.raw, { repo: GREPTILE_REPO, ...pr, source: where.source, sha: where.sha, committed: where.committed, fetched });
   } catch (e) {
-    results.error("greptile-update", `could not write the cache copy; nothing written: ${/** @type {Error} */ (e).message}`);
+    const partial = /** @type {any} */ (e).partial === true;
+    results.error("greptile-update", `could not write --dest ${destDir}; ${partial ? "some files could not be restored" : "nothing written"}: ${/** @type {Error} */ (e).message}`);
     return { data };
   }
-  // The copy just written is used only when nothing sorts later by upstream commit date (a newer
-  // shipped copy, or a cache copy from a later commit that another update wrote first).
-  const now = loadGreptileRules({ warn: log });
-  data.inUse = now.source.path === data.updated;
-  if (!data.inUse) {
-    results.warn("greptile-update", `wrote ${data.updated} (${where.sha.slice(0, 7)}, committed ${where.committed}) but it is not the copy in use: ${describeRules(now.source)}, committed ${now.source.committed}, sorts later; nothing to do unless that copy is wrong`, details);
-    return { data };
+  data.updated = destDir;
+  results.pass("greptile-update", `updated: ${arrow}, ${changes.length} change(s) written to ${destDir}; carry them into the plugin mapping`, details);
+  return { data };
+}
+
+/**
+ * `update` without --dest: the cache copy, through updateCacheCopy.
+ * @param {import("../verdict.mjs").Results} results @param {(s: string) => void} log
+ */
+async function updateCache(results, log) {
+  const o = await updateCacheCopy({ fetcher: transport(), warn: log });
+  const data = { previous: o.before.source, live: o.live, changes: o.changes, updated: /** @type {string | null} */ (null), inUse: /** @type {boolean | null} */ (null) };
+  const details = o.changes.map((text) => ({ text }));
+  switch (o.status) {
+    case "unchecked":
+    case "invalid":
+    case "timed-out": // only under updateWithin's deadline (rx gates); listed for the type
+      results.error("greptile-update", `could not read or validate the live rules; nothing written: ${o.error}`);
+      break;
+    case "current":
+      data.inUse = true;
+      results.pass("greptile-update", `already current: ${describeRules(o.before.source)} matches ${o.label}`);
+      break;
+    case "write-failed":
+      results.error("greptile-update", `could not write the cache copy; nothing written: ${o.error}`);
+      break;
+    case "not-in-use":
+      data.updated = o.dir;
+      data.inUse = false;
+      results.warn("greptile-update", notInUseMessage(o), details);
+      break;
+    default:
+      data.updated = o.dir;
+      data.inUse = true;
+      results.pass("greptile-update", updatedMessage(o), details);
   }
-  results.pass("greptile-update", `updated: ${arrow}, ${changes.length} change(s)`, details);
   return { data };
 }

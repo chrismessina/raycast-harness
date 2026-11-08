@@ -15,9 +15,9 @@ import { gh, ghApi } from "../gh.mjs";
 
 /**
  * @typedef {{
- *   getJson: (path: string) => Promise<any>,
+ *   getJson: (path: string, o?: { signal?: AbortSignal }) => Promise<any>,
  *   getJsonPages: (path: string) => Promise<any[]>,
- *   getRaw: (path: string) => Promise<string>,
+ *   getRaw: (path: string, o?: { signal?: AbortSignal }) => Promise<string>,
  *   getConditional: (path: string, etag: string | null) => Promise<{ status: number, etag: string | null, body: any }>,
  *   graphql: (query: string, variables: Record<string, string | number>) => Promise<any>,
  *   patch: (path: string, body: Record<string, unknown>) => Promise<{ ok: boolean, error: string | null }>,
@@ -32,7 +32,8 @@ import { gh, ghApi } from "../gh.mjs";
 
 /** @type {Transport} */
 export const ghTransport = {
-  getJson: (path) => ghApi(path),
+  // `signal` (the greptile-rules step's deadline) kills the gh child on abort; omitted, as before.
+  getJson: (path, o) => ghApi(path, { signal: o?.signal }),
   async getJsonPages(path) {
     // `--paginate --slurp` yields one JSON array of pages; each page is itself an array here.
     const pages = await ghApi(path, { paginate: true });
@@ -45,7 +46,7 @@ export const ghTransport = {
     }
     return items;
   },
-  getRaw: (path) => ghApi(path, { raw: true, headers: ["Accept: application/vnd.github.raw"] }),
+  getRaw: (path, o) => ghApi(path, { raw: true, headers: ["Accept: application/vnd.github.raw"], signal: o?.signal }),
   async getConditional(path, etag) {
     const args = ["api", "--include", path];
     if (etag) args.push("-H", `If-None-Match: ${etag}`);

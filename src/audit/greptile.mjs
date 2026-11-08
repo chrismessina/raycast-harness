@@ -20,7 +20,11 @@
 // An audit is bound to the rules it was judged against: `rx audit record` stores
 // `greptileRules: { repo, sha, digest }` (greptileRulesStamp()), and `rx guard` / `rx audit show`
 // block on any difference from the rules in use now (greptileRulesProblem()), so a rule whose text
-// changed under the same id never reuses an audit recorded against the old text.
+// changed under the same id never reuses an audit recorded against the old text. `rx gates` keeps
+// the rules current (src/greptile/update.mjs) and stores the same stamp in the receipt; `rx audit
+// record` refuses a receipt whose stamp is not its snapshot (receiptRulesProblem()), and the guard
+// and `rx audit show` require the receipt's, the audit's and the current stamp to agree
+// (greptileRulesAgreementProblem()).
 
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -192,15 +196,74 @@ export function freshGreptileRulesStamp() {
 
 /**
  * The guard's sentence when an audit's `greptileRules` (absent on an audit written before this
- * field existed) differs from the rules in use now, else null.
+ * field existed) differs from the rules in use now, else null. `rerun` is the command it
+ * prescribes: `rx audit record` alone works only while the receipt names the rules in use.
  * @param {unknown} recorded the audit's greptileRules @param {{ repo: string, sha: string, digest: string }} current
+ * @param {string} [rerun]
  * @returns {string | null}
  */
-export function greptileRulesProblem(recorded, current) {
+export function greptileRulesProblem(recorded, current, rerun = "run rx audit record again") {
   const r = /** @type {any} */ (recorded);
   if (r && r.repo === current.repo && r.sha === current.sha && r.digest === current.digest) return null;
   const old = typeof r?.sha === "string" ? r.sha.slice(0, 7) : "unrecorded";
-  return `the Greptile rules changed since the audit was recorded (${old} → ${current.sha.slice(0, 7)}); run rx audit record again`;
+  return `the Greptile rules changed since the audit was recorded (${old} → ${current.sha.slice(0, 7)}); ${rerun}`;
+}
+
+/**
+ * Do two rules stamps name the same rules (repo, sha and digest)? An absent stamp matches nothing.
+ * @param {unknown} a @param {unknown} b
+ */
+export function sameGreptileRules(a, b) {
+  const x = /** @type {any} */ (a);
+  const y = /** @type {any} */ (b);
+  return !!x && !!y && typeof x === "object" && typeof y === "object" && x.repo === y.repo && x.sha === y.sha && x.digest === y.digest;
+}
+
+/** A stamp's short SHA, or `unrecorded`. @param {unknown} s */
+export function stampSha7(s) {
+  const sha = /** @type {any} */ (s)?.sha;
+  return typeof sha === "string" ? sha.slice(0, 7) : "unrecorded";
+}
+
+/**
+ * `rx audit record`'s sentence when the receipt's `greptileRules` is not the snapshot the recording
+ * took (the receipt was written against other rules), else null.
+ * @param {unknown} receiptRules @param {{ repo: string, sha: string, digest: string }} snapshot
+ * @returns {string | null}
+ */
+export function receiptRulesProblem(receiptRules, snapshot) {
+  if (sameGreptileRules(receiptRules, snapshot)) return null;
+  return `the Greptile rules changed since rx gates ran (${stampSha7(receiptRules)} → ${snapshot.sha.slice(0, 7)}); run rx gates again`;
+}
+
+/**
+ * The guard's (and `rx audit show`'s) sentence unless the receipt's `greptileRules`, the audit's
+ * `greptileRules` and the rules in use now are identical, else null. Three stamps can disagree in
+ * three ways, each with its own sentence and command:
+ *   - the audit alone differs (the receipt and the rules in use agree; the audit recorded the
+ *     field): "the audit was recorded against other Greptile rules than the receipt …; run rx
+ *     audit record again"
+ *   - the audit differs from the rules in use otherwise (the Wave 9 check, including `unrecorded`
+ *     for an audit written before the field existed): "the Greptile rules changed since the audit
+ *     was recorded …; run rx audit record again" while the receipt names the rules in use, else
+ *     "…; run rx gates, then rx audit record" (recording alone would refuse that receipt)
+ *   - the receipt alone differs (the audit and the rules in use agree): "the Greptile rules changed
+ *     since rx gates ran …; run rx gates, then rx audit record"
+ * Whenever the receipt's rules are not the rules in use, the command is `rx gates`, then `rx audit
+ * record`: `rx audit record` refuses a receipt written under other rules.
+ * @param {unknown} receiptRules @param {unknown} auditRules
+ * @param {{ repo: string, sha: string, digest: string }} current
+ * @returns {string | null}
+ */
+export function greptileRulesAgreementProblem(receiptRules, auditRules, current) {
+  const receiptCurrent = sameGreptileRules(receiptRules, current);
+  if (auditRules !== undefined && receiptCurrent && !sameGreptileRules(auditRules, receiptRules)) {
+    return `the audit was recorded against other Greptile rules than the receipt (${stampSha7(auditRules)} vs ${stampSha7(receiptRules)}); run rx audit record again`;
+  }
+  const audit = greptileRulesProblem(auditRules, current, receiptCurrent ? undefined : "run rx gates, then rx audit record");
+  if (audit) return audit;
+  if (!receiptCurrent) return `the Greptile rules changed since rx gates ran (${stampSha7(receiptRules)} → ${current.sha.slice(0, 7)}); run rx gates, then rx audit record`;
+  return null;
 }
 
 /**

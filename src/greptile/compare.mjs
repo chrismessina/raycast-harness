@@ -112,8 +112,9 @@ export function diffRuleSets(snapshot, live) {
 }
 
 /**
- * @typedef {{ getJson: (path: string) => Promise<any>, getRaw: (path: string) => Promise<string> }} Fetcher
- *   Paths are GitHub REST paths (`repos/<r>/commits?path=.greptile&sha=main&per_page=1`).
+ * @typedef {{ getJson: (path: string, o?: { signal?: AbortSignal }) => Promise<any>, getRaw: (path: string, o?: { signal?: AbortSignal }) => Promise<string> }} Fetcher
+ *   Paths are GitHub REST paths (`repos/<r>/commits?path=.greptile&sha=main&per_page=1`). An
+ *   aborted `signal` cancels the request (src/greptile/update.mjs passes the step's deadline).
  */
 
 /**
@@ -164,11 +165,30 @@ export async function liveSource(repo, pr, f) {
 }
 
 /**
+ * Read the three live files at a SHA, unparsed: the network half of fetchLive.
+ * @param {string} repo @param {string} sha @param {Fetcher} f
+ * @returns {Promise<Record<string, string>>}
+ */
+export async function fetchLiveRaw(repo, sha, f) {
+  const [config, files, rules] = await Promise.all(SNAPSHOT_FILES.map((n) => f.getRaw(`repos/${repo}/contents/.greptile/${n}?ref=${sha}`)));
+  return { "config.json": config, "files.json": files, "rules.md": rules };
+}
+
+/**
+ * Parse the three live files (throws on JSON that does not parse; the schema check is
+ * validateRuleSet, run by diffRuleSets): the local half of fetchLive.
+ * @param {Record<string, string>} raw
+ * @returns {{ raw: Record<string, string>, set: RuleSet }}
+ */
+export function parseLive(raw) {
+  return { raw, set: { config: JSON.parse(raw["config.json"]), files: JSON.parse(raw["files.json"]), rules: raw["rules.md"] } };
+}
+
+/**
  * Fetch the three live files at a SHA.
  * @param {string} repo @param {string} sha @param {Fetcher} f
  * @returns {Promise<{ raw: Record<string, string>, set: RuleSet }>}
  */
 export async function fetchLive(repo, sha, f) {
-  const [config, files, rules] = await Promise.all(SNAPSHOT_FILES.map((n) => f.getRaw(`repos/${repo}/contents/.greptile/${n}?ref=${sha}`)));
-  return { raw: { "config.json": config, "files.json": files, "rules.md": rules }, set: { config: JSON.parse(config), files: JSON.parse(files), rules } };
+  return parseLive(await fetchLiveRaw(repo, sha, f));
 }

@@ -14,7 +14,7 @@ import { rx } from "./helpers.mjs";
 
 const EXPECTED = JSON.parse(readFileSync(join(FIX, "expected.json"), "utf8"));
 
-test("gates: a clean unpublished run matches expected.json, runs the seven steps in order and writes the receipt", async () => {
+test("gates: a clean unpublished run matches expected.json, runs the eight steps in order and writes the receipt", async () => {
   await withGatedEnv(async (dir) => {
     const { root } = await buildGated(dir);
     const r = await gates(root);
@@ -30,7 +30,7 @@ test("gates: a clean unpublished run matches expected.json, runs the seven steps
     const receiptPath = join(await stateDir(root), "receipt.json");
     assert.equal(r.json.data.receipt, receiptPath);
     const receipt = JSON.parse(readFileSync(receiptPath, "utf8"));
-    assert.deepEqual(Object.keys(receipt).sort(), ["at", "attestation", "data", "fingerprints", "generation", "inputs", "results", "rxVersion", "steps", "subject"]);
+    assert.deepEqual(Object.keys(receipt).sort(), ["at", "attestation", "data", "fingerprints", "generation", "greptileRules", "inputs", "results", "rxVersion", "steps", "subject"]);
     assert.deepEqual(Object.keys(receipt.attestation).sort(), ["alg", "keyId", "mac"]);
     assert.equal(receipt.attestation.alg, "hmac-sha256");
     assert.deepEqual(receipt.steps, EXPECTED.steps);

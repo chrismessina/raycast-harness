@@ -1,14 +1,17 @@
 // Shared scaffolding for the gates / audit / guard / fingerprint tests: a compliant extension in
 // a git repo with fake local tooling, the cross-repo cache pointed at the temp dir, the upstream
 // fetch pointed at a local bare repo, the attestation key's XDG_CONFIG_HOME pointed at the temp
-// dir, and the npm registry lookup stubbed. Nothing here reaches the network or touches ~/.cache
-// or ~/.config.
+// dir, the npm registry lookup stubbed, and the GitHub transport (which gates' greptile-rules step
+// reads raycast/extensions through) replaced by an offline fake unless a test installs another
+// (greptileFake). Nothing here reaches the network or touches ~/.cache or ~/.config.
 
 import { chmodSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { _setRegistry } from "../src/commands/api-floor.mjs";
 import { attest, inspectKey } from "../src/attest.mjs";
 import { _setUpstreamForTests } from "../src/upstream.mjs";
+import { setTransport } from "../src/pr/transport.mjs";
+import { SHIPPED_DIR } from "../src/greptile/rules.mjs";
 import { GREPTILE_JUDGMENT_RULES, GREPTILE_PREFIX } from "../src/audit/greptile.mjs";
 import { REPO, rx, withTempDir } from "./helpers.mjs";
 import { makeExt } from "./preflight-helpers.mjs";
@@ -39,8 +42,45 @@ export const FORBIDDEN = join(FIX, "forbidden.txt");
 _setRegistry(async () => null);
 
 /**
- * Run `fn` with XDG_CACHE_HOME and XDG_CONFIG_HOME pointed at a fresh temp dir and the upstream
- * test hooks reset after.
+ * A fake GitHub transport for the greptile-rules step (src/greptile/update.mjs). Without `sha` it
+ * is offline: every request throws. With `sha`, the last commit touching .greptile/ on main is
+ * `sha` (committed `committed`) and its three files are the shipped copy's, with `files`
+ * replacing any of them. `calls` records every request path.
+ * @param {{ sha?: string, committed?: string, files?: Record<string, string> }} [o]
+ */
+export function greptileFake(o = {}) {
+  /** @type {string[]} */
+  const calls = [];
+  const offline = (/** @type {string} */ path) => {
+    calls.push(path);
+    throw new Error(`offline (test transport): ${path}`);
+  };
+  const never = async () => { throw new Error("gates never sends this request"); };
+  const t = {
+    async getJson(/** @type {string} */ path) {
+      if (!o.sha) return offline(path);
+      calls.push(path);
+      if (/\/commits\?path=\.greptile&sha=main&per_page=1$/.test(path)) return [{ sha: o.sha, commit: { committer: { date: o.committed ?? "2026-11-05T00:00:00Z" } } }];
+      throw new Error(`unexpected GET ${path}`);
+    },
+    async getRaw(/** @type {string} */ path) {
+      if (!o.sha) return offline(path);
+      calls.push(path);
+      const m = path.match(/\.greptile\/([^?]+)\?ref=/);
+      if (!m) throw new Error(`unexpected RAW ${path}`);
+      return o.files?.[m[1]] ?? readFileSync(join(SHIPPED_DIR, m[1]), "utf8");
+    },
+    getJsonPages: never,
+    getConditional: never,
+    graphql: never,
+    patch: never,
+  };
+  return { t: /** @type {import("../src/pr/transport.mjs").Transport} */ (/** @type {unknown} */ (t)), calls };
+}
+
+/**
+ * Run `fn` with XDG_CACHE_HOME and XDG_CONFIG_HOME pointed at a fresh temp dir, the GitHub
+ * transport offline (greptileFake), and the upstream and transport test hooks reset after.
  * @template T
  * @param {(dir: string) => Promise<T>} fn
  */
@@ -50,9 +90,11 @@ export async function withGatedEnv(fn) {
     const savedConfig = process.env.XDG_CONFIG_HOME;
     process.env.XDG_CACHE_HOME = join(dir, "cache");
     process.env.XDG_CONFIG_HOME = join(dir, "config");
+    const prevTransport = setTransport(greptileFake().t);
     try {
       return await fn(dir);
     } finally {
+      setTransport(prevTransport);
       _setUpstreamForTests({ url: null, probe: null });
       if (saved === undefined) delete process.env.XDG_CACHE_HOME;
       else process.env.XDG_CACHE_HOME = saved;

@@ -1,7 +1,8 @@
 {
   "command": ["gates", "--preset", "test/fixtures/gates/preset.json", "--forbidden", "test/fixtures/gates/forbidden.txt"],
-  "note": "A clean, unpublished extension built by test/gates-helpers.mjs buildGated(). Verdicts named here must hold; every other result must be PASS, WARN or N/A.",
+  "note": "A clean, unpublished extension built by test/gates-helpers.mjs buildGated(), with the GitHub transport offline (greptile-rules WARNs and gates continues on the shipped rules). Verdicts named here must hold; every other result must be PASS, WARN or N/A.",
   "verdicts": {
+    "greptile-rules": "WARN",
     "stale": "N/A",
     "scan-files": "PASS",
     "scan-names": "PASS",
@@ -13,10 +14,11 @@
     "api-currency": "N/A",
     "changelog-updated": "N/A",
     "gates-tree-changed": "PASS",
+    "gates-rules-changed": "PASS",
     "build": "PASS",
     "tsc": "PASS",
     "lint": "PASS"
   },
-  "steps": ["stale", "scan", "preflight", "api-floor", "build", "tsc", "lint"],
+  "steps": ["greptile-rules", "stale", "scan", "preflight", "api-floor", "build", "tsc", "lint"],
   "exit": 0
 }

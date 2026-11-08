@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+- `rx gates` stamps the receipt with exactly the Greptile rules snapshot its `greptile-rules`
+  step reported, and a final check, `gates-rules-changed`, run immediately before the receipt is
+  written, FAILs with no receipt when another `rx greptile update` installed a copy while gates
+  ran. The step has a 30-second deadline: when it expires gates WARNs, installs nothing, kills the
+  pending `gh` child (the 1Password `op plugin run` fallback included) and continues on the copy in
+  use; any request still in flight when the step settles, for any reason, is cancelled too. The process runner and GitHub transport accept an optional AbortSignal for this. When the
+  receipt's rules are not the rules in use, `rx guard` and `rx audit show` prescribe "run rx gates,
+  then rx audit record".
+- `rx gates` keeps the Greptile rules current as its first step, `greptile-rules`, with the same
+  check-and-update as `rx greptile update`; offline, or when the live rules fail validation, it
+  WARNs and continues on the copy in use. The receipt records the rules it ran under
+  (`greptileRules`), and a receipt written before this field is not current. `rx audit record`
+  refuses a receipt written under other Greptile rules, and `rx guard` and `rx audit show`
+  require the receipt, the audit and the rules in use to agree, naming the one that differs.
 - `rx audit record` judges against one snapshot of the Greptile rules taken at the start, and
   writes nothing (`ERROR audit-greptile-rules`) if an `rx greptile update` lands mid-recording.
   `update --dest` restores every file it attempted, including one whose write failed after

@@ -4,19 +4,32 @@
 //   1. rotate this root's generation (src/binding.mjs) before any git call or state-directory
 //      creation, then delete any existing receipt (a half-finished run must never look current,
 //      and a receipt saved before this attempt must never become current again by being restored)
-//   2. stale → scan → preflight (--published <stale's dir> only when published) → api-floor,
+//   2. greptile-rules: the check-and-update routine `rx greptile update` runs
+//      (src/greptile/update.mjs): one request for the last commit on raycast/extensions main that
+//      touched .greptile/; when it differs from the rules in use, fetch, validate and install the
+//      live rules as a new cache copy. A network failure, live rules that fail validation, or a
+//      write that fails is a WARN and the run continues on the copy in use; never an ERROR. The
+//      whole step has a deadline (GREPTILE_RULES_DEADLINE_MS); when it expires the step WARNs
+//      and the run continues on the copy in use, with nothing installed. The stamp
+//      { repo, sha, digest } (src/audit/greptile.mjs stampOf) of exactly the snapshot the step
+//      reported (the routine's `selected`, never a reload) goes into the receipt as `greptileRules`.
+//   3. stale → scan → preflight (--published <stale's dir> only when published) → api-floor,
 //      each run in-process (src/audit/step.mjs) and merged with its own ids
-//   3. `npm run build` → `npx --no-install tsc --noEmit` → `npm run lint` (build first: it
+//   4. `npm run build` → `npx --no-install tsc --noEmit` → `npm run lint` (build first: it
 //      generates raycast-env.d.ts, which tsc needs; Q1). Missing local tooling → ERROR tooling;
 //      nothing is ever installed.
-//   4. fingerprint the tree (src/fingerprint.mjs) and, only when no step FAILed or ERRORed,
+//   5. fingerprint the tree (src/fingerprint.mjs), check that the Greptile rules in use are still
+//      the snapshot step 2 stamped (gates-rules-changed: another `rx greptile update` may have
+//      installed a copy meanwhile; run synchronously right before the write, after the last
+//      await) and, only when no step FAILed or ERRORed,
 //      write repo/receipt.json atomically (temp file in the state dir, then rename), carrying
 //      its subject (root and git common dir) and the generation from step 1, attested with this
 //      machine's rx key (src/attest.mjs; created on first need, before any step runs, so a bad
 //      key is an ERROR attest-key that costs no build).
 //
-// Network: stale's (GitHub API, git fetch), api-floor's optional npm read, and whatever the
-// project's own build and lint scripts do.
+// Network: greptile-rules' (GitHub API via gh: raycast/extensions commits and .greptile/ contents),
+// stale's (GitHub API, git fetch), api-floor's optional npm read, and whatever the project's own
+// build and lint scripts do.
 
 import { existsSync, readFileSync, rmSync } from "node:fs";
 import { join, resolve } from "node:path";
@@ -25,6 +38,10 @@ import { rotateGeneration, subjectOf } from "../binding.mjs";
 import { RxError } from "../errors.mjs";
 import { run as exec } from "../exec.mjs";
 import { computeFingerprints } from "../fingerprint.mjs";
+import { sameGreptileRules, stampOf, stampSha7 } from "../audit/greptile.mjs";
+import { describeRules, loadGreptileRules } from "../greptile/rules.mjs";
+import { notInUseMessage, updateWithin, updatedMessage } from "../greptile/update.mjs";
+import { transport } from "../pr/transport.mjs";
 import { repoStatePath, writeJsonAtomic } from "../state.mjs";
 import { Results } from "../verdict.mjs";
 import { blocked, runStep } from "../audit/step.mjs";
@@ -34,7 +51,21 @@ import * as scan from "./scan.mjs";
 import * as stale from "./stale.mjs";
 
 /** The steps a receipt must hold, in run order. `rx guard` requires every one. */
-export const REQUIRED_STEPS = /** @type {const} */ (["stale", "scan", "preflight", "api-floor", "build", "tsc", "lint"]);
+export const REQUIRED_STEPS = /** @type {const} */ (["greptile-rules", "stale", "scan", "preflight", "api-floor", "build", "tsc", "lint"]);
+
+/** How long the greptile-rules step may take as a whole before gates continues on the copy in use. */
+export const GREPTILE_RULES_DEADLINE_MS = 30_000;
+let greptileRulesDeadlineMs = GREPTILE_RULES_DEADLINE_MS;
+
+/**
+ * Tests only: replace the greptile-rules step's deadline; returns the previous one.
+ * @param {number} ms
+ */
+export function setGreptileRulesDeadline(ms) {
+  const prev = greptileRulesDeadlineMs;
+  greptileRulesDeadlineMs = ms;
+  return prev;
+}
 
 /** The fingerprint fields no step may change between the start and the end of a run. */
 export const TREE_FIELDS = /** @type {const} */ (["payload", "head", "publishRange", "preset", "forbidden"]);
@@ -42,21 +73,23 @@ export const TREE_FIELDS = /** @type {const} */ (["payload", "head", "publishRan
 /** @type {import("../cli.mjs").CommandSpec} */
 export const spec = {
   name: "gates",
-  summary: "run stale → scan → preflight → api-floor → build → tsc → lint and write the receipt rx guard requires",
+  summary: "keep the Greptile rules current, run stale → scan → preflight → api-floor → build → tsc → lint and write the receipt rx guard requires",
   root: "required",
   flags: {
     "--root": { type: "string", value: "<dir>", help: "extension root" },
     "--preset": { type: "string", value: "<file>", required: true, help: "preset JSON (passed to preflight and api-floor; its bytes are fingerprinted)" },
     "--forbidden": { type: "string", value: "<file>", required: true, help: "forbidden-values file for rx scan (its bytes are fingerprinted)" },
   },
-  network: "stale's (GitHub API, git fetch of raycast/extensions); api-floor's optional npm read; `npm run build` and `npm run lint` do whatever the project's scripts do. Never installs packages",
-  state: "rotates $XDG_CONFIG_HOME/raycast-harness/generations/<root hash>.json first, then deletes and later writes repo/receipt.json { fingerprints, inputs, results, steps, data, subject, generation, rxVersion, at, attestation } (only when no step FAILed or ERRORed); reads repo/stale/; uses the cross-repo upstream/ cache; creates the attestation key $XDG_CONFIG_HOME/raycast-harness/attest.key on first need",
+  network: "greptile-rules' (GitHub API via gh: the latest raycast/extensions commit touching .greptile/ on main, then its .greptile/ contents when that differs from the copy in use); stale's (GitHub API, git fetch of raycast/extensions); api-floor's optional npm read; `npm run build` and `npm run lint` do whatever the project's scripts do. Never installs packages",
+  state: "rotates $XDG_CONFIG_HOME/raycast-harness/generations/<root hash>.json first, then deletes and later writes repo/receipt.json { fingerprints, inputs, results, steps, data, subject, generation, greptileRules, rxVersion, at, attestation } (only when no step FAILed or ERRORed); writes a new Greptile rules copy under greptile/rules/ in the cross-repo cache when the live rules changed; reads repo/stale/; uses the cross-repo upstream/ cache; creates the attestation key $XDG_CONFIG_HOME/raycast-harness/attest.key on first need",
   checks: {
+    "greptile-rules": { description: "the Greptile rules in use are current (PASS current), were updated to raycast/extensions main (PASS updated), or could not be checked (also when the step's 30 s deadline expires), failed validation or could not be installed (WARN; gates continues on the copy in use and the receipt records it); ERROR only when no copy of the rules can be loaded", levels: ["PASS", "WARN", "ERROR"] },
     ...stale.spec.checks,
     ...scan.spec.checks,
     ...preflight.spec.checks,
     ...apiFloor.spec.checks,
     "gates-tree-changed": "the payload, HEAD, publish range, preset and forbidden list are the same after the steps as before them (a build or lint that writes into the payload is a FAIL; no receipt)",
+    "gates-rules-changed": { description: "the Greptile rules in use when the receipt is written are the snapshot the greptile-rules step reported and stamped (FAIL, no receipt, when another rx greptile update installed a copy while gates ran; ERROR when the rules can no longer be loaded)", levels: ["PASS", "FAIL", "ERROR"] },
     build: "`npm run build` exits 0 (first error lines in details on FAIL)",
     tsc: "`npx --no-install tsc --noEmit` exits 0 (first error lines in details on FAIL)",
     lint: "`npm run lint` exits 0 (first error lines in details on FAIL)",
@@ -66,6 +99,7 @@ export const spec = {
     receipt: "string | null — the receipt path when written, null when a step blocked it",
     fingerprints: "{ payload, head, publishRange, preset, forbidden, rxVersion, baseline, combined }",
     steps: "[{ name, exit }] — every step in run order with its own exit code (0, 1, 2)",
+    greptileRules: "{ repo, sha, digest } | null — the Greptile rules the receipt is bound to (null when they could not be loaded)",
   },
   examples: ["rx gates --preset presets/chrismessina.json --forbidden ../forbidden.txt"],
 };
@@ -146,6 +180,68 @@ async function toolStep(name, root, results, env, log) {
 }
 
 /**
+ * The `greptile-rules` step: bring the rules in use up to date (the routine `rx greptile update`
+ * runs, bounded by the step's deadline) and return the stamp of exactly the snapshot it selected
+ * and reported (never a reload), or null when no copy loads (an ERROR; no receipt). Never an
+ * ERROR for a network, validation, write failure or an expired deadline.
+ * @param {import("../verdict.mjs").Results} results @param {(s: string) => void} log
+ * @returns {Promise<{ repo: string, sha: string, digest: string } | null>}
+ */
+async function greptileRulesStep(results, log) {
+  /** @type {import("../greptile/update.mjs").UpdateOutcome} */
+  let o;
+  try {
+    o = await updateWithin({ fetcher: transport(), warn: log, deadlineMs: greptileRulesDeadlineMs });
+  } catch (e) {
+    results.error("greptile-rules", `could not load the Greptile rules: ${/** @type {Error} */ (e).message}`);
+    return null;
+  }
+  const using = `using ${o.before.source.kind} copy from ${o.before.source.fetched.slice(0, 10)}`;
+  const details = o.changes.map((text) => ({ text }));
+  switch (o.status) {
+    case "unchecked":
+      results.warn("greptile-rules", `could not check (offline or gh unavailable): ${using}`, [{ text: o.error }]);
+      break;
+    case "timed-out":
+      results.warn("greptile-rules", `could not check within ${greptileRulesDeadlineMs / 1000} s: ${using}`, [{ text: o.error }]);
+      break;
+    case "invalid":
+      results.warn("greptile-rules", `the live rules failed validation and were not installed: ${using}`, [{ text: o.error }]);
+      break;
+    case "write-failed":
+      results.warn("greptile-rules", `could not install the live rules: ${using}`, [{ text: o.error }, ...details]);
+      break;
+    case "current":
+      results.pass("greptile-rules", `current: ${describeRules(o.before.source)}`);
+      break;
+    case "not-in-use":
+      results.warn("greptile-rules", notInUseMessage(o), details);
+      break;
+    default:
+      results.pass("greptile-rules", updatedMessage(o), details);
+  }
+  return stampOf(o.selected);
+}
+
+/**
+ * gates-rules-changed: the rules in use now are still the snapshot the greptile-rules step stamped.
+ * @param {{ repo: string, sha: string, digest: string }} stamped
+ * @param {import("../verdict.mjs").Results} results @param {(s: string) => void} log
+ */
+function checkRulesUnchanged(stamped, results, log) {
+  /** @type {{ repo: string, sha: string, digest: string }} */
+  let now;
+  try {
+    now = stampOf(loadGreptileRules({ warn: log }));
+  } catch (e) {
+    results.error("gates-rules-changed", `could not load the Greptile rules: ${/** @type {Error} */ (e).message}`);
+    return;
+  }
+  if (sameGreptileRules(stamped, now)) results.pass("gates-rules-changed", "the Greptile rules in use are the ones the greptile-rules step reported");
+  else results.fail("gates-rules-changed", `the Greptile rules changed while rx gates ran (${stampSha7(stamped)} → ${stampSha7(now)}); run rx gates again`);
+}
+
+/**
  * Called by the dispatcher when the arguments fail to parse (a missing `--forbidden`, an unknown
  * flag): the generation rotates and the previous receipt goes then too, as at the start of run().
  * @type {NonNullable<import("../cli.mjs").CommandModule["invalidate"]>}
@@ -207,11 +303,6 @@ export async function run(ctx) {
   }
   const key = loadOrCreateKey();
 
-  // The tree as it is before any step runs. Build and lint may write into the payload (generated
-  // assets, an autofix); the receipt must describe what scan and preflight inspected, so the
-  // fingerprint is taken again at the end and any difference is a FAIL with no receipt.
-  const before = await computeFingerprints({ root, version, presetPath, forbiddenPath });
-
   /** @type {{ name: string, exit: number }[]} */
   const steps = [];
   const record = (/** @type {string} */ name, /** @type {import("../verdict.mjs").Results} */ r) => {
@@ -219,7 +310,19 @@ export async function run(ctx) {
     results.merge(r);
   };
 
-  // 2. The rx steps.
+  // 2. The Greptile rules: current before anything is judged, and the stamp the receipt carries.
+  //    Not a fingerprint field: the receipt holds it beside the fingerprints, and the guard
+  //    compares it with the audit's and the rules in use (src/audit/greptile.mjs).
+  const rulesRun = new Results();
+  const greptileRules = await greptileRulesStep(rulesRun, log);
+  record("greptile-rules", rulesRun);
+
+  // The tree as it is before any step runs. Build and lint may write into the payload (generated
+  // assets, an autofix); the receipt must describe what scan and preflight inspected, so the
+  // fingerprint is taken again at the end and any difference is a FAIL with no receipt.
+  const before = await computeFingerprints({ root, version, presetPath, forbiddenPath });
+
+  // 3. The rx steps.
   const staleRun = await runStep(stale, ctx, { root, flags: { "--root": root } });
   record("stale", staleRun.results);
   const published = staleRun.data.published === true && typeof staleRun.data.publishedDir === "string";
@@ -238,14 +341,14 @@ export async function run(ctx) {
   const apiFloorRun = await runStep(apiFloor, ctx, { root, flags: { "--root": root, "--preset": presetPath } });
   record("api-floor", apiFloorRun.results);
 
-  // 3. The tool steps, in the order the project needs them (build generates raycast-env.d.ts).
+  // 4. The tool steps, in the order the project needs them (build generates raycast-env.d.ts).
   for (const name of /** @type {const} */ (["build", "tsc", "lint"])) {
     const r = new Results();
     await toolStep(name, root, r, env, log);
     record(name, r);
   }
 
-  // 4. Fingerprint again; a step that changed the tree fails the run (the baseline field is the
+  // 5. Fingerprint again; a step that changed the tree fails the run (the baseline field is the
   //    one legitimate change: stale records it during the run).
   const fingerprints = await computeFingerprints({ root, version, presetPath, forbiddenPath, baseline });
   const changed = TREE_FIELDS.filter((k) => before[k] !== fingerprints[k]);
@@ -253,15 +356,21 @@ export async function run(ctx) {
   else results.pass("gates-tree-changed", "the tree is what the steps inspected");
   /** @type {string | null} */
   let receipt = null;
-  if (!blocked(results)) {
+  // The receipt's last await. gates-rules-changed runs after it, synchronously, so nothing can
+  // install a rules copy between the check and writeJsonAtomic.
+  const subject = !blocked(results) && greptileRules ? await subjectOf(root) : null;
+  if (greptileRules) checkRulesUnchanged(greptileRules, results, log);
+  if (subject && !blocked(results) && greptileRules) {
     const doc = {
       fingerprints,
       inputs: { preset: presetPath, forbidden: forbiddenPath },
       results: results.items,
       steps: steps.map((s) => s.name),
       data: { stale: staleRun.data },
-      subject: await subjectOf(root),
+      subject,
       generation,
+      // The Greptile rules this run brought current; `rx audit record` and `rx guard` require them.
+      greptileRules,
       rxVersion: version,
       at: new Date().toISOString(),
     };
@@ -271,5 +380,5 @@ export async function run(ctx) {
   } else {
     log(`gates: no receipt (a step FAILed or ERRORed)\n`);
   }
-  return { data: { receipt, fingerprints, steps }, fingerprint: fingerprints.combined };
+  return { data: { receipt, fingerprints, steps, greptileRules }, fingerprint: fingerprints.combined };
 }

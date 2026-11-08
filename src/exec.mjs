@@ -12,10 +12,11 @@ import { RxError } from "./errors.mjs";
  * Run a program. Resolves only when the child exited by itself (read `code`, which may be
  * non-zero). Rejects with RxError when the program could not be started (ENOENT), timed out, was
  * killed by a signal, or exceeded `maxBuffer`: an incomplete check must never look like a
- * completed negative result.
+ * completed negative result. `signal`, when aborted, kills the child (SIGTERM) and rejects with
+ * RxError `<cmd args>: aborted`; without one nothing changes.
  * @param {string} cmd
  * @param {string[]} args
- * @param {{ cwd?: string, input?: string | Buffer, env?: NodeJS.ProcessEnv, timeoutMs?: number, maxBuffer?: number, id?: string }} [opts]
+ * @param {{ cwd?: string, input?: string | Buffer, env?: NodeJS.ProcessEnv, timeoutMs?: number, maxBuffer?: number, id?: string, signal?: AbortSignal }} [opts]
  * @returns {Promise<ExecResult>}
  */
 export function run(cmd, args, opts = {}) {
@@ -34,9 +35,12 @@ export function run(cmd, args, opts = {}) {
         maxBuffer: opts.maxBuffer ?? 64 * 1024 * 1024,
         encoding: "utf8",
         windowsHide: true,
+        ...(opts.signal ? { signal: opts.signal } : {}),
       },
       (err, stdout, stderr) => {
         const e = /** @type {(NodeJS.ErrnoException & { killed?: boolean, signal?: string | null }) | null} */ (err);
+        // Aborted by the caller (a deadline): checked first, because the abort also kills the child.
+        if (e && (e.name === "AbortError" || opts.signal?.aborted)) return done(() => reject(new RxError(`${what}: aborted`, { id })));
         if (e && e.code === "ENOENT") return done(() => reject(new RxError(`${cmd} is not installed or not on PATH`, { id })));
         if (e && e.code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER")
           return done(() => reject(new RxError(`${what}: output exceeded ${opts.maxBuffer ?? 64 * 1024 * 1024} bytes`, { id })));
