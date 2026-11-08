@@ -7,7 +7,7 @@ Every check `rx preflight` emits is either **core** (an objective, ecosystem-wid
 | Binding field | Effect on the bound check |
 |---|---|
 | `applies` (on the rule) | Evaluated first (grammar: `docs/applicability.md`). False → `N/A (rule <id> does not apply: <condition>)`. Unknown (a context value `rx` cannot learn here, such as `published` before `rx stale` ran) → `N/A` naming the missing value. |
-| `severity` | A **cap**. `report` turns every FAIL the check would produce into WARN; `block` leaves the check's own levels in place (a check may still WARN on its own: `agent-scaffolding` FAILs a nested Greptile config and WARNs a planning file). A preset can never raise a check's level above what the check itself produces. |
+| `severity` | A **cap**. `report` turns every FAIL the check would produce into WARN; `block` leaves the check's own levels in place (a check may still WARN on its own: `generated-files` FAILs `dist/` and WARNs a stray `.DS_Store`). A preset can never raise a check's level above what the check itself produces. |
 | `bindings[].options` | The owner's values the check needs (the exact `.prettierrc`, the verbatim logger preference blocks, the length budgets). Core carries none of them. A check whose required option is missing is `ERROR input` naming the option. When several applicable rules bind the same check with different options, every distinct option set is evaluated under the severity of the rules that bound it, and the strictest effective outcome stands (a failing `report` set is a WARN even beside a passing `block` set; two rules binding the same set take the stricter severity). |
 | `ship.keep[]` | Paths an owner ships on purpose for named extensions (`TODO.md` on `brew` and `dev-null`). `agent-scaffolding` and `dev-material` leave those paths out of their candidates when the extension's `package.json` `name` is listed. |
 
@@ -20,7 +20,7 @@ A binding to a **core** check never changes that check's severity: `rx preset ch
 | `package-json` | core | A manifest that is not JSON, or whose `commands`/`preferences`/`categories`/`platforms` are not arrays, cannot be published. | — |
 | `schema` | core | Raycast's docs require `"$schema": "https://www.raycast.com/schemas/extension.json"`. | — |
 | `categories` | core | Greptile `extension-categories`: at least one category from Raycast's closed list; `Other` only as a last resort. | — |
-| `platforms` | core | Raycast's schema allows only `macOS` and `Windows`. | — |
+| `platforms` | core | Raycast's schema allows only `macOS` and `Windows` (Greptile `supported-platforms`); Greptile `platforms-field` asks for the field to be declared, so a missing one FAILs, or WARNs when the published copy lacks it too (a pre-existing note). | — |
 | `preference-type` | core | Raycast's schema defines the preference types; there is no `number`. | — |
 | `shortcut-platform-case` | core | Greptile `shortcut-platform-keys`: the keys are spelled `macOS` and `Windows`. | — |
 | `changelog-exists` | core | Raycast's CI changelog check requires `CHANGELOG.md`. | — |
@@ -31,9 +31,9 @@ A binding to a **core** check never changes that check's severity: `rx preset ch
 | `lockfile` | core | Raycast's Copilot review instructions: `package-lock.json` is the only lock file. | — |
 | `npm-registry` | core | Same source: packages come only from `registry.npmjs.org`. | — |
 | `native-fetch` | core | Greptile `native-fetch`: `fetch` is a global on Raycast's Node runtime. | — |
-| `unused-dependencies` | core | Greptile `unused-dependencies`. | — |
+| `unused-dependencies` | core | Greptile `unused-dependencies`: every dependency is imported under `src/` (FAIL); a package `src/` appears to import at runtime (type-only imports and test files excluded) but lists only in `devDependencies` is a WARN, because the text heuristic also matches an `import("x")` type or an import inside a string (write a type-only use as `import type`); the Greptile judgment entry covers the rest. | — |
 | `readme-assets` | core | The Store checklist rejects README embeds from `metadata/`; `assets/` ships to every user. | — |
-| `screenshots` | core | Greptile `store-screenshots`: a `view` command needs at least one screenshot in `metadata/`. (Dimensions moved to `screenshot-size`.) | — |
+| `screenshots` | core | Greptile `store-screenshots`: an extension with a `view` or `menu-bar` command needs at least one screenshot in `metadata/`; a published extension (`--published`) whose only such commands are `menu-bar` ones is a WARN, since the rule asks screenshots of new extensions. (Dimensions moved to `screenshot-size`.) | — |
 | `launch-command` | core | Greptile `launch-command-api` (heuristic, WARN). | — |
 | `favicon` | core | Greptile `favicon-utility` (heuristic, WARN). | — |
 | `trash` | core | Greptile `raycast-trash` (heuristic, WARN). | — |
@@ -41,7 +41,7 @@ A binding to a **core** check never changes that check's severity: `rx preset ch
 | `prettierrc` | **preset** | Greptile `prettier-config` flags only a PR that *changes* `.prettierrc` away from Raycast's two keys. The legacy check demanded the file exist with `printWidth: 120` and `singleQuote: false` in every extension, and the house rule adds the two import-sorting keys and the plugin dependency for self-authored extensions only (`house-style.md` `prettierrc`). The values and the applicability are the owner's. | `rules[].bindings[].options` `{ printWidth, singleQuote, sortImports? }`; `applies` |
 | `hand-typed-preferences` | **preset** | Greptile `generated-preference-argument-types` is `low` severity and the house rule `no-hand-preferences` is **report**; the legacy check blocked (job-B P2). The severity is the owner's call, so the preset sets it. | `severity` (cap) |
 | `title-case` | **preset** | Greptile `manifest-title-case` defers to `ray lint`; the legacy heuristic (AP small words, brand casing) is a house convention that is wrong for CLI names. | `severity` (cap) |
-| `agent-scaffolding` | **preset** | Greptile `no-agent-scaffolding` names the files; which of them an owner ships on purpose (`AGENTS.md`, `TODO.md` on `brew`/`dev-null`) and how hard to fail are policy (`greptile-rules.md` rule → handler table, ship step 3). | `ship.keep[]`; `severity` (cap) |
+| `agent-scaffolding` | **preset** | Greptile `no-agent-scaffolding` names the files (a nested Greptile config is `nested-review-config`'s, in core); which of them an owner ships on purpose (`AGENTS.md`, `TODO.md` on `brew`/`dev-null`) and how hard to fail are policy (`greptile-rules.md` rule → handler table, ship step 3). | `ship.keep[]`; `severity` (cap) |
 | `dev-material` | **preset** | Greptile `no-dev-material` names the files; a published `LICENSE` stays and contributor `docs/` ships by policy. | `ship.keep[]`; `severity` (cap) |
 | `generated-files` | **preset** | Greptile `no-generated-files`; what is build output (`dist/`, `.build/`) versus a stray (`.DS_Store`) and whether a stray blocks is the owner's call. The path list itself stays in core (`src/rules/store.json`). | `severity` (cap) |
 
@@ -57,6 +57,7 @@ Count: 21 core, 6 preset.
 | `icon-size` | core | The Store icon is 512×512. | — |
 | `readme-links` | core | A relative link that does not resolve is broken on the Store page (Q9). | — |
 | `changelog-placeholder` | core | Greptile `changelog-entries`: exactly one `{PR_MERGE_DATE}`, on the top entry (Q10). | — |
+| `nested-review-config` | core | Greptile `no-nested-review-config` (high; split out of `no-agent-scaffolding` on `main` `b6bdcb1`): a nested `.greptile/` or `greptile.json`, at any depth of what `ray publish` copies, can switch off Raycast's repo rules, and CI fails on it. No owner may ship one, so no preset exempts or caps it. | — |
 | `pref-description-length` | preset | The 80-character budget is a measurement Chris made (`house-style.md` `pref-description-length`). | `options.max` |
 | `pref-label-length` | preset | Same rule, the `label` budget (< 50). | `options.max` |
 | `logger` | preset | `@chrismessina/raycast-logger` is a personal dependency. | `applies` (self-authored, web requests) |

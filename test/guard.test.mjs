@@ -13,6 +13,7 @@ import { mentionsPublish, mentionsReady, readCommand } from "../src/audit/publis
 import { Results } from "../src/verdict.mjs";
 import { auditRecord, bashPayload, buildGated, byId, fullEntries, gates, guard, stateDir, withGatedEnv, writeAttested, writeEntries } from "./gates-helpers.mjs";
 import { rx } from "./helpers.mjs";
+import { SHIPPED_DIR } from "../src/greptile/rules.mjs";
 
 const PUBLISH = "npm run publish";
 
@@ -559,5 +560,66 @@ test("guard state mentions: a Bash command that mentions .git/rx or the attestat
       const r = await guard(bashPayload(cmd, root));
       assert.equal(guardResult(r).verdict, "N/A", `${cmd}: ${guardResult(r).message}`);
     }
+  });
+});
+
+// ---- Wave 9 Codex finding 1: the audit is bound to the Greptile rules it judged ----------------
+
+/**
+ * Write an `rx greptile update`-shaped cache copy of the shipped rules under the test's cache,
+ * committed after the shipped copy so it is the copy in use; `change` edits config.json.
+ * @param {string} dir @param {string} sha @param {(c: any) => void} change
+ */
+function cachedRules(dir, sha, change) {
+  const copy = join(dir, "cache", "raycast-harness", "greptile", "rules", `copy-${sha.slice(0, 7)}`);
+  mkdirSync(copy, { recursive: true });
+  for (const f of ["files.json", "rules.md"]) writeFileSync(join(copy, f), readFileSync(join(SHIPPED_DIR, f), "utf8"));
+  const config = JSON.parse(readFileSync(join(SHIPPED_DIR, "config.json"), "utf8"));
+  change(config);
+  writeFileSync(join(copy, "config.json"), JSON.stringify(config));
+  writeFileSync(join(copy, "SOURCE.json"), JSON.stringify({ repo: "raycast/extensions", source: "main", sha, committed: "2026-11-05T00:00:00Z", fetched: "2026-11-05T00:00:01.000Z" }));
+  return copy;
+}
+
+test("guard (W9 finding 1): changed rule text under the same ids blocks a recorded audit; a legacy audit without greptileRules blocks with the same sentence", async () => {
+  await withGatedEnv(async (dir) => {
+    const { root, auditPath } = await gated(dir);
+    const shipped = JSON.parse(readFileSync(join(SHIPPED_DIR, "SOURCE.json"), "utf8")).sha.slice(0, 7);
+    const audit = JSON.parse(readFileSync(auditPath, "utf8"));
+    assert.equal(audit.greptileRules.sha.slice(0, 7), shipped);
+    assert.match(audit.greptileRules.digest, /^[0-9a-f]{64}$/);
+    assert.equal(guardResult(await guard(bashPayload(PUBLISH, root))).verdict, "PASS");
+
+    // Same ids, one judgment rule's text changed: the applicable-id set is unchanged, so only the
+    // rules binding can catch it.
+    const copy = cachedRules(dir, "cccccccccccccccccccccccccccccccccccccccc", (c) => {
+      const r = c.rules.find((/** @type {any} */ x) => x.id === "no-silent-failure");
+      r.rule += "\n\nAlso flag: a new requirement the audit never read.";
+    });
+    const blocked = await guard(bashPayload(PUBLISH, root));
+    assert.equal(guardResult(blocked).verdict, "FAIL");
+    assert.match(guardResult(blocked).message, new RegExp(`the Greptile rules changed since the audit was recorded \\(${shipped} → ccccccc\\); run rx audit record again$`));
+    const show = await rx(["audit", "show", "--root", root, "--json"]);
+    assert.equal(byId(show)["audit-show"].verdict, "WARN");
+    assert.equal(byId(show)["audit-show"].message, `the Greptile rules changed since the audit was recorded (${shipped} → ccccccc); run rx audit record again`);
+
+    // The digest decides, not the sha: the same sha with different text still blocks.
+    rmSync(copy, { recursive: true, force: true });
+    cachedRules(dir, JSON.parse(readFileSync(join(SHIPPED_DIR, "SOURCE.json"), "utf8")).sha, (c) => { c.rules[0].rule += " (edited)"; });
+    assert.match(guardResult(await guard(bashPayload(PUBLISH, root))).message, new RegExp(`\\(${shipped} → ${shipped}\\); run rx audit record again$`));
+    rmSync(join(dir, "cache", "raycast-harness", "greptile", "rules"), { recursive: true, force: true });
+    assert.equal(guardResult(await guard(bashPayload(PUBLISH, root))).verdict, "PASS", "the shipped rules again: the audit matches");
+
+    // An audit written before the field existed blocks with the same sentence.
+    const { greptileRules: _drop, ...legacy } = audit;
+    writeAttested(auditPath, legacy);
+    const old = await guard(bashPayload(PUBLISH, root));
+    assert.equal(guardResult(old).verdict, "FAIL");
+    assert.match(guardResult(old).message, new RegExp(`the Greptile rules changed since the audit was recorded \\(unrecorded → ${shipped}\\); run rx audit record again$`));
+    // A malformed field is a shape problem.
+    writeAttested(auditPath, { ...audit, greptileRules: { repo: "raycast/extensions", sha: "x", digest: "y" } });
+    assert.match(guardResult(await guard(bashPayload(PUBLISH, root))).message, /greptileRules is not \{ repo, sha \(40 hex\), digest \(64 hex\) \}/);
+    writeAttested(auditPath, audit);
+    assert.equal(guardResult(await guard(bashPayload(PUBLISH, root))).verdict, "PASS");
   });
 });

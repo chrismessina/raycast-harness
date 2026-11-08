@@ -1,7 +1,8 @@
 {
   "repo": "raycast/extensions",
   "pr": 32933,
-  "source": "pr",
-  "sha": "226c2aad67610f701568f32d4fce2d5cd13c66df",
-  "fetched": "2026-10-30"
+  "source": "main",
+  "sha": "b6bdcb196dd5d5f228ae322a89bb5211bc535170",
+  "committed": "2026-11-03T07:07:02Z",
+  "fetched": "2026-11-07"
 }

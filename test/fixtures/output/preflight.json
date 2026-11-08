@@ -41,6 +41,7 @@
       "icon-size": "core",
       "readme-links": "core",
       "changelog-placeholder": "core",
+      "nested-review-config": "core",
       "pref-description-length": "preset",
       "pref-label-length": "preset",
       "logger": "preset",
@@ -266,6 +267,12 @@
       "id": "changelog-placeholder",
       "verdict": "PASS",
       "message": "one {PR_MERGE_DATE}, in the top entry's heading",
+      "details": []
+    },
+    {
+      "id": "nested-review-config",
+      "verdict": "PASS",
+      "message": "no nested Greptile config would ship",
       "details": []
     },
     {

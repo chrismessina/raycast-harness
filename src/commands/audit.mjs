@@ -15,6 +15,11 @@
 //                  unmatched one → FAIL audit-dispositions (F9)
 //   verifications  one per external effect the extension has (writes files, makes web requests,
 //                  calls Raycast AI, from the applicability context) → FAIL audit-verification
+//   greptile rules the rules in use (repo, sha, digest of config.json rules + files.json) are stored
+//                  as `greptileRules`; guard and show block when they change (src/audit/greptile.mjs).
+//                  One snapshot is loaded at the start and used for applicability, the entry ids
+//                  and the stamp; if the rules in use differ from it just before the write →
+//                  ERROR audit-greptile-rules, nothing written
 //   receipt        no current receipt → ERROR audit-receipt with the guard's own sentence: missing,
 //                  not attested by this machine's key, malformed, written for another checkout or
 //                  an earlier gates attempt (src/binding.mjs), stale fingerprints, or recording a
@@ -41,6 +46,7 @@ import { repoStatePath, repoStatePathReadOnly, writeJsonAtomic } from "../state.
 import { cachedUpstream } from "../upstream.mjs";
 import { validateReceipt } from "../audit/artifacts.mjs";
 import { EFFECTS, dispositionKey, readEntries } from "../audit/entries.mjs";
+import { freshGreptileRulesStamp, greptileRulesProblem, greptileRulesStamp, stampOf, withGreptileRulesSnapshot } from "../audit/greptile.mjs";
 import { GREPTILE_PREFIX, applicableRules, decide, effectsOf, knownRuleIds, pngDispositions, staleDispositions } from "../audit/evaluate.mjs";
 import { runStep } from "../audit/step.mjs";
 import * as png from "./png.mjs";
@@ -52,6 +58,7 @@ const RECORD_CHECKS = {
   "audit-*": "audit-<rule id>: a rule whose entry says fail (FAIL for a block rule, WARN for a report rule)",
   "audit-dispositions": "every stale CHECK / NEW? path and png OLDER-SHOT image in this run has a disposition matching { path, localHash, baseline }",
   "audit-verification": "a destination / runtime verification entry per external effect the extension has (writes files, web requests, Raycast AI)",
+  "audit-greptile-rules": { description: "ERROR when the Greptile rules in use changed while the audit was being recorded (another rx greptile update finished mid-recording); nothing is written", levels: ["ERROR"] },
   "audit-receipt": { description: "ERROR when there is no current receipt (missing, not attested by this machine's key, malformed, written for another checkout or an earlier gates attempt, its fingerprints no longer match the tree, or it records a FAIL/ERROR)", levels: ["ERROR"] },
   "attest-key": { description: "ERROR when the attestation key exists but is unusable (not a regular file, not 32 bytes, accessible to group or other), or its directory exists with group or other access; rx never replaces the key or chmods a directory it did not create", levels: ["ERROR"] },
   ...shortcuts.spec.subcommands?.check.checks,
@@ -92,7 +99,7 @@ export const spec = {
       summary: "print the recorded audit and whether it still matches the current receipt",
       flags: { "--root": { type: "string", value: "<dir>", help: "extension root" } },
       checks: {
-        "audit-show": { description: "PASS when audit.json exists, matches the current receipt's fingerprint and has no blocking failure; WARN when it is stale or blocking, or when the receipt's or the audit's provenance fails (the guard's sentence); N/A when none is recorded", levels: ["PASS", "WARN", "N/A"] },
+        "audit-show": { description: "PASS when audit.json exists, matches the current receipt's fingerprint and the Greptile rules in use, and has no blocking failure; WARN when it is stale or blocking, when the Greptile rules changed since it was recorded, or when the receipt's or the audit's provenance fails (the guard's sentence); N/A when none is recorded", levels: ["PASS", "WARN", "N/A"] },
       },
       data: { audit: "the recorded audit.json, or null", receipt: "{ present, fingerprint } for the current receipt" },
       examples: ["rx audit show"],
@@ -154,17 +161,34 @@ export async function invalidate({ root, subcommand, log }) {
   if (removed) log(`audit: removed the previous audit at ${auditPath} (the arguments did not parse); run rx audit record again\n`);
 }
 
+/** Tests only: called just before the rules are re-checked and the audit written. @type {(() => void | Promise<void>) | null} */
+let beforeWriteHook = null;
+/** @param {(() => void | Promise<void>) | null} fn */
+export function _setBeforeWriteHookForTests(fn) {
+  beforeWriteHook = fn;
+}
+
 /** @param {import("../cli.mjs").CommandContext} ctx */
 async function record(ctx) {
-  const { args, results, cwd, version } = ctx;
   const root = /** @type {string} */ (ctx.root);
-  const empty = (/** @type {string | null} */ fingerprint) => ({ data: { written: false, fingerprint, entries: 0, blocking: [], reportOnly: [], dispositions: 0, applicable: [] }, fingerprint });
 
   // 1. The previous audit never survives the start of a recording.
   const auditPath = await repoStatePath(root, "audit.json");
   const removed = existsSync(auditPath);
   rmSync(auditPath, { force: true });
   if (removed) ctx.log(`audit: removed the previous audit at ${auditPath}; a new one is written only when the inputs are valid\n`);
+  // One snapshot of the Greptile rules for the whole recording (W9 round 2 finding A).
+  return withGreptileRulesSnapshot((rules) => recordWith(ctx, auditPath, rules));
+}
+
+/**
+ * @param {import("../cli.mjs").CommandContext} ctx @param {string} auditPath
+ * @param {import("../greptile/rules.mjs").LoadedRules} rules the snapshot pinned at the start
+ */
+async function recordWith(ctx, auditPath, rules) {
+  const { args, results, cwd, version } = ctx;
+  const root = /** @type {string} */ (ctx.root);
+  const empty = (/** @type {string | null} */ fingerprint) => ({ data: { written: false, fingerprint, entries: 0, blocking: [], reportOnly: [], dispositions: 0, applicable: [] }, fingerprint });
   const key = loadOrCreateKey();
 
   // 2. Inputs.
@@ -291,7 +315,15 @@ async function record(ctx) {
     results.pass("audit-verification", `${effects.length} external effect(s) recorded: ${nPass} pass, ${effects.length - nPass} n-a${d.strayEffects.length ? ` (${d.strayEffects.join(", ")} recorded but not detected in src/)` : ""}`, effects.flatMap((e) => evidenceDetails(byEffect.get(e)?.evidence ?? "", `${e}: ${byEffect.get(e)?.result} — `)));
   } else results.na("audit-verification", `no external effect detected in src/ (${EFFECTS.join(", ")})${d.strayEffects.length ? `; ${d.strayEffects.join(", ")} recorded anyway` : ""}`);
 
-  // 7. Write, blocking reasons included.
+  // 7. Write, blocking reasons included, only when the rules in use are still the snapshot the
+  // entries were judged against.
+  if (beforeWriteHook) await beforeWriteHook();
+  const stamp = stampOf(rules);
+  const now = freshGreptileRulesStamp();
+  if (now.repo !== stamp.repo || now.sha !== stamp.sha || now.digest !== stamp.digest) {
+    results.error("audit-greptile-rules", `the Greptile rules changed while the audit was being recorded (${stamp.sha.slice(0, 7)} → ${now.sha.slice(0, 7)}); run rx audit record again`);
+    return empty(fresh.combined);
+  }
   const doc = {
     fingerprint: fresh.combined,
     receiptAt: receipt.at,
@@ -300,6 +332,8 @@ async function record(ctx) {
     receiptMac: receipt.attestation.mac,
     rxVersion: version,
     at: new Date().toISOString(),
+    // The Greptile rules the judgment entries were read against (rx guard blocks when they change).
+    greptileRules: stamp,
     applicable: applicable.map((a) => ({ id: a.id, severity: a.severity })),
     entries: file.entries,
     dispositions: file.dispositions,
@@ -358,9 +392,11 @@ async function show({ results, root: r }) {
   ];
   const blocking = Array.isArray(audit.blocking) ? audit.blocking.length : 1;
   const provenance = found ? await provenanceProblem(found.receipt, audit, root) : null;
+  const rulesChanged = greptileRulesProblem(audit.greptileRules, greptileRulesStamp());
   if (!found) results.warn("audit-show", "audit recorded but no receipt exists now; run rx gates and rx audit record again", details);
   else if (provenance) results.warn("audit-show", provenance, details);
   else if (audit.fingerprint !== receiptInfo.fingerprint) results.warn("audit-show", "audit is tied to a different receipt than the current one; run rx audit record again", details);
+  else if (rulesChanged) results.warn("audit-show", rulesChanged, details);
   else if (blocking) results.warn("audit-show", `audit matches the current receipt but carries ${blocking} blocking reason(s)`, details);
   else results.pass("audit-show", `audit matches the current receipt (${String(audit.fingerprint).slice(0, 12)}) with no blocking failure`, details);
   return { data: { audit, receipt: receiptInfo }, fingerprint: typeof audit.fingerprint === "string" ? audit.fingerprint : null };

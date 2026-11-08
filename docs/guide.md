@@ -92,7 +92,7 @@ Every command whose root rule is `required` or `optional` finds the extension li
 
 - **Repo state** lives in `git rev-parse --git-path rx` of the extension's repository, which is `.git/rx/` in a normal checkout: `receipt.json` (gates), `audit.json` (audit), `stale/baseline.json` (stale), `holdout/` (holdout), `publication.json` (`rx publication record`) and Greptile round stores. It is never inside the payload and never inside the npm install.
 - **rx config** lives in `$XDG_CONFIG_HOME/raycast-harness`, by default `~/.config/raycast-harness`, outside every repository: the attestation key `attest.key` and one generation file per extension root under `generations/` (see "Receipt attestation").
-- **Cross-repo cache** lives in `$XDG_CACHE_HOME/raycast-harness`, by default `~/.cache/raycast-harness`: the sparse checkout of `raycast/extensions` under `upstream/`, the runtime shortcut table under `shortcuts/`, the runner's tarball installs and registry cache under `runner/`, and PR-body snapshots.
+- **Cross-repo cache** lives in `$XDG_CACHE_HOME/raycast-harness`, by default `~/.cache/raycast-harness`: the sparse checkout of `raycast/extensions` under `upstream/`, the runtime shortcut table under `shortcuts/`, the runner's tarball installs and registry cache under `runner/`, PR-body snapshots, and the Greptile rules copies `rx greptile update` writes under `greptile/rules/` (see "Keeping Greptile rules current").
 
 Only rx writes rx state. Never hand-edit `receipt.json`, `audit.json` or `publication.json`, and never copy them between checkouts or restore saved copies. `receipt.json` and `audit.json` are bound to the checkout and the `rx gates` attempt they were made for. `publication.json` is a plain record, `{repo, pr, remoteSha, at}`, written only by `rx publication record`, and it carries no binding or attestation; `rx greptile can-reply` refuses a record that `rx publication record` would not write.
 
@@ -183,10 +183,25 @@ rx greptile fetch <N> --json          # the current round: score, findings, head
 rx greptile wait <N>                  # one ETag-conditional GET: PASS new round, N/A no change
 rx greptile can-reply <N> --round <updated_at> --finding <id> --expected-head <sha> \
   --forbidden "$FORBID" --reply reply.md --evidence evidence.json [--claims-fix]
-rx greptile drift                     # core rule snapshot versus the live .greptile/
+rx greptile outdated                  # the Greptile rules in use versus the live .greptile/ on main
 ```
 
 `can-reply` authorizes exactly those reply bytes; `--claims-fix` also requires `.git/rx/publication.json` for this PR at a new remote SHA. Scan any text before you send it with `rx scan --forbidden "$FORBID" --pr-text reply.md`.
+
+### Keeping Greptile rules current
+
+Raycast's Greptile reviews every Store PR against the rules in `.greptile/` on `raycast/extensions` main, and Raycast edits them often. rx ships a copy in `src/rules/greptile/`, and `rx preflight`, `rx audit` and `rx doctor` read whichever copy is in use. Keep that copy current the way you keep a package current:
+
+```sh
+rx greptile outdated                  # PASS current / FAIL out of date, one line per change
+rx greptile update                    # fetch main's .greptile/, validate it, and make it the copy in use
+```
+
+`update` writes a new copy to `~/.cache/raycast-harness/greptile/rules/` and never touches the npm install. rx uses the copy taken from the latest upstream commit (`committed` in its `SOURCE.json`), whether a cache copy or the shipped one, so upgrading rx to a release with newer rules takes effect without deleting anything. When a copy from a later commit is already in use, `update` says so with a WARN instead of claiming it updated. A copy that fails validation, names a repository other than `raycast/extensions`, or carries a commit date in the future is skipped with a warning on stderr, and rx falls back to the next valid copy or the shipped one.
+
+Updating the rules can change what an audit was judged against, so `rx guard` blocks a publish whose audit was recorded against other Greptile rules: `the Greptile rules changed since the audit was recorded (<old> → <new>); run rx audit record again`. Read the changed rules, update the entries file, and record the audit again. `rx doctor` checks the same thing on every run and prints `WARN  greptile-rules  out of date: …` when it is time to update; offline it says so and keeps using the copy it has.
+
+A maintainer refreshing the shipped copy runs `rx greptile update --dest <raycast-harness checkout>`, which rewrites that checkout's `src/rules/greptile/` all-or-nothing (a failed write restores every file) and refuses the running package's own directory. Every change it reports may need a matching change in the plugin's rule mapping.
 
 ### Derive an `@raycast/api` changelog
 
@@ -255,6 +270,13 @@ The inputs file is validated against the decision's schema first (`judge-inputs`
 | `N/A  api-currency  npm unreachable` | `rx api-floor` could not read npm latest; the floor checks still ran. | Nothing blocks; re-run online for the advisory. |
 | `ERROR  args  <dir>/<version> already exists; --out never overwrites` | `rx api-diff --out` points at a used directory. | Pick a new `--out` directory. |
 | `rx doctor` shows `WARN  gh-auth  gh not authenticated: …`, `WARN  git-signing  commit.gpgsign is not true; commits will be unsigned`, `WARN  ray  node_modules/.bin/ray missing in <root>; run npm install there` or `WARN  node  <version>; rx needs Node 22.12 or newer` | Doctor only reports; it never FAILs. | Fix whichever tool it names. |
+| `FAIL  greptile-outdated  out of date: N change(s) since <date>; run rx greptile update` (or `WARN  greptile-rules  out of date: …` from `rx doctor`) | Raycast changed its Greptile rules since the copy rx uses was fetched. | Run `rx greptile update`, then read the changes it lists: a new or changed rule can mean the extension needs work before the next review. |
+| `WARN  greptile-rules  could not check (offline or gh unavailable): using <kind> copy from <date>` | Doctor could not reach GitHub, so it could not compare the rules. | Nothing blocks. Re-run online, or run `gh auth login`. |
+| `rx: ignoring the invalid Greptile rules copy in <dir>: <problem>` on stderr | A copy in the cache is malformed (an interrupted or hand-edited file). rx skipped it and used the next valid copy. | Delete that directory and run `rx greptile update`. |
+| `ERROR  greptile-update  could not read or validate the live rules; nothing written: …` | `update` could not reach GitHub, or main's `.greptile/` failed validation. | Fix connectivity or `gh auth login` and retry; if validation failed, the copy in use is unchanged and still works. |
+| `WARN  greptile-update  wrote … but it is not the copy in use: …, sorts later` | A copy from a later upstream commit was already in use, so the one just written changes nothing. | Nothing to do unless that later copy is wrong; `rx greptile outdated` compares it with main. |
+| `FAIL  guard  … the Greptile rules changed since the audit was recorded (<old> → <new>); run rx audit record again` | The Greptile rules in use changed after `rx audit record` (an `rx greptile update`, or an rx upgrade). An audit written before rx stored the rules says `unrecorded` as the old SHA. | Read the changed rules against the branch, update the entries file, and run `rx audit record` again. |
+| `ERROR  audit-greptile-rules  the Greptile rules changed while the audit was being recorded (<a> → <b>); run rx audit record again` | An `rx greptile update` finished while `rx audit record` was running, so the entries were judged against rules that are no longer in use. Nothing was written. | Read the changed rules against the branch, update the entries file, and run `rx audit record` again. |
 | `rx runner: RX_TARBALL=<path> does not exist` / `rx runner: RX_DEV=<dir> is not an rx checkout: <dir>/bin/rx.mjs does not exist` | The runner override points at nothing. | Fix or unset the variable. |
 | `rx runner: npm install of RX_TARBALL failed (exit N): …` | The isolated tarball install failed (often no network for its dependencies). | Fix the network, or remove `~/.cache/raycast-harness/runner/tarball/<hash>/` and retry. |
 | `rx runner: \`rx commands --json\` via <label> did not print JSON …` / `… reported exit N; cannot learn which commands accept --preset` | The resolved rx could not start or is broken, so the runner cannot inject the preset. | Run the same executable by hand with `commands --json` and read its error. |

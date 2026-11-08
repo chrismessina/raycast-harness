@@ -18,8 +18,9 @@
 //             (b) every fingerprint equals a fresh computation,
 //             (c) every required step is present with its results and no FAIL / ERROR, and
 //             (d) repo/audit.json exists, is well-formed, is bound to this receipt (its subject,
-//             generation and attestation MAC), carries the same combined fingerprint and
-//             its decision — RECOMPUTED here from the stored entries, dispositions, verifications
+//             generation and attestation MAC), carries the same combined fingerprint, was
+//             recorded against the Greptile rules in use now (its `greptileRules` repo, sha and
+//             digest; src/audit/greptile.mjs), and its decision — RECOMPUTED here from the stored entries, dispositions, verifications
 //             and evidence (src/audit/evaluate.mjs), never read from its `blocking` list — has no
 //             blocking reason. Anything else blocks with one sentence naming what is missing or
 //             stale.
@@ -76,6 +77,7 @@ import { resolveRoot } from "../root.mjs";
 import { repoStatePathReadOnly } from "../state.mjs";
 import { checkProtectedPath, pathMemo } from "../audit/protected-paths.mjs";
 import { classifyCommand } from "../audit/publish-command.mjs";
+import { greptileRulesProblem, greptileRulesStamp } from "../audit/greptile.mjs";
 
 export const HOOKS_DOC_URL = "https://code.claude.com/docs/en/hooks";
 export const PLUGINS_DOC_URL = "https://code.claude.com/docs/en/plugins-reference";
@@ -225,6 +227,17 @@ export async function checkRoot(root, version) {
   const superseded = auditBindingProblem(audit, receipt);
   if (superseded) return fail(superseded);
   if (audit.fingerprint !== fresh.combined) return fail("the audit is tied to a different receipt than the current tree; run rx audit record again");
+  // The rules the judgment entries were read against must be the rules in use now (an
+  // `rx greptile update` can change a rule's text under the same id).
+  /** @type {{ repo: string, sha: string, digest: string }} */
+  let rulesNow;
+  try {
+    rulesNow = greptileRulesStamp();
+  } catch (e) {
+    return fail(`the Greptile rules in use cannot be read (${/** @type {Error} */ (e).message.split("\n")[0]})`);
+  }
+  const rulesChanged = greptileRulesProblem(audit.greptileRules, rulesNow);
+  if (rulesChanged) return fail(rulesChanged);
   auditState.fresh = true;
 
   // Recompute the decision from the parts. The preset is the receipt's; applicability and effects

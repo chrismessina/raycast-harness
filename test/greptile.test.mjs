@@ -1,10 +1,10 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, readdirSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { SNAPSHOT_DIR } from "../src/commands/greptile.mjs";
-import { diffRuleSets, liveSource } from "../src/greptile/drift.mjs";
+import { SEVERITIES, diffRuleSets, liveSource } from "../src/greptile/compare.mjs";
+import { SHIPPED_DIR as SNAPSHOT_DIR, loadGreptileRules, readRuleDir, writeDestCopy, writeUpdatedCopy } from "../src/greptile/rules.mjs";
 import { buildRound, parseForbidden, parseSummary, scanReply, summaryComment } from "../src/greptile/rounds.mjs";
 import { setTransport } from "../src/pr/transport.mjs";
 import { RxError } from "../src/errors.mjs";
@@ -18,11 +18,15 @@ const fixture = (/** @type {string} */ f) => JSON.parse(readFileSync(join(FIX, f
 const PR = "12345";
 const HEAD = "0123456789abcdef0123456789abcdef01234567";
 const ROUND = "2026-10-02T09:30:00Z";
+/** A commit date after the shipped copy's (2026-11-03): a copy carrying it is the copy in use. */
+const LATER = "2026-11-05T00:00:00Z";
+/** A commit date before the shipped copy's. */
+const EARLIER = "2026-10-01T00:00:00Z";
 
 /**
  * Comment lists are served only through `getJsonPages` (`reviewPage2` adds a second page), so a
  * regression to a single-page `getJson` throws.
- * @param {Partial<{ issue: any[], review: any[], reviewPage2: any[], pull: any, conditional: { status: number, etag: string | null, body: any } | Error, snapshotFiles: Record<string, string>, mainHas: boolean, mainSha: string, prState: string, prHeadSha: string }>} [o]
+ * @param {Partial<{ issue: any[], review: any[], reviewPage2: any[], pull: any, conditional: { status: number, etag: string | null, body: any } | Error, snapshotFiles: Record<string, string>, mainHas: boolean, mainSha: string, mainCommitted: string, prState: string, prHeadSha: string }>} [o]
  */
 function fakeGitHub(o = {}) {
   const snapshot = Object.fromEntries(["config.json", "files.json", "rules.md"].map((f) => [f, readFileSync(join(SNAPSHOT_DIR, f), "utf8")]));
@@ -38,7 +42,7 @@ function fakeGitHub(o = {}) {
     },
     async getJson(path) {
       calls.push(`GET ${path}`);
-      if (/\/commits\/main$/.test(path)) return { sha: o.mainSha ?? "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" };
+      if (/\/commits\?path=\.greptile&sha=main&per_page=1$/.test(path)) return (o.mainHas ?? false) ? [{ sha: o.mainSha ?? "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", commit: { committer: { date: o.mainCommitted ?? LATER } } }] : [];
       if (/\/pulls\/\d+$/.test(path)) {
         const p = structuredClone(o.pull ?? fixture("pull.json"));
         if (o.prState) p.state = o.prState;
@@ -215,7 +219,7 @@ test("greptile fetch/wait/can-reply accept --root (declared, so the dispatcher r
   const reg = await rx(["commands", "--json"]);
   const g = reg.json.data.commands.find((c) => c.name === "greptile");
   for (const s of ["fetch", "wait", "can-reply"]) assert.ok("--root" in g.subcommands[s].flags, `${s} declares --root`);
-  assert.ok(!("--root" in g.subcommands.drift.flags), "drift has no root");
+  for (const s of ["outdated", "update"]) assert.ok(!("--root" in (g.subcommands[s].flags ?? {})), `${s} has no root`);
 });
 
 test("greptile fetch without a root stores under the cross-repo cache; no summary yet → N/A", async () => {
@@ -542,7 +546,7 @@ test("can-reply: the exact reply bytes are scanned with the forbidden list; an e
   });
 });
 
-// ---- drift: pure (ported tests) --------------------------------------------------------------
+// ---- rules comparison: pure (ported tests) ---------------------------------------------------
 
 const base = () => ({
   config: { strictness: 2, rules: [{ id: "a", severity: "low", scope: ["x"], rule: "A" }, { id: "b", severity: "high", scope: ["y"], rule: "B" }] },
@@ -550,17 +554,17 @@ const base = () => ({
   rules: "# Guidance\n\n## First\n\ntext\n",
 });
 
-test("drift: identical rule sets report nothing", () => {
+test("compare: identical rule sets report nothing", () => {
   assert.deepEqual(diffRuleSets(base(), base()), []);
 });
 
-test("drift: added, removed and changed rules are named by id, one line per changed field", () => {
+test("compare: added, removed and changed rules are named by id, one line per changed field", () => {
   const live = base();
   live.config.rules = [{ id: "a", severity: "medium", scope: ["x"], rule: "A2" }, { id: "c", severity: "low", scope: [], rule: "C" }];
   assert.deepEqual(diffRuleSets(base(), live), ["rule added c [low]", "rule removed b", "rule changed a severity", "rule changed a rule"]);
 });
 
-test("drift: settings, context files and rules.md sections are compared", () => {
+test("compare: settings, context files and rules.md sections are compared", () => {
   const live = base();
   live.config.strictness = 3;
   live.files.files = [{ path: "docs/two.md", description: "two", scope: ["x"] }];
@@ -573,7 +577,7 @@ test("drift: settings, context files and rules.md sections are compared", () => 
   ]);
 });
 
-test("drift: malformed rule sets throw instead of comparing equal (duplicate ids, missing ids, non-array files)", () => {
+test("compare: malformed rule sets throw instead of comparing equal (duplicate ids, missing ids, non-array files)", () => {
   const dup = base();
   dup.config.rules.push({ id: "a", severity: "low", scope: [], rule: "A again" });
   assert.throws(() => diffRuleSets(base(), dup), /duplicate rule id: a/);
@@ -585,23 +589,153 @@ test("drift: malformed rule sets throw instead of comparing equal (duplicate ids
   assert.throws(() => diffRuleSets(base(), badFiles), /files/);
 });
 
-test("drift: liveSource reads main's current head, falls back to the open PR, and refuses a merged PR with no rules on main", async () => {
+test("compare: liveSource reads main's current head, falls back to the open PR, and refuses a merged PR or a missing PR with no rules on main", async () => {
   const routes = (/** @type {Record<string, any>} */ r) => ({
     async getJson(/** @type {string} */ p) { for (const [k, v] of Object.entries(r)) if (p.includes(k)) return v; throw new Error(`404 ${p}`); },
     async getRaw(/** @type {string} */ p) { for (const [k, v] of Object.entries(r)) if (p.includes(k)) return v; const e = new Error(`404 ${p}`); /** @type {any} */ (e).status = 404; throw e; },
   });
-  const main = await liveSource("r/e", 1, routes({ "/commits/main": { sha: "m1" }, "config.json?ref=m1": "{}" }));
-  assert.deepEqual([main.source, main.sha], ["main", "m1"]);
-  const pr = await liveSource("r/e", 1, routes({ "/commits/main": { sha: "m2" }, "/pulls/1": { state: "open", head: { sha: "p1" } } }));
-  assert.deepEqual([pr.source, pr.sha], ["pr", "p1"]);
-  await assert.rejects(liveSource("r/e", 1, routes({ "/commits/main": { sha: "m3" }, "/pulls/1": { state: "closed", merged_at: "x", head: { sha: "p" } } })), /merged/);
+  const C = "/commits?path=.greptile&sha=main&per_page=1";
+  const M1 = "1".repeat(40);
+  const P1 = "2".repeat(40);
+  const main = await liveSource("r/e", 1, routes({ [C]: [{ sha: M1, commit: { committer: { date: LATER } } }] }));
+  assert.deepEqual([main.source, main.sha, main.committed], ["main", M1, LATER]);
+  const pr = await liveSource("r/e", 1, routes({ [C]: [], "/pulls/1": { state: "open", head: { sha: P1 } }, [`/commits/${P1}`]: { commit: { committer: { date: EARLIER } } } }));
+  assert.deepEqual([pr.source, pr.sha, pr.committed], ["pr", P1, EARLIER]);
+  // A commit without a usable date, or dated in the future, is refused rather than ordered.
+  await assert.rejects(liveSource("r/e", 1, routes({ [C]: [{ sha: M1, commit: { committer: { date: "yesterday" } } }] })), /not an ISO-8601 commit time/);
+  await assert.rejects(liveSource("r/e", 1, routes({ [C]: [{ sha: M1, commit: { committer: { date: "2999-01-01T00:00:00Z" } } }] })), /more than a day in the future/);
+  await assert.rejects(liveSource("r/e", 1, routes({ [C]: [], "/pulls/1": { state: "closed", merged_at: "x", head: { sha: P1 } } })), /merged/);
+  await assert.rejects(liveSource("r/e", null, routes({ [C]: [] })), /no commit on main touches \.greptile\//);
 });
 
-// ---- drift: command --------------------------------------------------------------------------
+// ---- the rules lookup ------------------------------------------------------------------------
 
-test("the core snapshot is the real raycast/extensions provenance (never a fixture) and SOURCE.json has the recorded shape", () => {
+const SHA_C = "cccccccccccccccccccccccccccccccccccccccc";
+const SHA_D = "dddddddddddddddddddddddddddddddddddddddd";
+const MAIN = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+
+/** The cache directory `rx greptile update` writes under, for a cache root. @param {string} cacheRoot */
+const rulesCache = (cacheRoot) => join(cacheRoot, "raycast-harness", "greptile", "rules");
+
+/**
+ * Write a cache copy the way `rx greptile update` lays it out: the shipped files (optionally
+ * changed) plus a SOURCE.json.
+ * @param {string} cacheRoot
+ * @param {{ name: string, sha: string, committed?: string, fetched?: string, source?: Record<string, unknown>, config?: (c: any) => void, files?: Record<string, string> }} o
+ */
+function cacheCopy(cacheRoot, o) {
+  const dir = join(rulesCache(cacheRoot), o.name);
+  mkdirSync(dir, { recursive: true });
+  for (const f of ["config.json", "files.json", "rules.md"]) writeFileSync(join(dir, f), readFileSync(join(SNAPSHOT_DIR, f), "utf8"));
+  if (o.config) {
+    const c = JSON.parse(readFileSync(join(dir, "config.json"), "utf8"));
+    o.config(c);
+    writeFileSync(join(dir, "config.json"), JSON.stringify(c));
+  }
+  for (const [f, text] of Object.entries(o.files ?? {})) writeFileSync(join(dir, f), text);
+  writeFileSync(join(dir, "SOURCE.json"), JSON.stringify(o.source ?? { repo: "raycast/extensions", source: "main", sha: o.sha, committed: o.committed ?? LATER, fetched: o.fetched ?? new Date().toISOString() }));
+  return dir;
+}
+
+/**
+ * Run fn with XDG_CACHE_HOME at <dir>/cache.
+ * @template T @param {(dir: string, cacheRoot: string) => Promise<T> | T} fn
+ */
+async function withCache(fn) {
+  return withTempDir(async (dir) => {
+    const prev = process.env.XDG_CACHE_HOME;
+    process.env.XDG_CACHE_HOME = join(dir, "cache");
+    try {
+      return await fn(dir, join(dir, "cache"));
+    } finally {
+      if (prev === undefined) delete process.env.XDG_CACHE_HOME;
+      else process.env.XDG_CACHE_HOME = prev;
+    }
+  });
+}
+
+test("lookup: with no cache copy the shipped rules are in use", async () => {
+  await withCache(() => {
+    const warnings = /** @type {string[]} */ ([]);
+    const r = loadGreptileRules({ warn: (m) => warnings.push(m) });
+    assert.equal(r.source.kind, "shipped");
+    assert.equal(r.source.path, SNAPSHOT_DIR);
+    assert.ok(Array.isArray(r.rules.config.rules) && r.rules.config.rules.length > 0);
+    assert.deepEqual(warnings, []);
+  });
+});
+
+test("lookup: the newest valid cache copy is preferred over the shipped one", async () => {
+  await withCache((_dir, cache) => {
+    // "zz-older" sorts last by name and was fetched last: neither decides, the commit date does.
+    cacheCopy(cache, { name: "zz-older", sha: SHA_D, committed: "2026-11-04T00:00:00Z", fetched: "2026-11-06T00:00:00Z" });
+    const newest = cacheCopy(cache, { name: "newer", sha: SHA_C, committed: LATER, fetched: "2026-11-05T00:00:00Z", config: (c) => c.rules.push({ id: "only-in-cache", severity: "low", scope: [], rule: "C" }) });
+    mkdirSync(join(rulesCache(cache), ".tmp-1-dead"), { recursive: true }); // an interrupted write is never read
+    const warnings = /** @type {string[]} */ ([]);
+    const r = loadGreptileRules({ warn: (m) => warnings.push(m) });
+    assert.equal(r.source.kind, "updated");
+    assert.equal(r.source.sha, SHA_C);
+    assert.equal(r.source.path, newest);
+    assert.equal(r.source.origin, "main");
+    assert.ok(r.rules.config.rules.some((/** @type {any} */ x) => x.id === "only-in-cache"));
+    assert.deepEqual(warnings, []);
+  });
+});
+
+test("lookup: an invalid cache copy is ignored with a warning naming it, never trusted", async () => {
+  await withCache((_dir, cache) => {
+    const good = cacheCopy(cache, { name: "good", sha: SHA_D, committed: "2026-11-04T00:00:00Z" });
+    const dup = cacheCopy(cache, { name: "dup", sha: SHA_C, committed: LATER, config: (c) => c.rules.push({ ...c.rules[0] }) });
+    const badSource = cacheCopy(cache, { name: "bad-source", sha: SHA_C, source: { repo: "raycast/extensions", source: "main", sha: "not-a-sha", committed: LATER, fetched: "2026-11-05" } });
+    const warnings = /** @type {string[]} */ ([]);
+    const r = loadGreptileRules({ warn: (m) => warnings.push(m) });
+    assert.equal(r.source.path, good, "the newest VALID copy wins");
+    assert.equal(warnings.length, 2, warnings.join("\n"));
+    assert.ok(warnings.some((w) => w.includes(dup) && /duplicate rule id/.test(w)), warnings.join("\n"));
+    assert.ok(warnings.some((w) => w.includes(badSource) && /sha is not a 40-hex commit/.test(w)), warnings.join("\n"));
+
+    // Only invalid copies: the shipped copy, still with the warnings.
+    const warnings2 = /** @type {string[]} */ ([]);
+    rmDir(good);
+    assert.equal(loadGreptileRules({ warn: (m) => warnings2.push(m) }).source.kind, "shipped");
+    assert.equal(warnings2.length, 2);
+  });
+});
+
+test("lookup: a cache copy older than the shipped copy does not shadow it", async () => {
+  await withCache((_dir, cache) => {
+    cacheCopy(cache, { name: "ancient", sha: SHA_C, committed: EARLIER, fetched: new Date().toISOString() });
+    assert.equal(loadGreptileRules({ warn: () => {} }).source.kind, "shipped");
+  });
+});
+
+test("lookup: the CLI surfaces an invalid cache copy's warning on stderr", async () => {
+  await withCache(async (dir, cache) => {
+    const bad = cacheCopy(cache, { name: "bad", sha: SHA_C, files: { "files.json": "{ not json" } });
+    const prev = setTransport(fakeGitHub({ mainHas: true, mainSha: MAIN }).t);
+    try {
+      const r = await rx(["greptile", "outdated", "--json"], { cwd: dir });
+      assert.match(r.stderr, new RegExp(`ignoring the invalid Greptile rules copy in ${bad.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`));
+      assert.equal(r.json.data.inUse.kind, "shipped");
+    } finally {
+      setTransport(prev);
+    }
+  });
+});
+
+/** @param {string} dir */
+function rmDir(dir) {
+  rmSync(dir, { recursive: true, force: true });
+}
+
+// ---- outdated: command -----------------------------------------------------------------------
+
+test("the shipped rules are the real raycast/extensions provenance (never a fixture) and SOURCE.json has the recorded shape", () => {
   const src = JSON.parse(readFileSync(join(SNAPSHOT_DIR, "SOURCE.json"), "utf8"));
-  assert.deepEqual(Object.keys(src).sort(), ["fetched", "pr", "repo", "sha", "source"]);
+  const keys = Object.keys(src).sort();
+  assert.deepEqual(keys.filter((k) => k !== "pr"), ["committed", "fetched", "repo", "sha", "source"]);
+  assert.match(src.committed, /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/, "the upstream commit date of sha (commit.committer.date)");
+  if (src.source === "pr") assert.ok(Number.isInteger(src.pr), "a copy from a PR names it");
   assert.equal(src.repo, "raycast/extensions");
   assert.notEqual(src.sha, HEAD, "SOURCE.json carries the fixture PR head: a test wrote into the installed snapshot");
   assert.ok(!/^0123456789abcdef/.test(src.sha), "fixture SHA in SOURCE.json");
@@ -609,64 +743,163 @@ test("the core snapshot is the real raycast/extensions provenance (never a fixtu
   assert.match(src.sha, /^[0-9a-f]{40}$/);
   assert.match(src.fetched, /^\d{4}-\d{2}-\d{2}$/);
   assert.deepEqual(readdirSync(SNAPSHOT_DIR).sort(), ["SOURCE.json", "config.json", "files.json", "rules.md"]);
+  // The one validator the cache, update and update --dest use accepts the shipped copy, whose
+  // severities are exactly the accepted set.
+  const shipped = readRuleDir(SNAPSHOT_DIR, "shipped");
+  assert.deepEqual([...new Set(shipped.set.config.rules.map((/** @type {any} */ r) => r.severity))].sort(), [...SEVERITIES].sort());
 });
 
-test("greptile drift: PASS when the live PR head matches the snapshot; FAIL with one detail per change; source moved is in data.changes", async () => {
-  const src = JSON.parse(readFileSync(join(SNAPSHOT_DIR, "SOURCE.json"), "utf8"));
-  const same = await withFake(fakeGitHub({ prHeadSha: src.sha }).t, ["greptile", "drift"]);
+test("greptile outdated: PASS when the copy in use matches main; FAIL with one detail per change and the update hint", async () => {
+  const same = await withFake(fakeGitHub({ mainHas: true, mainSha: MAIN }).t, ["greptile", "outdated"], {
+    setup: (dir) => void cacheCopy(join(dir, "cache"), { name: "c", sha: SHA_C, fetched: "2099-01-02T03:04:05Z" }),
+  });
   assert.equal(same.code, 0, same.stdout);
-  assert.equal(same.by["greptile-drift"].verdict, "PASS");
-  assert.deepEqual(same.json.data.live, { source: "pr", sha: src.sha });
+  assert.equal(same.by["greptile-outdated"].verdict, "PASS");
+  assert.equal(same.by["greptile-outdated"].message, "the rules are current: raycast/extensions main @ ccccccc (2099-01-02, updated copy)");
+  assert.deepEqual(same.json.data.live, { source: "main", sha: MAIN, committed: LATER });
+  assert.equal(same.json.data.inUse.kind, "updated");
 
   const liveConfig = JSON.parse(readFileSync(join(SNAPSHOT_DIR, "config.json"), "utf8"));
   liveConfig.rules[0].severity = liveConfig.rules[0].severity === "high" ? "low" : "high";
   liveConfig.rules.push({ id: "brand-new-rule", severity: "low", scope: ["extensions/**"], rule: "New" });
-  const changed = await withFake(fakeGitHub({ mainHas: true, snapshotFiles: { "config.json": JSON.stringify(liveConfig) } }).t, ["greptile", "drift"]);
+  const changed = await withFake(fakeGitHub({ mainHas: true, mainSha: MAIN, snapshotFiles: { "config.json": JSON.stringify(liveConfig) } }).t, ["greptile", "outdated"], {
+    setup: (dir) => void cacheCopy(join(dir, "cache"), { name: "c", sha: SHA_C, fetched: "2099-01-02T03:04:05Z" }),
+  });
   assert.equal(changed.code, 1, changed.stdout);
-  assert.equal(changed.by["greptile-drift"].verdict, "FAIL");
-  const texts = changed.by["greptile-drift"].details.map((d) => d.text);
-  assert.equal(texts[0], "source moved pr → main (PR #32933 merged)");
-  assert.equal(changed.json.data.changes[0], "source moved pr → main (PR #32933 merged)", "source moved is one of data.changes");
+  assert.equal(changed.by["greptile-outdated"].verdict, "FAIL");
+  assert.equal(changed.by["greptile-outdated"].message, "out of date: 2 change(s) since 2099-01-02; run rx greptile update");
+  const texts = changed.by["greptile-outdated"].details.map((/** @type {any} */ d) => d.text);
   assert.deepEqual(texts, changed.json.data.changes, "details derive from data.changes");
-  assert.ok(texts.includes("rule added brand-new-rule [low]"));
-  assert.ok(texts.includes(`rule changed ${liveConfig.rules[0].id} severity`));
-  assert.ok(texts.includes("setting changed rules") === false);
+  assert.deepEqual(texts.sort(), ["rule added brand-new-rule [low]", `rule changed ${liveConfig.rules[0].id} severity`].sort());
 });
 
-test("greptile drift: an unreadable live copy is ERROR, never 'no drift'", async () => {
+test("greptile outdated: a copy at the last commit that touched .greptile/ is current after one request, without fetching a file", async () => {
+  const { t, calls } = fakeGitHub({ mainHas: true, mainSha: SHA_C });
+  const r = await withFake(t, ["greptile", "outdated"], { setup: (dir) => void cacheCopy(join(dir, "cache"), { name: "c", sha: SHA_C }) });
+  assert.equal(r.by["greptile-outdated"].verdict, "PASS");
+  assert.deepEqual(calls, ["GET repos/raycast/extensions/commits?path=.greptile&sha=main&per_page=1"]);
+});
+
+test("greptile outdated: a copy from a PR whose rules are now on main reports source moved first", async () => {
+  const r = await withFake(fakeGitHub({ mainHas: true, mainSha: MAIN }).t, ["greptile", "outdated"], {
+    setup: (dir) => void cacheCopy(join(dir, "cache"), { name: "p", sha: SHA_C, source: { repo: "raycast/extensions", pr: 32933, source: "pr", sha: SHA_C, committed: "2026-11-04T00:00:00Z", fetched: "2099-01-01" } }),
+  });
+  assert.equal(r.by["greptile-outdated"].verdict, "FAIL");
+  assert.equal(r.json.data.changes[0], "source moved pr → main (PR #32933 merged)");
+});
+
+test("greptile outdated: an unreadable live copy is ERROR, never 'current'", async () => {
   const { t } = fakeGitHub();
   t.getJson = async () => { throw new RxError("gh api failed (HTTP 503)", { id: "github" }); };
-  const r = await withFake(t, ["greptile", "drift"]);
+  const r = await withFake(t, ["greptile", "outdated"]);
   assert.equal(r.code, 2);
-  assert.equal(r.by["greptile-drift"].verdict, "ERROR");
-  assert.match(r.by["greptile-drift"].message, /could not read or compare/);
+  assert.equal(r.by["greptile-outdated"].verdict, "ERROR");
+  assert.match(r.by["greptile-outdated"].message, /could not read or compare/);
 });
 
-test("greptile drift --update writes only into --dest/src/rules/greptile and refuses without a valid --dest", async () => {
-  const src = JSON.parse(readFileSync(join(SNAPSHOT_DIR, "SOURCE.json"), "utf8"));
-  const before = Object.fromEntries(readdirSync(SNAPSHOT_DIR).map((f) => [f, readFileSync(join(SNAPSHOT_DIR, f), "utf8")]));
-  const noDest = await withFake(fakeGitHub().t, ["greptile", "drift", "--update"]);
-  assert.equal(noDest.json.results[0].id, "args");
-  assert.match(noDest.json.results[0].message, /requires --dest/);
-  const destOnly = await withFake(fakeGitHub().t, ["greptile", "drift", "--dest", "/tmp"]);
-  assert.equal(destOnly.json.results[0].id, "args");
+test("the old drift subcommand and check id are gone (renamed to outdated, no alias)", async () => {
+  const old = await rx(["greptile", ["dr", "ift"].join(""), "--json"]);
+  assert.equal(old.code, 2);
+  assert.equal(old.json.results[0].id, "args");
+  const reg = await rx(["commands", "--json"]);
+  const text = JSON.stringify(reg.json.data);
+  assert.ok(!/drift/i.test(text), "no command, flag, check id or help text says drift");
+  const g = reg.json.data.commands.find((/** @type {any} */ c) => c.name === "greptile");
+  assert.deepEqual(Object.keys(g.subcommands).sort(), ["can-reply", "fetch", "outdated", "update", "wait"]);
+  assert.deepEqual(Object.keys(g.subcommands.outdated.checks), ["greptile-outdated"]);
+  assert.deepEqual(Object.keys(g.subcommands.update.checks), ["greptile-update"]);
+});
 
-  // The running package's own snapshot is refused, spelled directly or through a symlink. The
+// ---- update: command -------------------------------------------------------------------------
+
+test("greptile update: writes a new cache copy atomically, reports the changes, and the lookup then uses it", async () => {
+  const liveRules = readFileSync(join(SNAPSHOT_DIR, "rules.md"), "utf8") + "\n## Added section\n\nnew text\n";
+  /** @type {string[]} */
+  let after = [];
+  const r = await withFake(fakeGitHub({ mainHas: true, mainSha: MAIN, snapshotFiles: { "rules.md": liveRules } }).t, ["greptile", "update"], {
+    // A minute ago: newer than the shipped copy, older than the one update writes now.
+    setup: (dir) => void cacheCopy(join(dir, "cache"), { name: "c", sha: SHA_C, committed: "2026-11-04T00:00:00Z", fetched: new Date(Date.now() - 60_000).toISOString() }),
+    inspect: (dir) => {
+      after = readdirSync(rulesCache(join(dir, "cache"))).sort();
+      const loaded = loadGreptileRules({ warn: (m) => assert.fail(m) });
+      assert.equal(loaded.source.kind, "updated");
+      assert.equal(loaded.source.sha, MAIN, "the copy just written is the one in use");
+      assert.equal(loaded.rules.rules, liveRules);
+      const written = JSON.parse(readFileSync(join(loaded.source.path, "SOURCE.json"), "utf8"));
+      assert.deepEqual(Object.keys(written), ["repo", "source", "sha", "committed", "fetched"]);
+      assert.deepEqual([written.repo, written.source, written.sha, written.committed], ["raycast/extensions", "main", MAIN, LATER]);
+      assert.match(written.fetched, /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
+    },
+  });
+  assert.equal(r.code, 0, r.stdout);
+  assert.equal(r.by["greptile-update"].verdict, "PASS");
+  assert.equal(r.by["greptile-update"].message, "updated: ccccccc → aaaaaaa, 1 change(s)");
+  assert.deepEqual(r.by["greptile-update"].details.map((/** @type {any} */ d) => d.text), ["rules.md changed; sections added: ## Added section"]);
+  assert.equal(after.length, 2, `the old copy and the new one, no temp directory left: ${after.join(", ")}`);
+  assert.ok(!after.some((n) => n.startsWith(".")), after.join(", "));
+  assert.match(String(r.json.data.updated), /aaaaaaa$/);
+});
+
+test("greptile update: already current writes nothing", async () => {
+  /** @type {string[]} */
+  let after = [];
+  const r = await withFake(fakeGitHub({ mainHas: true, mainSha: MAIN }).t, ["greptile", "update"], {
+    setup: (dir) => void cacheCopy(join(dir, "cache"), { name: "c", sha: SHA_C }),
+    inspect: (dir) => { after = readdirSync(rulesCache(join(dir, "cache"))); },
+  });
+  assert.equal(r.code, 0, r.stdout);
+  assert.equal(r.by["greptile-update"].verdict, "PASS");
+  assert.match(r.by["greptile-update"].message, /^already current: raycast\/extensions main @ ccccccc .* matches main @ aaaaaaa$/);
+  assert.equal(r.json.data.updated, null);
+  assert.deepEqual(after, ["c"]);
+});
+
+test("greptile update: a network or validation failure is ERROR and writes nothing", async () => {
+  const { t } = fakeGitHub();
+  t.getJson = async () => { throw new RxError("gh api failed (HTTP 503)", { id: "github" }); };
+  const offline = await withFake(t, ["greptile", "update"], { inspect: (dir) => assert.ok(!existsSync(rulesCache(join(dir, "cache"))), "no cache directory created") });
+  assert.equal(offline.code, 2);
+  assert.equal(offline.by["greptile-update"].verdict, "ERROR");
+  assert.match(offline.by["greptile-update"].message, /nothing written/);
+
+  const liveConfig = JSON.parse(readFileSync(join(SNAPSHOT_DIR, "config.json"), "utf8"));
+  liveConfig.rules.push({ ...liveConfig.rules[0] });
+  const invalid = await withFake(fakeGitHub({ mainHas: true, mainSha: MAIN, snapshotFiles: { "config.json": JSON.stringify(liveConfig) } }).t, ["greptile", "update"], {
+    inspect: (dir) => assert.ok(!existsSync(rulesCache(join(dir, "cache"))), "no cache directory created"),
+  });
+  assert.equal(invalid.by["greptile-update"].verdict, "ERROR");
+  assert.match(invalid.by["greptile-update"].message, /duplicate rule id/);
+});
+
+test("writeUpdatedCopy: a copy that fails validation leaves neither the copy nor its temp directory", async () => {
+  await withCache((_dir, cache) => {
+    const raw = Object.fromEntries(["config.json", "files.json", "rules.md"].map((f) => [f, readFileSync(join(SNAPSHOT_DIR, f), "utf8")]));
+    raw["files.json"] = "{ not json";
+    assert.throws(() => writeUpdatedCopy(raw, { repo: "raycast/extensions", source: "main", sha: MAIN, committed: LATER, fetched: "2026-11-05T00:00:00.000Z" }), /files\.json/);
+    assert.deepEqual(readdirSync(rulesCache(cache)), []);
+  });
+});
+
+test("greptile update --dest writes only into --dest/src/rules/greptile and refuses the installed package", async () => {
+  const before = Object.fromEntries(readdirSync(SNAPSHOT_DIR).map((f) => [f, readFileSync(join(SNAPSHOT_DIR, f), "utf8")]));
+  const shippedSource = JSON.parse(before["SOURCE.json"]);
+
+  // The running package's own shipped copy is refused, spelled directly or through a symlink. The
   // transport here cannot serve live content, so a broken guard produces a different ERROR
   // instead of a write into src/rules/greptile/ (which happened once, 2026-10-30).
-  const self = await withFake(unfetchable(), ["greptile", "drift", "--update", "--dest", REPO]);
-  assert.deepEqual(self.json.results.map((x) => [x.verdict, x.id]), [["ERROR", "greptile-drift"]]);
-  assert.match(self.json.results[0].message, /own snapshot directory/);
+  const self = await withFake(unfetchable(), ["greptile", "update", "--dest", REPO]);
+  assert.deepEqual(self.json.results.map((/** @type {any} */ x) => [x.verdict, x.id]), [["ERROR", "greptile-update"]]);
+  assert.match(self.json.results[0].message, /own shipped rules directory/);
   await withTempDir(async (dir) => {
     const link = join(dir, "alias");
     symlinkSync(REPO, link);
-    const viaLink = await withFake(unfetchable(), ["greptile", "drift", "--update", "--dest", link]);
-    assert.deepEqual(viaLink.json.results.map((x) => [x.verdict, x.id]), [["ERROR", "greptile-drift"]]);
-    assert.match(viaLink.json.results[0].message, /own snapshot directory/);
+    const viaLink = await withFake(unfetchable(), ["greptile", "update", "--dest", link]);
+    assert.deepEqual(viaLink.json.results.map((/** @type {any} */ x) => [x.verdict, x.id]), [["ERROR", "greptile-update"]]);
+    assert.match(viaLink.json.results[0].message, /own shipped rules directory/);
   });
 
   await withTempDir(async (dir) => {
-    const notCheckout = await withFake(fakeGitHub().t, ["greptile", "drift", "--update", "--dest", dir]);
+    const notCheckout = await withFake(fakeGitHub().t, ["greptile", "update", "--dest", dir]);
     assert.equal(notCheckout.json.results[0].verdict, "ERROR");
     assert.match(notCheckout.json.results[0].message, /not a raycast-harness checkout/);
 
@@ -674,28 +907,233 @@ test("greptile drift --update writes only into --dest/src/rules/greptile and ref
     mkdirSync(join(dest, "src", "rules", "greptile"), { recursive: true });
     for (const [f, text] of Object.entries(before)) writeFileSync(join(dest, "src", "rules", "greptile", f), text);
     const liveRules = before["rules.md"] + "\n## Added section\n\nnew text\n";
-    const r = await withFake(fakeGitHub({ mainHas: true, mainSha: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", snapshotFiles: { "rules.md": liveRules } }).t, ["greptile", "drift", "--update", "--dest", dest]);
+    const r = await withFake(fakeGitHub({ mainHas: true, mainSha: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", snapshotFiles: { "rules.md": liveRules } }).t, ["greptile", "update", "--dest", dest], {
+      inspect: (tmp) => assert.ok(!existsSync(rulesCache(join(tmp, "cache"))), "--dest writes no cache copy"),
+    });
     assert.equal(r.code, 0, r.stdout);
-    assert.equal(r.by["greptile-drift"].verdict, "PASS");
-    assert.match(r.by["greptile-drift"].message, /rewritten from main @ bbbbbbb/);
+    assert.equal(r.by["greptile-update"].verdict, "PASS");
+    assert.match(r.by["greptile-update"].message, new RegExp(`^updated: ${shippedSource.sha.slice(0, 7)} → bbbbbbb, \\d+ change\\(s\\) written to `));
     assert.equal(r.json.data.updated, join(dest, "src", "rules", "greptile"));
     const written = JSON.parse(readFileSync(join(dest, "src", "rules", "greptile", "SOURCE.json"), "utf8"));
-    assert.deepEqual([written.repo, written.pr, written.source, written.sha], [src.repo, src.pr, "main", "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"]);
+    assert.deepEqual([written.repo, written.pr, written.source, written.sha, written.committed], [shippedSource.repo, shippedSource.pr, "main", "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", LATER]);
     assert.match(written.fetched, /^\d{4}-\d{2}-\d{2}$/);
     assert.equal(readFileSync(join(dest, "src", "rules", "greptile", "rules.md"), "utf8"), liveRules);
   });
-  // The installed snapshot (this checkout's src/rules/greptile) was not touched.
+  // The installed shipped copy (this checkout's src/rules/greptile) was not touched.
   for (const [f, text] of Object.entries(before)) assert.equal(readFileSync(join(SNAPSHOT_DIR, f), "utf8"), text, `${f} unchanged`);
 });
 
-test("greptile: subcommand roots are as contracted (fetch/wait/can-reply optional, drift none) and ids are declared", async () => {
+test("greptile: subcommand roots are as contracted (fetch/wait/can-reply optional, outdated/update none) and ids are declared", async () => {
   const r = await rx(["commands", "--json"]);
-  const g = r.json.data.commands.find((c) => c.name === "greptile");
+  const g = r.json.data.commands.find((/** @type {any} */ c) => c.name === "greptile");
   assert.equal(g.subcommands.fetch.root, "optional");
   assert.equal(g.subcommands["can-reply"].root, "optional");
-  assert.equal(g.subcommands.drift.root, "none");
+  assert.equal(g.subcommands.outdated.root, "none");
+  assert.equal(g.subcommands.update.root, "none");
   assert.deepEqual(Object.keys(g.subcommands["can-reply"].checks).sort(), ["reply-evidence", "reply-head", "reply-publication", "reply-round", "reply-scan"]);
-  const p = r.json.data.commands.find((c) => c.name === "pr");
+  const p = r.json.data.commands.find((/** @type {any} */ c) => c.name === "pr");
   assert.equal(p.root, "none");
   assert.deepEqual(Object.keys(p.subcommands.body.checks).sort(), ["pr-body-diff", "pr-body-write"]);
 });
+
+// ---- Wave 9 Codex round 1: findings 2, 3, 4, 7 ---------------------------------------------------
+
+test("lookup (W9 finding 2): copies are ordered by upstream commit date; an earlier-same-day cache copy fetched later does not shadow the newer shipped copy", async () => {
+  await withCache((_dir, cache) => {
+    const shipped = JSON.parse(readFileSync(join(SNAPSHOT_DIR, "SOURCE.json"), "utf8"));
+    const sameDayEarlier = shipped.committed.slice(0, 10) + "T00:00:01Z";
+    assert.ok(sameDayEarlier < shipped.committed, "fixture: earlier the same day");
+    cacheCopy(cache, { name: "same-day", sha: SHA_C, committed: sameDayEarlier, fetched: new Date().toISOString() });
+    assert.equal(loadGreptileRules({ warn: (m) => assert.fail(m) }).source.kind, "shipped");
+    // A tie on the commit date goes to the shipped copy, whatever the cache copy's name or fetch time.
+    cacheCopy(cache, { name: "zzz-tie", sha: SHA_D, committed: shipped.committed, fetched: new Date().toISOString() });
+    assert.equal(loadGreptileRules({ warn: (m) => assert.fail(m) }).source.kind, "shipped");
+  });
+});
+
+test("lookup (W9 findings 2–4): a future or unparseable commit date, a foreign repo, or a malformed rule body makes a cache copy invalid; the shipped copy is used and audits still load", async () => {
+  await withCache((_dir, cache) => {
+    const bad = [
+      cacheCopy(cache, { name: "future", sha: SHA_C, committed: "2999-01-01T00:00:00Z" }),
+      cacheCopy(cache, { name: "no-date", sha: SHA_C, source: { repo: "raycast/extensions", source: "main", sha: SHA_C, fetched: "2026-11-05" } }),
+      cacheCopy(cache, { name: "garbled-date", sha: SHA_C, committed: "last tuesday" }),
+      cacheCopy(cache, { name: "foreign", sha: SHA_C, source: { repo: "someone/extensions", source: "main", sha: SHA_C, committed: LATER, fetched: "2026-11-05" } }),
+      cacheCopy(cache, { name: "object-body", sha: SHA_C, config: (c) => { c.rules.find((/** @type {any} */ r) => r.id === "no-silent-failure").rule = {}; } }),
+      cacheCopy(cache, { name: "no-body", sha: SHA_C, config: (c) => { delete c.rules[0].rule; } }),
+      cacheCopy(cache, { name: "bad-severity", sha: SHA_C, config: (c) => { c.rules[0].severity = "critical"; } }),
+      cacheCopy(cache, { name: "bad-scope", sha: SHA_C, config: (c) => { c.rules[0].scope = "extensions/**"; } }),
+      cacheCopy(cache, { name: "bad-file", sha: SHA_C, files: { "files.json": JSON.stringify({ files: [{ path: "docs/x.md", scope: ["extensions/**"] }] }) } }),
+    ];
+    const warnings = /** @type {string[]} */ ([]);
+    const r = loadGreptileRules({ warn: (m) => warnings.push(m) });
+    assert.equal(r.source.kind, "shipped");
+    const expect = [/more than a day in the future/, /committed is not an ISO-8601 commit time: undefined/, /not an ISO-8601 commit time: "last tuesday"/, /repo is "someone\/extensions", not raycast\/extensions/, /rule no-silent-failure has no rule text/, /has no rule text/, /severity "critical" is not one of low, medium, high/, /scope is not an array of strings/, /files\.json entry docs\/x\.md has no description string/];
+    bad.forEach((dir, i) => assert.ok(warnings.some((w) => w.includes(dir) && expect[i].test(w)), `${dir}: ${warnings.join("\n")}`));
+    assert.equal(warnings.length, bad.length);
+  });
+});
+
+test("audit (W9 finding 4): a cache copy with `rule: {}` on a judgment id is skipped, so the judgment rules still load from the shipped copy", async () => {
+  await withCache(async (_dir, cache) => {
+    cacheCopy(cache, { name: "object-body", sha: SHA_C, config: (c) => { c.rules.find((/** @type {any} */ r) => r.id === "no-silent-failure").rule = {}; } });
+    const { greptileJudgmentRules } = await import("../src/audit/greptile.mjs");
+    const rules = greptileJudgmentRules();
+    const shippedRule = JSON.parse(readFileSync(join(SNAPSHOT_DIR, "config.json"), "utf8")).rules.find((/** @type {any} */ r) => r.id === "no-silent-failure");
+    assert.equal(rules.find((r) => r.id === "no-silent-failure")?.title, shippedRule.rule.split("\n")[0].trim(), "the shipped rule's title");
+    assert.ok(rules.every((r) => typeof r.title === "string" && r.title.length > 0));
+  });
+});
+
+test("greptile update (W9 finding 4): a live copy with a malformed rule body is ERROR and nothing is written, to the cache or to --dest", async () => {
+  const liveConfig = JSON.parse(readFileSync(join(SNAPSHOT_DIR, "config.json"), "utf8"));
+  liveConfig.rules[0].rule = {};
+  const t = fakeGitHub({ mainHas: true, mainSha: MAIN, snapshotFiles: { "config.json": JSON.stringify(liveConfig) } }).t;
+  const r = await withFake(t, ["greptile", "update"], { inspect: (dir) => assert.ok(!existsSync(rulesCache(join(dir, "cache"))) || readdirSync(rulesCache(join(dir, "cache"))).length === 0) });
+  assert.equal(r.by["greptile-update"].verdict, "ERROR");
+  assert.match(r.by["greptile-update"].message, /nothing written: .*has no rule text/);
+  await withTempDir(async (dir) => {
+    const dest = destCheckout(dir);
+    const before = destBytes(dest);
+    const d = await withFake(fakeGitHub({ mainHas: true, mainSha: MAIN, snapshotFiles: { "config.json": JSON.stringify(liveConfig) } }).t, ["greptile", "update", "--dest", dest]);
+    assert.equal(d.by["greptile-update"].verdict, "ERROR");
+    assert.match(d.by["greptile-update"].message, /nothing written: .*has no rule text/);
+    assert.deepEqual(destBytes(dest), before);
+  });
+});
+
+test("greptile (W9 finding 3): every upstream request names raycast/extensions, even with a foreign-repo copy in the cache", async () => {
+  const { t, calls } = fakeGitHub({ mainHas: true, mainSha: MAIN, snapshotFiles: { "rules.md": "# changed\n" } });
+  const r = await withFake(t, ["greptile", "outdated"], {
+    setup: (dir) => void cacheCopy(join(dir, "cache"), { name: "foreign", sha: SHA_C, source: { repo: "someone/extensions", source: "main", sha: SHA_C, committed: LATER, fetched: "2026-11-05" } }),
+  });
+  assert.equal(r.json.data.inUse.kind, "shipped");
+  assert.match(r.stderr, /repo is "someone\/extensions", not raycast\/extensions/);
+  assert.ok(calls.length >= 1);
+  for (const c of calls) assert.match(c, /^(GET|RAW) repos\/raycast\/extensions\//, c);
+});
+
+test("greptile update (W9 finding 2): out of order — a copy from a later upstream commit already in the cache stays in use; update says so with a WARN, never PASS updated", async () => {
+  /** @type {any} */
+  let inUse = null;
+  const r = await withFake(fakeGitHub({ mainHas: true, mainSha: MAIN, mainCommitted: "2026-11-04T00:00:00Z", snapshotFiles: { "rules.md": "# older upstream text\n" } }).t, ["greptile", "update"], {
+    setup: (dir) => void cacheCopy(join(dir, "cache"), { name: "later", sha: SHA_D, committed: LATER, fetched: "2026-11-05T00:00:00.000Z" }),
+    inspect: () => { inUse = loadGreptileRules({ warn: (m) => assert.fail(m) }).source; },
+  });
+  assert.equal(r.code, 0, r.stdout);
+  assert.equal(r.by["greptile-update"].verdict, "WARN");
+  assert.match(r.by["greptile-update"].message, /^wrote .*aaaaaaa \(aaaaaaa, committed 2026-11-04T00:00:00Z\) but it is not the copy in use: raycast\/extensions main @ ddddddd .*committed 2026-11-05T00:00:00Z, sorts later/);
+  assert.equal(r.json.data.inUse, false);
+  assert.equal(inUse.sha, SHA_D, "the later commit is still the copy in use");
+});
+
+test("greptile update --dest (W9 finding 7): a write that fails part-way restores every file; ERROR nothing written; no stage directory left", async () => {
+  if (process.getuid?.() === 0) return; // root ignores the read-only bit this test relies on
+  await withTempDir(async (dir) => {
+    const dest = destCheckout(dir);
+    const before = destBytes(dest);
+    const ro = join(dest, "src", "rules", "greptile", "SOURCE.json"); // written last, after the three rule files
+    chmodSync(ro, 0o444);
+    try {
+      const liveRules = before["rules.md"] + "\n## Added section\n\nnew text\n";
+      const r = await withFake(fakeGitHub({ mainHas: true, mainSha: MAIN, snapshotFiles: { "rules.md": liveRules } }).t, ["greptile", "update", "--dest", dest]);
+      assert.equal(r.code, 2, r.stdout);
+      assert.equal(r.by["greptile-update"].verdict, "ERROR");
+      assert.match(r.by["greptile-update"].message, /^could not write --dest .*; nothing written: .*EACCES.*every file in .* was restored$/);
+      assert.equal(r.json.data.updated, null);
+    } finally {
+      chmodSync(ro, 0o644);
+    }
+    assert.deepEqual(destBytes(dest), before, "the destination is byte-for-byte the old copy");
+    assert.deepEqual(readdirSync(join(dest, "src", "rules")), ["greptile"], "no stage directory left beside the destination");
+  });
+});
+
+test("greptile update --dest (W9 round 2 finding E): an older checkout whose SOURCE.json predates committed is updated, and the new SOURCE.json carries committed", async () => {
+  await withTempDir(async (dir) => {
+    const dest = destCheckout(dir);
+    const sourcePath = join(dest, "src", "rules", "greptile", "SOURCE.json");
+    const { committed: _drop, ...legacy } = JSON.parse(readFileSync(sourcePath, "utf8"));
+    writeFileSync(sourcePath, JSON.stringify(legacy, null, 2) + "\n");
+    const liveRules = readFileSync(join(SNAPSHOT_DIR, "rules.md"), "utf8") + "\n## Added section\n\nnew text\n";
+    const r = await withFake(fakeGitHub({ mainHas: true, mainSha: MAIN, snapshotFiles: { "rules.md": liveRules } }).t, ["greptile", "update", "--dest", dest]);
+    assert.equal(r.code, 0, r.stdout + r.stderr);
+    assert.equal(r.by["greptile-update"].verdict, "PASS");
+    assert.equal(r.json.data.previous.committed, "1970-01-01T00:00:00Z", "older than anything with a date");
+    const written = JSON.parse(readFileSync(sourcePath, "utf8"));
+    assert.equal(written.sha, MAIN);
+    assert.match(written.committed, /^\d{4}-\d{2}-\d{2}T/);
+    // Strict everywhere else: the same legacy SOURCE.json fails validation without the --dest allowance.
+    writeFileSync(sourcePath, JSON.stringify(legacy, null, 2) + "\n");
+    assert.throws(() => readRuleDir(join(dest, "src", "rules", "greptile"), "cached"), /committed is not an ISO-8601 commit time: undefined/);
+  });
+});
+
+/**
+ * An in-memory stand-in for the destination's files: `files.json`'s write truncates it and then
+ * throws ENOSPC (what writeFileSync does on a full disk); `failRestore` names files whose
+ * restoring write also fails; `silentRestore` names files whose restoring write "succeeds" but
+ * leaves the file empty.
+ * @param {string} destDir @param {string[]} [failRestore] @param {string[]} [silentRestore]
+ */
+function truncatingIo(destDir, failRestore = [], silentRestore = []) {
+  /** @type {Map<string, Buffer>} */
+  const mem = new Map(readdirSync(destDir).map((f) => [join(destDir, f), readFileSync(join(destDir, f))]));
+  let thrown = false;
+  return {
+    mem,
+    io: {
+      readFileSync: (/** @type {string} */ f) => { const b = mem.get(f); if (!b) throw new Error(`ENOENT ${f}`); return Buffer.from(b); },
+      writeFileSync: (/** @type {string} */ f, /** @type {string | Buffer} */ data) => {
+        const name = f.slice(destDir.length + 1);
+        if (name === "files.json" && !thrown) { thrown = true; mem.set(f, Buffer.alloc(0)); throw new Error("ENOSPC: no space left on device, write"); }
+        if (thrown && failRestore.includes(name)) { mem.set(f, Buffer.alloc(0)); throw new Error("EIO"); }
+        if (thrown && silentRestore.includes(name)) { mem.set(f, Buffer.alloc(0)); return; }
+        mem.set(f, Buffer.from(data));
+      },
+    },
+  };
+}
+
+test("greptile update --dest (W9 round 2 finding D): a write that truncates then throws is restored too and verified; a restoration that fails is named, never 'restored'", async () => {
+  await withTempDir(async (dir) => {
+    const destDir = join(destCheckout(dir), "src", "rules", "greptile");
+    const before = Object.fromEntries(readdirSync(destDir).map((f) => [f, readFileSync(join(destDir, f))]));
+    const raw = { "config.json": before["config.json"].toString(), "files.json": before["files.json"].toString(), "rules.md": before["rules.md"].toString() + "\n## Added\n\nnew\n" };
+    const src = { repo: "raycast/extensions", source: /** @type {const} */ ("main"), sha: "a".repeat(40), committed: "2026-11-04T00:00:00Z", fetched: "2026-11-04" };
+    const ok = truncatingIo(destDir);
+    assert.throws(() => writeDestCopy(destDir, raw, src, /** @type {any} */ (ok.io)), (/** @type {any} */ e) => {
+      assert.match(e.message, /^ENOSPC: no space left on device, write; every file in .* was restored$/);
+      assert.notEqual(e.partial, true);
+      return true;
+    });
+    for (const [f, b] of Object.entries(before)) assert.ok(ok.mem.get(join(destDir, f))?.equals(b), `${f} is byte-for-byte the original`);
+
+    const bad = truncatingIo(destDir, ["files.json"]);
+    assert.throws(() => writeDestCopy(destDir, raw, src, /** @type {any} */ (bad.io)), (/** @type {any} */ e) => {
+      assert.match(e.message, /^ENOSPC: no space left on device, write; and could not restore files\.json in .*: check them by hand$/);
+      assert.equal(e.partial, true);
+      return true;
+    });
+    const silent = truncatingIo(destDir, [], ["files.json"]);
+    assert.throws(() => writeDestCopy(destDir, raw, src, /** @type {any} */ (silent.io)), (/** @type {any} */ e) => {
+      assert.match(e.message, /could not restore files\.json in /, "the read-back, not the write's return, decides");
+      assert.equal(e.partial, true);
+      return true;
+    });
+    assert.deepEqual(readdirSync(join(dir, "checkout", "src", "rules")), ["greptile"], "no stage directory left");
+  });
+});
+
+/** A maintainer checkout with a copy of the shipped rules. @param {string} dir */
+function destCheckout(dir) {
+  const dest = join(dir, "checkout");
+  mkdirSync(join(dest, "src", "rules", "greptile"), { recursive: true });
+  for (const f of readdirSync(SNAPSHOT_DIR)) writeFileSync(join(dest, "src", "rules", "greptile", f), readFileSync(join(SNAPSHOT_DIR, f)));
+  return dest;
+}
+
+/** @param {string} dest */
+function destBytes(dest) {
+  const d = join(dest, "src", "rules", "greptile");
+  return Object.fromEntries(readdirSync(d).sort().map((f) => [f, readFileSync(join(d, f), "utf8")]));
+}

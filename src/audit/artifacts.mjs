@@ -77,5 +77,11 @@ export function validateAudit(audit, { version }) {
   for (const k of ["blocking", "reportOnly"]) if (!Array.isArray(audit[k]) || !audit[k].every((/** @type {unknown} */ s) => typeof s === "string")) return `the audit lacks ${k}`;
   if (!isObj(audit.subject) || !str(audit.subject.root) || !str(audit.subject.gitCommonDir)) return "the audit lacks subject.root / subject.gitCommonDir";
   if (!str(audit.receiptGeneration) || !str(audit.receiptMac)) return "the audit lacks receiptGeneration / receiptMac";
+  // Absent (an audit written before the field existed) is the guard's "rules changed" sentence,
+  // not a shape problem; present, it must be well-formed.
+  if (audit.greptileRules !== undefined) {
+    const g = audit.greptileRules;
+    if (!isObj(g) || !str(g.repo) || typeof g.sha !== "string" || !/^[0-9a-f]{40}$/.test(g.sha) || typeof g.digest !== "string" || !/^[0-9a-f]{64}$/.test(g.digest)) return "the audit's greptileRules is not { repo, sha (40 hex), digest (64 hex) }";
+  }
   return null;
 }

@@ -110,6 +110,37 @@ test("changelog-order: Unreleased or ascending dates fail; changelog-placeholder
   });
 });
 
+test("nested-review-config (Greptile no-nested-review-config, high): core, so it FAILs with no preset and no ship.keep exempts it; gitignored or unchanged-from-published ones pass", async () => {
+  await withTempDir(async (dir) => {
+    for (const [name, files] of /** @type {[string, Record<string, string>][]} */ ([["dir", { ".greptile/config.json": "{}" }], ["file", { "greptile.json": "{}" }]])) {
+      const r = await preflight(makeExt(join(dir, name), { files }), { preset: null });
+      assert.equal(r.verdict("nested-review-config"), "FAIL", name);
+      assert.match(r.by["nested-review-config"].message, /nested Greptile config overrides Raycast's repo rules/);
+    }
+    assert.equal((await preflight(makeExt(join(dir, "clean"), {}), { preset: null })).verdict("nested-review-config"), "PASS");
+    assert.equal((await preflight(makeExt(join(dir, "kept"), { pkg: { name: "keeps-todo" }, files: { "greptile.json": "{}" } }), { preset: HOUSE_PRESET })).verdict("nested-review-config"), "FAIL");
+    assert.equal((await preflight(makeExt(join(dir, "ign"), { files: { "greptile.json": "{}", ".gitignore": "greptile.json\n" } }), { preset: null })).verdict("nested-review-config"), "PASS");
+    const pub = makeExt(join(dir, "pub"), { files: { "greptile.json": "{}" } });
+    assert.equal((await preflight(makeExt(join(dir, "same"), { files: { "greptile.json": "{}" } }), { preset: null, published: pub })).verdict("nested-review-config"), "PASS");
+  });
+});
+
+test("platforms (Greptile platforms-field): a missing field FAILs; missing in the published copy too is a pre-existing WARN; declared values still checked", async () => {
+  await withTempDir(async (dir) => {
+    const missing = await preflight(makeExt(join(dir, "missing"), { pkg: { platforms: undefined } }));
+    assert.equal(missing.verdict("platforms"), "FAIL");
+    assert.match(missing.by.platforms.message, /declare "platforms"/);
+    const pubWithout = makeExt(join(dir, "pub-without"), { pkg: { platforms: undefined } });
+    const pre = await preflight(makeExt(join(dir, "pre"), { pkg: { platforms: undefined } }), { published: pubWithout });
+    assert.equal(pre.verdict("platforms"), "WARN");
+    assert.match(pre.by.platforms.message, /also missing in the published copy/);
+    const pubWith = makeExt(join(dir, "pub-with"), {});
+    assert.equal((await preflight(makeExt(join(dir, "dropped"), { pkg: { platforms: undefined } }), { published: pubWith })).verdict("platforms"), "FAIL", "dropping a published field");
+    assert.equal((await preflight(makeExt(join(dir, "linux"), { pkg: { platforms: ["macOS", "Linux"] } }))).verdict("platforms"), "FAIL");
+    assert.equal((await preflight(makeExt(join(dir, "ok"), {}))).verdict("platforms"), "PASS");
+  });
+});
+
 test("file checks with --published: a renamed file (same count, no published counterpart) is a change, not a crash", async () => {
   await withTempDir(async (dir) => {
     const pub = makeExt(join(dir, "pub"), { files: { "docs/old.md": "x\n" } });
@@ -553,13 +584,12 @@ test("npm-registry: .npmrc and lockfile registries, as npm parses them", async (
   });
 });
 
-test("agent-scaffolding: agent and planning files warn; a nested Greptile config fails; gitignored ones don't ship; ship.keep exempts a named path", async () => {
+test("agent-scaffolding: agent and planning files warn; gitignored ones don't ship; ship.keep exempts a named path", async () => {
   await withTempDir(async (dir) => {
     assert.ok((await preflight(makeExt(join(dir, "a"), { files: { "AGENTS.md": "# Agents\n" } }))).warns.includes("agent-scaffolding"));
     assert.ok((await preflight(makeExt(join(dir, "b"), { files: { "CONTEXT-notes.md": "x" } }))).warns.includes("agent-scaffolding"));
     assert.ok((await preflight(makeExt(join(dir, "c"), { files: { ".claude/settings.json": "{}" } }))).warns.includes("agent-scaffolding"));
-    assert.ok((await preflight(makeExt(join(dir, "d"), { files: { ".greptile/config.json": "{}" } }))).fails.includes("agent-scaffolding"));
-    assert.ok((await preflight(makeExt(join(dir, "e"), { files: { "greptile.json": "{}" } }))).fails.includes("agent-scaffolding"));
+    assert.equal((await preflight(makeExt(join(dir, "d"), { files: { ".greptile/config.json": "{}" } }))).verdict("agent-scaffolding"), "PASS", "a nested Greptile config is nested-review-config's");
     assert.equal((await preflight(makeExt(join(dir, "f"), { files: { "TODO.md": "x", ".gitignore": "node_modules\n/TODO.md\n" } }))).verdict("agent-scaffolding"), "PASS");
     const kept = await preflight(makeExt(join(dir, "g"), { pkg: { name: "keeps-todo" }, files: { "TODO.md": "x" } }), { preset: HOUSE_PRESET });
     assert.equal(kept.verdict("agent-scaffolding"), "PASS");
@@ -843,5 +873,96 @@ test("N3 (gate): --published outside the cache on a machine with no cache runs c
     } finally {
       if (prevXdg === undefined) delete process.env.XDG_CACHE_HOME; else process.env.XDG_CACHE_HOME = prevXdg;
     }
+  });
+});
+
+// ---- Wave 9 Codex round 1: findings 5 (mechanical gaps) and 6 ------------------------------------
+
+test("screenshots (W9 finding 5): a menu-bar command needs screenshots too, as Greptile's store-screenshots says", async () => {
+  await withTempDir(async (dir) => {
+    const menu = { name: "index", title: "Show Status", mode: "menu-bar" };
+    const r = await preflight(makeExt(join(dir, "menu"), { pkg: { commands: [menu] }, files: { "metadata/good-1.png": null } }));
+    assert.equal(r.verdict("screenshots"), "FAIL");
+    assert.equal(r.by.screenshots.message, "a view or menu-bar command needs at least one screenshot in metadata/");
+    assert.equal((await preflight(makeExt(join(dir, "menu-ok"), { pkg: { commands: [menu] } }))).verdict("screenshots"), "PASS");
+  });
+});
+
+test("screenshots (W9 round 2 finding C): a published menu-bar-only extension without screenshots is WARN; unpublished FAIL; a view command still FAILs when published", async () => {
+  await withTempDir(async (dir) => {
+    const menu = { name: "index", title: "Show Status", mode: "menu-bar" };
+    const view = { name: "list", title: "List Items", mode: "view" };
+    const noShots = { "metadata/good-1.png": null };
+    const pub = makeExt(join(dir, "pub"), { pkg: { commands: [menu] }, files: noShots });
+    const published = await preflight(makeExt(join(dir, "menu-pub"), { pkg: { commands: [menu] }, files: noShots }), { published: pub });
+    assert.equal(published.verdict("screenshots"), "WARN");
+    assert.match(published.by.screenshots.message, /^a menu-bar command has no screenshot in metadata\/; the Store asks screenshots of new extensions/);
+    assert.equal((await preflight(makeExt(join(dir, "menu-new"), { pkg: { commands: [menu] }, files: noShots }))).verdict("screenshots"), "FAIL", "unpublished: a new submission");
+    // Deleting screenshots a published copy had (so none remain) is still a FAIL: Greptile's rule names it.
+    const pubWithShots = makeExt(join(dir, "pub-shots"), { pkg: { commands: [menu] } });
+    assert.ok(readdirSync(join(pubWithShots, "metadata")).some((f) => f.endsWith(".png")), "fixture: the published copy has a screenshot");
+    assert.equal((await preflight(makeExt(join(dir, "menu-deleted"), { pkg: { commands: [menu] }, files: noShots }), { published: pubWithShots })).verdict("screenshots"), "FAIL", "deleted the published screenshots");
+    const pubView = makeExt(join(dir, "pub-view"), { pkg: { commands: [menu, view] }, files: noShots });
+    assert.equal((await preflight(makeExt(join(dir, "view-pub"), { pkg: { commands: [menu, view] }, files: noShots }), { published: pubView })).verdict("screenshots"), "FAIL", "a view command keeps today's behavior");
+  });
+});
+
+test("unused-dependencies (W9 finding 5, round 2 finding B): a package src/ imports at runtime but lists only in devDependencies WARNs (a heuristic); type-only and test-file imports do not count", async () => {
+  await withTempDir(async (dir) => {
+    const deps = { "@raycast/api": "^2.1.0" };
+    const dev = { "@raycast/utils": "^2.0.0", "date-fns": "^4", "zod": "^3", vitest: "^3", "@types/node": "22" };
+    const src = [
+      'import { List } from "@raycast/api";',
+      'import { useFetch } from "@raycast/utils";', // runtime, devDependencies only → FAIL
+      'import type { Locale } from "date-fns";', // type-only
+      'import { type ZodType } from "zod";', // every specifier is a type
+      "",
+    ].join("\n");
+    const r = await preflight(makeExt(join(dir, "a"), { pkg: { dependencies: deps, devDependencies: dev }, files: { "src/index.tsx": src, "src/index.test.ts": 'import { test } from "vitest";\nimport { format } from "date-fns";\n' } }));
+    assert.equal(r.verdict("unused-dependencies"), "WARN");
+    assert.match(r.by["unused-dependencies"].message, /devDependencies-only packages at runtime \(a text heuristic\): @raycast\/utils; .*import type$/);
+    assert.deepEqual(r.by["unused-dependencies"].details.map((/** @type {any} */ d) => d.text), ["@raycast/utils: imported by src/index.tsx"]);
+    // The same package in dependencies passes.
+    const ok = await preflight(makeExt(join(dir, "b"), { pkg: { dependencies: { ...deps, "@raycast/utils": "^2.0.0" }, devDependencies: { "date-fns": "^4" } }, files: { "src/index.tsx": src.replace('import { type ZodType } from "zod";', "") } }));
+    assert.equal(ok.verdict("unused-dependencies"), "PASS", JSON.stringify(ok.by["unused-dependencies"]));
+  });
+});
+
+test("unused-dependencies (W9 round 2 finding B): an import(\"typescript\") type and an import inside a string literal are WARN, never FAIL", async () => {
+  await withTempDir(async (dir) => {
+    const deps = { "@raycast/api": "^2.1.0" };
+    const dev = { typescript: "^5", eslint: "^9" };
+    const src = [
+      'import { List } from "@raycast/api";',
+      'type Options = import("typescript").CompilerOptions;',
+      'const help = `Use import { defineConfig } from "eslint/config"`;',
+      "export { List, help };",
+      "export type { Options };",
+      "",
+    ].join("\n");
+    const r = await preflight(makeExt(join(dir, "a"), { pkg: { dependencies: deps, devDependencies: dev }, files: { "src/index.tsx": src } }));
+    assert.equal(r.verdict("unused-dependencies"), "WARN", JSON.stringify(r.by["unused-dependencies"]));
+    assert.ok(!r.fails.includes("unused-dependencies"));
+    assert.match(r.by["unused-dependencies"].message, /a text heuristic\): typescript, eslint; .*import type$/);
+  });
+});
+
+test("nested-review-config (W9 finding 6): a .greptile/ or greptile.json at any depth of the payload FAILs; under a name ray publish skips it does not", async () => {
+  await withTempDir(async (dir) => {
+    for (const [name, files, path] of /** @type {[string, Record<string, string>, string][]} */ ([
+      ["deep-dir", { "src/.greptile/config.json": "{}" }, "src/.greptile"],
+      ["deep-file", { "src/greptile.json": "{}" }, "src/greptile.json"],
+      ["deeper", { "assets/nested/x/greptile.json": "{}" }, "assets/nested/x/greptile.json"],
+    ])) {
+      const r = await preflight(makeExt(join(dir, name), { files }), { preset: null });
+      assert.equal(r.verdict("nested-review-config"), "FAIL", name);
+      assert.deepEqual(r.by["nested-review-config"].details.map((/** @type {any} */ d) => d.file), [path], name);
+    }
+    // node_modules is never copied by ray publish.
+    assert.equal((await preflight(makeExt(join(dir, "nm"), { files: { "node_modules/pkg/greptile.json": "{}" } }), { preset: null })).verdict("nested-review-config"), "PASS");
+    // The existing treatment holds at depth: gitignored, or unchanged from the published copy.
+    assert.equal((await preflight(makeExt(join(dir, "ign"), { files: { "src/greptile.json": "{}", ".gitignore": "greptile.json\n" } }), { preset: null })).verdict("nested-review-config"), "PASS");
+    const pub = makeExt(join(dir, "pub"), { files: { "src/.greptile/config.json": "{}" } });
+    assert.equal((await preflight(makeExt(join(dir, "same"), { files: { "src/.greptile/config.json": "{}" } }), { preset: null, published: pub })).verdict("nested-review-config"), "PASS");
   });
 });

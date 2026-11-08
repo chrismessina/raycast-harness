@@ -1,5 +1,5 @@
-// `rx greptile fetch|wait|can-reply|drift` (docs/commands.md §4.12): the Greptile review loop's
-// mechanics, and whether the vendored rule snapshot still matches raycast/extensions.
+// `rx greptile fetch|wait|can-reply|outdated|update` (docs/commands.md §4.12): the Greptile review
+// loop's mechanics, and keeping the Greptile rules rx uses current with raycast/extensions.
 //
 //   fetch <N>      the round: summary score, updated_at (the round key), last reviewed commit,
 //                  inline findings (id, path, line, original_commit_id) and the PR head. Written to
@@ -14,8 +14,16 @@
 //                  naming this PR and the current remote SHA, which must differ from the round's
 //                  reviewed commit. A decline permits an unchanged head without any publication
 //                  record (job-A P1-3: decline-only rounds used to be unanswerable).
-//   drift          compare src/rules/greptile/ with the live .greptile/; --update rewrites only an
-//                  explicit --dest maintainer checkout, never the installed package.
+//   outdated       compare the rules in use (src/greptile/rules.mjs: the newest cache copy, else the
+//                  shipped src/rules/greptile/) with the live .greptile/ on main.
+//   update         fetch the live .greptile/, validate it, and write it atomically as a new copy in
+//                  the cache; --dest writes a maintainer checkout's src/rules/greptile/ instead
+//                  (staged and validated, then replaced all-or-nothing), never the installed
+//                  package. Nothing is written when nothing changed or on any error. A cache copy
+//                  that does not become the copy in use (one already there sorts later by upstream
+//                  commit date) is a WARN, never "updated".
+//
+// Every upstream request names raycast/extensions (GREPTILE_REPO), never a copy's own metadata.
 //
 // State (docs/commands.md §1): greptile/<owner>/<name>/<N>/ under the extension's repo state when
 // a root resolves, else under the cross-repo cache. `rounds/<updated_at>.json`, `etag`, `seen`,
@@ -30,10 +38,10 @@
 
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, realpathSync, renameSync, statSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { join } from "node:path";
 import { RxError } from "../errors.mjs";
-import { SNAPSHOT_FILES, diffRuleSets, fetchLive, liveSource } from "../greptile/drift.mjs";
+import { GREPTILE_REPO, diffRuleSets, fetchLive, liveSource } from "../greptile/compare.mjs";
+import { SHIPPED_DIR, describeRules, loadGreptileRules, readRuleDir, writeDestCopy, writeUpdatedCopy } from "../greptile/rules.mjs";
 import { buildRound, parseForbidden, scanReply, validateEvidence } from "../greptile/rounds.mjs";
 import { parsePrNumber, transport } from "../pr/transport.mjs";
 import { publicationPath, readPublication } from "../publication.mjs";
@@ -41,7 +49,6 @@ import { cachePath, repoStatePath } from "../state.mjs";
 
 const REPO = "raycast/extensions";
 const [OWNER, NAME] = REPO.split("/");
-export const SNAPSHOT_DIR = join(dirname(fileURLToPath(import.meta.url)), "..", "rules", "greptile");
 
 const PR_POSITIONAL = [{ name: "N", required: true, help: `pull request number in ${REPO}` }];
 /** The dispatcher reads `--root` only when the (sub)command declares it. */
@@ -51,7 +58,7 @@ const ROUND_STATE = "greptile/<owner>/<name>/<N>/ under the extension's repo sta
 /** @type {import("../cli.mjs").CommandSpec} */
 export const spec = {
   name: "greptile",
-  summary: "fetch a Greptile round, wait for the next one, authorize a reply, or check the rule snapshot for drift",
+  summary: "fetch a Greptile round, wait for the next one, authorize a reply, or keep the Greptile rules current",
   root: "optional",
   network: `GitHub API via gh (${REPO})`,
   state: ROUND_STATE,
@@ -101,18 +108,26 @@ export const spec = {
       },
       data: { authorized: "boolean", record: "{ repo, pr, round, finding, expectedHead, evidenceHash, forbiddenHash, replyHash, authorized, at }" },
     },
-    drift: {
-      name: "drift",
-      summary: "compare the core Greptile rule snapshot with the live .greptile/ in raycast/extensions",
+    outdated: {
+      name: "outdated",
+      summary: "compare the Greptile rules in use with the live .greptile/ on raycast/extensions main",
+      root: "none",
+      network: `GitHub API via gh: ${REPO} the latest commit touching .greptile/ on main, then its .greptile/ contents when that differs from the copy in use`,
+      state: "reads the cache copies in greptile/rules/ under the cross-repo cache; writes nothing",
+      checks: { "greptile-outdated": "the rules in use match the live rules (PASS), differ (FAIL, one detail per change), or could not be compared (ERROR)" },
+      data: { inUse: "{ kind: updated|shipped, repo, sha, committed, fetched, path, origin: main|pr, pr }", live: "{ source, sha, committed } | null", changes: "string[] (source moved included)" },
+    },
+    update: {
+      name: "update",
+      summary: "fetch the live .greptile/ from raycast/extensions main and make it the copy in use",
       root: "none",
       flags: {
-        "--update": { type: "boolean", help: "rewrite the snapshot from the live copy; requires --dest" },
-        "--dest": { type: "string", value: "<dir>", help: "a raycast-harness maintainer checkout whose src/rules/greptile/ receives the update (never the installed package)" },
+        "--dest": { type: "string", value: "<dir>", help: "a raycast-harness maintainer checkout whose src/rules/greptile/ receives the update instead of the cache (never the installed package)" },
       },
-      network: `GitHub API via gh: ${REPO} commits, pulls and .greptile/ contents`,
-      state: "writes only into --dest/src/rules/greptile/ with --update; otherwise none",
-      checks: { "greptile-drift": "the snapshot matches the live rules (PASS), differs (FAIL, one detail per change), or could not be compared (ERROR)" },
-      data: { snapshot: "SOURCE.json { repo, pr, source, sha, fetched }", live: "{ source, sha }", changes: "string[] (source moved included)", updated: "string | null (the --dest written)" },
+      network: `GitHub API via gh: ${REPO} the latest commit touching .greptile/ on main, then its .greptile/ contents when that differs from the copy in use`,
+      state: "writes a new copy under greptile/rules/ in the cross-repo cache, or with --dest only into --dest/src/rules/greptile/; nothing when already current or on error",
+      checks: { "greptile-update": "the live rules were written and are the copy in use (PASS updated), matched already (PASS already current), were written to the cache but a copy from a later upstream commit stays in use (WARN, naming it), or could not be read, validated or written (ERROR, nothing written; --dest is restored all-or-nothing)" },
+      data: { previous: "{ kind, repo, sha, committed, fetched, path, origin, pr } (the copy compared against)", live: "{ source, sha, committed } | null", changes: "string[] (source moved included)", updated: "string | null (the directory written)", inUse: "boolean | null (whether the cache copy written, or the current one, is the copy in use; null with --dest)" },
     },
   },
 };
@@ -123,7 +138,8 @@ export async function run(ctx) {
     case "fetch": return fetch(ctx);
     case "wait": return wait(ctx);
     case "can-reply": return canReply(ctx);
-    default: return drift(ctx);
+    case "outdated": return outdated(ctx);
+    default: return update(ctx);
   }
 }
 
@@ -331,72 +347,127 @@ async function canReply({ args, root, results }) {
   return { data: { authorized, record } };
 }
 
-/** @param {string} dir */
-function readSnapshot(dir) {
-  const read = (/** @type {string} */ f) => {
-    try {
-      return readFileSync(join(dir, f), "utf8");
-    } catch (e) {
-      throw new RxError(`snapshot ${join(dir, f)} is unreadable: ${/** @type {Error} */ (e).message}`, { id: "input" });
-    }
-  };
-  /** @type {import("../greptile/drift.mjs").Source} */
-  const source = JSON.parse(read("SOURCE.json"));
-  return { source, set: { config: JSON.parse(read("config.json")), files: JSON.parse(read("files.json")), rules: read("rules.md") } };
+/**
+ * Where the live rules are, fetched and compared with `base`. `source moved` is a change like any
+ * other: it leads data.changes, and details derive from it. Throws on any read or validation failure.
+ * @param {import("../greptile/rules.mjs").RulesSource} from @param {import("../greptile/compare.mjs").RuleSet} base
+ */
+async function compareLive(from, base) {
+  const where = await liveSource(GREPTILE_REPO, from.pr, transport());
+  // The copy was fetched at the commit that last touched .greptile/: nothing to fetch or compare.
+  if (where.source === from.origin && where.sha === from.sha) return { where, live: null, changes: /** @type {string[]} */ ([]) };
+  const live = await fetchLive(GREPTILE_REPO, where.sha, transport());
+  const changes = diffRuleSets(base, live.set);
+  if (where.source !== from.origin) changes.unshift(`source moved ${from.origin} → ${where.source}${where.source === "main" && from.pr ? ` (PR #${from.pr} merged)` : ""}`);
+  return { where, live, changes };
 }
 
 /** @param {import("../cli.mjs").CommandContext} ctx */
-async function drift({ args, results }) {
-  const update = args.flags["--update"] === true;
+async function outdated({ results, log }) {
+  const inUse = loadGreptileRules({ warn: log });
+  const data = { inUse: inUse.source, live: /** @type {{ source: string, sha: string, committed: string } | null} */ (null), changes: /** @type {string[]} */ ([]) };
+  try {
+    const { where, changes } = await compareLive(inUse.source, inUse.rules);
+    data.live = { source: where.source, sha: where.sha, committed: where.committed };
+    data.changes = changes;
+  } catch (e) {
+    results.error("greptile-outdated", `could not read or compare the live rules: ${/** @type {Error} */ (e).message}`);
+    return { data };
+  }
+  if (!data.changes.length) results.pass("greptile-outdated", `the rules are current: ${describeRules(inUse.source)}`);
+  else results.fail("greptile-outdated", `out of date: ${data.changes.length} change(s) since ${inUse.source.fetched.slice(0, 10)}; run rx greptile update`, data.changes.map((text) => ({ text })));
+  return { data };
+}
+
+/** What a --dest SOURCE.json written before `committed` existed counts as: older than any dated copy. */
+const LEGACY_COMMITTED = "1970-01-01T00:00:00Z";
+
+/** @param {import("../cli.mjs").CommandContext} ctx */
+async function update({ args, results, log }) {
   const dest = typeof args.flags["--dest"] === "string" ? args.flags["--dest"] : null;
-  if (update && !dest) throw new RxError("--update requires --dest <maintainer checkout>; the installed package is never rewritten", { id: "args" });
-  if (dest && !update) throw new RxError("--dest only applies with --update", { id: "args" });
   /** @type {string | null} */
   let destDir = null;
   if (dest) {
     destDir = join(dest, "src", "rules", "greptile");
     const ok = existsSync(destDir) && statSync(destDir).isDirectory() && existsSync(join(destDir, "SOURCE.json"));
     if (!ok) throw new RxError(`--dest ${dest} is not a raycast-harness checkout (no src/rules/greptile/SOURCE.json)`, { id: "input" });
-    // The running package's own snapshot is never a destination, however the path is spelled.
+    // The running package's own shipped copy is never a destination, however the path is spelled.
     /** @type {boolean} */
     let same;
     try {
-      same = realpathSync(destDir) === realpathSync(SNAPSHOT_DIR);
+      same = realpathSync(destDir) === realpathSync(SHIPPED_DIR);
     } catch { same = false; }
-    if (same) throw new RxError(`--dest ${dest} is the running package's own snapshot directory; point --dest at a separate maintainer checkout`, { id: "greptile-drift" });
+    if (same) throw new RxError(`--dest ${dest} is the running package's own shipped rules directory; point --dest at a separate maintainer checkout`, { id: "greptile-update" });
   }
 
-  const { source, set: snapshot } = readSnapshot(SNAPSHOT_DIR);
-  const data = { snapshot: source, live: /** @type {{ source: string, sha: string } | null} */ (null), changes: /** @type {string[]} */ ([]), updated: /** @type {string | null} */ (null) };
-  /** @type {{ source: "main" | "pr", sha: string, label: string }} */
-  let where;
-  /** @type {{ raw: Record<string, string>, set: import("../greptile/drift.mjs").RuleSet }} */
-  let live;
+  // With --dest the copy being replaced is that checkout's; otherwise it is the copy in use.
+  /** @type {import("../greptile/rules.mjs").LoadedRules} */
+  let before;
+  if (destDir) {
+    try {
+      // An older checkout's SOURCE.json may predate `committed` (W9 round 2 finding E): it is
+      // accepted here and treated as older than any dated copy (the epoch).
+      const r = readRuleDir(destDir, "--dest", { legacy: true });
+      before = { rules: r.set, source: { kind: "shipped", repo: r.source.repo, sha: r.source.sha, committed: r.source.committed ?? LEGACY_COMMITTED, fetched: r.source.fetched, path: destDir, origin: r.source.source, pr: r.source.pr ?? null } };
+    } catch (e) {
+      throw new RxError(`--dest ${dest}: ${/** @type {Error} */ (e).message}`, { id: "input" });
+    }
+  } else before = loadGreptileRules({ warn: log });
+
+  const data = { previous: before.source, live: /** @type {{ source: string, sha: string, committed: string } | null} */ (null), changes: /** @type {string[]} */ ([]), updated: /** @type {string | null} */ (null), inUse: /** @type {boolean | null} */ (null) };
+  /** @type {Awaited<ReturnType<typeof compareLive>>} */
+  let got;
   try {
-    where = await liveSource(source.repo, source.pr, transport());
-    live = await fetchLive(source.repo, where.sha, transport());
-    data.changes = diffRuleSets(snapshot, live.set);
+    got = await compareLive(before.source, before.rules);
   } catch (e) {
-    results.error("greptile-drift", `could not read or compare the live rules: ${/** @type {Error} */ (e).message}`);
+    results.error("greptile-update", `could not read or validate the live rules; nothing written: ${/** @type {Error} */ (e).message}`);
     return { data };
   }
-  data.live = { source: where.source, sha: where.sha };
-  // `source moved` is a change like any other: it lives in data.changes, and details derive from it.
-  if (where.source !== source.source) data.changes.unshift(`source moved ${source.source} → ${where.source}${where.source === "main" ? ` (PR #${source.pr} merged)` : ""}`);
-  const details = data.changes.map((text) => ({ text }));
+  const { where, live, changes } = got;
+  data.live = { source: where.source, sha: where.sha, committed: where.committed };
+  data.changes = changes;
+  if (!changes.length) {
+    data.inUse = destDir ? null : true;
+    results.pass("greptile-update", `already current: ${describeRules(before.source)} matches ${where.label}`);
+    return { data };
+  }
+  if (!live) throw new RxError("internal: changes without a fetched live copy", { id: "internal" });
+  const details = changes.map((text) => ({ text }));
+  const arrow = `${before.source.sha.slice(0, 7)} → ${where.sha.slice(0, 7)}`;
+  // A cache copy names a PR only when it came from one; a maintainer checkout keeps the PR its
+  // SOURCE.json already recorded (the provenance of the first copy).
+  const prOf = (/** @type {boolean} */ keep) => (before.source.pr && (keep || where.source === "pr") ? { pr: before.source.pr } : {});
 
-  if (update && destDir) {
-    // Second, independent guard at the write site: whatever happened above, the installed snapshot
-    // is never written (2026-10-30: a test run with the first guard disabled rewrote it).
-    if (realpathSync(destDir) === realpathSync(SNAPSHOT_DIR)) throw new RxError(`refusing to write into the running package's snapshot ${SNAPSHOT_DIR}`, { id: "greptile-drift" });
-    for (const f of SNAPSHOT_FILES) writeFileSync(join(destDir, f), live.raw[f]);
+  if (destDir) {
+    // Second, independent guard at the write site: whatever happened above, the installed shipped
+    // copy is never written (2026-10-30: a test run with the first guard disabled rewrote it).
+    if (realpathSync(destDir) === realpathSync(SHIPPED_DIR)) throw new RxError(`refusing to write into the running package's shipped rules ${SHIPPED_DIR}`, { id: "greptile-update" });
     const fetched = new Date().toISOString().slice(0, 10);
-    writeFileSync(join(destDir, "SOURCE.json"), JSON.stringify({ ...source, source: where.source, sha: where.sha, fetched }, null, 2) + "\n");
+    try {
+      writeDestCopy(destDir, live.raw, { repo: GREPTILE_REPO, ...prOf(true), source: where.source, sha: where.sha, committed: where.committed, fetched });
+    } catch (e) {
+      const partial = /** @type {any} */ (e).partial === true;
+      results.error("greptile-update", `could not write --dest ${destDir}; ${partial ? "some files could not be restored" : "nothing written"}: ${/** @type {Error} */ (e).message}`);
+      return { data };
+    }
     data.updated = destDir;
-    results.pass("greptile-drift", `snapshot in ${destDir} rewritten from ${where.label}${details.length ? `; ${details.length} change(s) to carry into the plugin mapping` : ""}`, details);
+    results.pass("greptile-update", `updated: ${arrow}, ${changes.length} change(s) written to ${destDir}; carry them into the plugin mapping`, details);
     return { data };
   }
-  if (!details.length) results.pass("greptile-drift", `snapshot ${source.source} @ ${source.sha.slice(0, 7)} matches ${where.label}`);
-  else results.fail("greptile-drift", `snapshot is ${source.source} @ ${source.sha.slice(0, 7)} (${source.fetched}); live is ${where.label}: ${details.length} change(s)`, details);
+  try {
+    data.updated = writeUpdatedCopy(live.raw, { repo: GREPTILE_REPO, ...prOf(false), source: where.source, sha: where.sha, committed: where.committed, fetched: new Date().toISOString() });
+  } catch (e) {
+    results.error("greptile-update", `could not write the cache copy; nothing written: ${/** @type {Error} */ (e).message}`);
+    return { data };
+  }
+  // The copy just written is used only when nothing sorts later by upstream commit date (a newer
+  // shipped copy, or a cache copy from a later commit that another update wrote first).
+  const now = loadGreptileRules({ warn: log });
+  data.inUse = now.source.path === data.updated;
+  if (!data.inUse) {
+    results.warn("greptile-update", `wrote ${data.updated} (${where.sha.slice(0, 7)}, committed ${where.committed}) but it is not the copy in use: ${describeRules(now.source)}, committed ${now.source.committed}, sorts later; nothing to do unless that copy is wrong`, details);
+    return { data };
+  }
+  results.pass("greptile-update", `updated: ${arrow}, ${changes.length} change(s)`, details);
   return { data };
 }

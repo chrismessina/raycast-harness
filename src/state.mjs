@@ -2,7 +2,8 @@
 //   repo state   → `git rev-parse --git-path rx` in the extension's repo (never in the payload,
 //                  never in the npm install): receipt.json, audit.json, stale baselines, rounds
 //   cross-repo   → $XDG_CACHE_HOME/raycast-harness (default ~/.cache/raycast-harness):
-//                  the sparse upstream checkout, the runtime shortcut table
+//                  the sparse upstream checkout, the runtime shortcut table, the Greptile rules
+//                  `rx greptile update` writes (greptile/rules/)
 
 import { mkdirSync, renameSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
@@ -77,4 +78,14 @@ export function cachePath(...segments) {
  */
 export function cachePathReadOnly(...segments) {
   return join(cacheBase(), ...segments);
+}
+
+/**
+ * Where `rx greptile update` keeps its copies of Greptile's review rules: `greptile/rules/` under
+ * the cross-repo cache, one directory per copy. Creates nothing: the rules lookup only reads, and
+ * `update` creates the directory when it writes.
+ * @param {...string} segments
+ */
+export function greptileRulesCachePath(...segments) {
+  return cachePathReadOnly("greptile", "rules", ...segments);
 }

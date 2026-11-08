@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { execFile } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { runCli } from "../src/cli.mjs";
-import { _setGhForTests } from "../src/commands/doctor.mjs";
+import { _setGhForTests, _setGreptileFetcherForTests } from "../src/commands/doctor.mjs";
 
 export const REPO = join(fileURLToPath(import.meta.url), "..", "..");
 export const BIN = join(REPO, "bin", "rx.mjs");
@@ -26,8 +26,8 @@ export async function withTempDir(fn) {
 }
 
 /**
- * withTempDir with XDG_CONFIG_HOME at <dir>/config and the doctor's gh probe stubbed (not logged
- * in; no network), both restored after.
+ * withTempDir with XDG_CONFIG_HOME at <dir>/config, the doctor's gh probe stubbed (not logged
+ * in; no network) and its greptile-rules fetcher stubbed offline, all restored after.
  * @template T
  * @param {(dir: string) => Promise<T> | T} fn
  * @returns {Promise<T>}
@@ -37,10 +37,13 @@ export async function withConfig(fn) {
     const saved = process.env.XDG_CONFIG_HOME;
     process.env.XDG_CONFIG_HOME = join(dir, "config");
     _setGhForTests(async () => ({ code: 1, stdout: "", stderr: "You are not logged into any GitHub hosts. To log in, run: gh auth login" }));
+    const offline = async () => { throw new Error("offline (test stub)"); };
+    _setGreptileFetcherForTests({ getJson: offline, getRaw: offline });
     try {
       return await fn(dir);
     } finally {
       _setGhForTests(null);
+      _setGreptileFetcherForTests(null);
       if (saved === undefined) delete process.env.XDG_CONFIG_HOME;
       else process.env.XDG_CONFIG_HOME = saved;
     }

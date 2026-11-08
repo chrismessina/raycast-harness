@@ -1,23 +1,37 @@
 // The Greptile rules no program decides (docs/commands.md §4.9: "one entry per … Greptile
-// judgment rule"). Greptile reviews every Store PR against the 52 rules in
-// `src/rules/greptile/config.json`; `rx preflight` covers the mechanical ones, and these are the
-// rest: an agent reads the branch diff for each and records pass / fail / n-a with evidence in
-// `rx audit record`. The list is checked against the snapshot at load, so a rule Raycast renames
-// or removes is an ERROR here, never a silently skipped entry. A Greptile finding at any of its
-// severities (`high` / `medium` / `low`) holds a Store PR, so every judgment rule is blocking.
+// judgment rule"). Greptile reviews every Store PR against the 58 rules in
+// `src/rules/greptile/config.json`; `rx preflight` covers the mechanical ones
+// (`GREPTILE_PREFLIGHT_RULES`), and the judgment ones are the rest: an agent reads the branch diff
+// for each and records pass / fail / n-a with evidence in `rx audit record`. The list is checked
+// against the snapshot at load, so a rule Raycast renames or removes is an ERROR here, never a
+// silently skipped entry. A Greptile finding at any of its severities (`high` / `medium` / `low`)
+// holds a Store PR, so every judgment rule is blocking.
+//
+// Every rule in the snapshot is classified: bound to preflight checks, listed as judgment, or
+// both. A rule is preflight-only ONLY when its checks cover the whole rule text; a check that
+// covers part of a rule (a heuristic, a fixed file list where the rule says "such as", a
+// presence check where the rule also asks for a judgment) leaves the rule a judgment rule too, so
+// its uncovered part still needs an audit entry. `unclassifiedGreptileRules()` names the ones that are neither, and the test suite fails on
+// any, so a rule Raycast adds upstream cannot pass an audit unread.
 //
 // The entry id in an `--entries` file is `greptile/<rule id>`; the result id is
 // `audit-greptile-<rule id>`.
+//
+// An audit is bound to the rules it was judged against: `rx audit record` stores
+// `greptileRules: { repo, sha, digest }` (greptileRulesStamp()), and `rx guard` / `rx audit show`
+// block on any difference from the rules in use now (greptileRulesProblem()), so a rule whose text
+// changed under the same id never reuses an audit recorded against the old text.
 
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { RxError } from "../errors.mjs";
+import { loadGreptileRules, rulesDigest } from "../greptile/rules.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 export const GREPTILE_CONFIG = join(HERE, "..", "rules", "greptile", "config.json");
 
-/** Greptile rule ids whose level in the plugin's rule map is (or includes) judgment. */
+/** Greptile rule ids that need an audit entry: judgment-only rules, and rules preflight covers only in part. */
 export const GREPTILE_JUDGMENT_RULES = Object.freeze([
   "changelog-entries",
   "supported-platforms",
@@ -55,30 +69,186 @@ export const GREPTILE_JUDGMENT_RULES = Object.freeze([
   "ai-skills",
   "ai-model-provider",
   "oauth-utils",
+  "action-title-case",
+  "extension-overlap",
+  "data-hooks-bugs",
+  "oauth-token-bugs",
+  // Preflight covers part of each of these (classification "both"; Wave 9 Codex finding 5).
+  "store-screenshots",
+  "unused-dependencies",
+  "eslint-flat-config",
+  "no-custom-localization",
+  "extension-categories",
+  "prettier-config",
+  "npm-lockfile-registry",
+  "generated-preference-argument-types",
+  "manifest-title-case",
+  "raycast-trash",
+  "favicon-utility",
+  "launch-command-api",
+  "no-agent-scaffolding",
+  "no-generated-files",
+  "no-dev-material",
 ]);
+
+/**
+ * Greptile rule ids `rx preflight` checks mechanically, each with the preflight result ids that
+ * cover it (`src/preflight/catalog.mjs`). A rule may also be a judgment rule when part of it needs
+ * reading.
+ */
+export const GREPTILE_PREFLIGHT_RULES = Object.freeze({
+  "generated-preference-argument-types": ["hand-typed-preferences"],
+  "changelog-entries": ["changelog-exists", "changelog-order", "changelog-placeholder", "changelog-updated"],
+  "store-screenshots": ["screenshots", "screenshot-count", "screenshot-format", "screenshot-size"],
+  "unused-dependencies": ["unused-dependencies"],
+  "eslint-flat-config": ["eslint-config"],
+  "no-custom-localization": ["localization"],
+  "prettier-config": ["prettierrc"],
+  "extension-categories": ["categories"],
+  "manifest-title-case": ["title-case"],
+  "native-fetch": ["native-fetch"],
+  "raycast-trash": ["trash"],
+  "supported-platforms": ["platforms"],
+  "platforms-field": ["platforms"],
+  "shortcut-platform-keys": ["shortcut-platform-case"],
+  "favicon-utility": ["favicon"],
+  "launch-command-api": ["launch-command"],
+  "preference-types": ["preference-type"],
+  "no-agent-scaffolding": ["agent-scaffolding"],
+  "no-nested-review-config": ["nested-review-config"],
+  "readme-user-facing": ["readme-assets", "readme-links"],
+  "no-generated-files": ["generated-files"],
+  "no-dev-material": ["dev-material"],
+  "npm-lockfile-registry": ["lockfile", "npm-registry"],
+  "backward-compatible-updates": ["command-renamed"],
+  "manifest-basics": ["icon-size"],
+});
 
 export const GREPTILE_PREFIX = "greptile/";
 
+/** Invalid-cache warnings already printed by this process: each is printed once. */
+const warned = new Set();
+
+/** The rules in use, read fresh (a cache copy can change between calls); each warning once. */
+function loadFresh() {
+  return loadGreptileRules({
+    warn: (m) => {
+      if (warned.has(m)) return;
+      warned.add(m);
+      process.stderr.write(`${m}\n`);
+    },
+  });
+}
+
 /**
- * The judgment rules, each verified to exist in the core snapshot.
- * @param {string} [configPath] test override
- * @returns {{ id: string, entryId: string, severity: "block", title: string }[]}
+ * The snapshot `rx audit record` pinned for the length of one recording, else null.
+ * @type {import("../greptile/rules.mjs").LoadedRules | null}
  */
-export function greptileJudgmentRules(configPath = GREPTILE_CONFIG) {
+let pinned = null;
+
+/** The pinned snapshot during a recording, else the rules in use read fresh. */
+function rulesInUse() {
+  return pinned ?? loadFresh();
+}
+
+/**
+ * Run `fn` with ONE snapshot of the rules in use (W9 round 2 finding A): applicability, the known
+ * entry ids and the recorded stamp all read this snapshot, never a copy an `rx greptile update`
+ * in another process wrote mid-recording. The pin is released when `fn` settles.
+ * @template T @param {(snapshot: import("../greptile/rules.mjs").LoadedRules) => Promise<T>} fn
+ * @returns {Promise<T>}
+ */
+export async function withGreptileRulesSnapshot(fn) {
+  const snapshot = loadFresh();
+  pinned = snapshot;
+  try {
+    return await fn(snapshot);
+  } finally {
+    pinned = null;
+  }
+}
+
+/**
+ * A rule set's identity: provenance and digest.
+ * @param {import("../greptile/rules.mjs").LoadedRules} r
+ * @returns {{ repo: string, sha: string, digest: string }}
+ */
+export function stampOf(r) {
+  return { repo: r.source.repo, sha: r.source.sha, digest: rulesDigest(r.rules) };
+}
+
+/**
+ * What `rx audit record` stores as `greptileRules`: the rules in use, by provenance and digest.
+ * @returns {{ repo: string, sha: string, digest: string }}
+ */
+export function greptileRulesStamp() {
+  return stampOf(rulesInUse());
+}
+
+/** The identity of the rules in use now, read fresh even while a recording holds its snapshot. */
+export function freshGreptileRulesStamp() {
+  return stampOf(loadFresh());
+}
+
+/**
+ * The guard's sentence when an audit's `greptileRules` (absent on an audit written before this
+ * field existed) differs from the rules in use now, else null.
+ * @param {unknown} recorded the audit's greptileRules @param {{ repo: string, sha: string, digest: string }} current
+ * @returns {string | null}
+ */
+export function greptileRulesProblem(recorded, current) {
+  const r = /** @type {any} */ (recorded);
+  if (r && r.repo === current.repo && r.sha === current.sha && r.digest === current.digest) return null;
+  const old = typeof r?.sha === "string" ? r.sha.slice(0, 7) : "unrecorded";
+  return `the Greptile rules changed since the audit was recorded (${old} → ${current.sha.slice(0, 7)}); run rx audit record again`;
+}
+
+/**
+ * The rule set at `configPath` (tests and shipped-copy checks), else the Greptile rules in use
+ * (`loadGreptileRules()`: an `rx greptile update` cache copy or the shipped one).
+ * @param {string} [configPath]
+ * @returns {Map<string, { id: string, rule?: string }>}
+ */
+function snapshotRules(configPath) {
   /** @type {{ rules?: { id: string, rule?: string }[] }} */
   let config;
   try {
-    config = JSON.parse(readFileSync(configPath, "utf8"));
+    config = configPath ? JSON.parse(readFileSync(configPath, "utf8")) : rulesInUse().rules.config;
   } catch (e) {
-    throw new RxError(`cannot read the Greptile snapshot ${configPath}: ${/** @type {Error} */ (e).message}`, { id: "input" });
+    throw new RxError(`cannot read the Greptile snapshot ${configPath ?? "the Greptile rules in use"}: ${/** @type {Error} */ (e).message}`, { id: "input" });
   }
-  const byId = new Map((config.rules ?? []).map((r) => [r.id, r]));
+  return new Map((config.rules ?? []).map((r) => [r.id, r]));
+}
+
+/**
+ * The judgment rules, each verified to exist in the core snapshot.
+ * @param {string} [configPath] a rule file to read instead of the rules in use
+ * @returns {{ id: string, entryId: string, severity: "block", title: string }[]}
+ */
+export function greptileJudgmentRules(configPath) {
+  const byId = snapshotRules(configPath);
   const missing = GREPTILE_JUDGMENT_RULES.filter((id) => !byId.has(id));
-  if (missing.length) throw new RxError(`Greptile judgment rule(s) absent from the snapshot ${configPath}: ${missing.join(", ")}; run rx greptile drift`, { id: "input" });
-  return GREPTILE_JUDGMENT_RULES.map((id) => ({
+  if (missing.length) throw new RxError(`Greptile judgment rule(s) absent from the snapshot ${configPath ?? "the Greptile rules in use"}: ${missing.join(", ")}; run rx greptile outdated`, { id: "input" });
+  // A rule in the rules in use that this release has not classified (an `rx greptile update` copy
+  // can be ahead of rx) is a required judgment entry too, so a new upstream rule never passes an
+  // audit silently.
+  const classified = new Set([...GREPTILE_JUDGMENT_RULES, ...Object.keys(GREPTILE_PREFLIGHT_RULES)]);
+  const unclassified = [...byId.keys()].filter((id) => !classified.has(id));
+  return [...GREPTILE_JUDGMENT_RULES, ...unclassified].map((id) => ({
     id,
     entryId: `${GREPTILE_PREFIX}${id}`,
     severity: "block",
     title: (byId.get(id)?.rule ?? id).split("\n")[0].trim() || id,
   }));
+}
+
+/**
+ * Snapshot rule ids that are neither bound to a preflight check nor listed as judgment rules, in
+ * snapshot order. Empty means every rule Greptile can raise is handled somewhere.
+ * @param {string} [configPath] a rule file to read instead of the rules in use
+ * @returns {string[]}
+ */
+export function unclassifiedGreptileRules(configPath) {
+  const judgment = new Set(GREPTILE_JUDGMENT_RULES);
+  return [...snapshotRules(configPath).keys()].filter((id) => !judgment.has(id) && !Object.hasOwn(GREPTILE_PREFLIGHT_RULES, id));
 }

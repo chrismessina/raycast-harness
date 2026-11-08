@@ -15,6 +15,7 @@ import {
   readLockfile, readPublished,
 } from "./context.mjs";
 import { gitIgnoredSet, gitignoreMatcher } from "./gitignore.mjs";
+import { listPayload } from "../payload.mjs";
 import { extractEmbeds, isExternal, targetPath } from "./markdown.mjs";
 
 /** The N/A message when a comparison check ran without --published (a missing flag, not a fact about publication). */
@@ -207,12 +208,20 @@ export async function runPreflight({ root, publishedDir, preset }) {
   }
   c.pass("categories", `categories: ${cats.join(", ")}`);
 
-  // platforms — supported-platforms
+  // platforms — supported-platforms (the values) and platforms-field (the field is declared)
   if (Array.isArray(pkg.platforms)) {
     const bad = pkg.platforms.filter((/** @type {string} */ p) => !STORE.platforms.includes(p));
     if (bad.length) c.fail("platforms", `platforms may only contain macOS and Windows; found ${bad.join(", ")}`);
     c.pass("platforms", `platforms: ${pkg.platforms.join(", ")}`);
-  } else c.pass("platforms", "no platforms field (defaults to macOS)");
+  } else {
+    const missing = 'declare "platforms" in package.json: without it the merge workflow writes ["macOS"], so a cross-platform extension must list both';
+    // Missing on main too is a pre-existing note in Greptile's rule, not a blocker.
+    /** @type {any} */
+    let pub = null;
+    if (publishedDir !== null) try { pub = JSON.parse(read(join(publishedDir, "package.json")) ?? "null"); } catch { /* unreadable: no note, so FAIL */ }
+    if (isObj(pub) && pub.platforms === undefined) c.warn("platforms", `${missing} (also missing in the published copy)`);
+    else c.fail("platforms", missing);
+  }
 
   // preference-type — preference-types (there is no "number" type)
   const prefs = allPreferences(pkg);
@@ -297,14 +306,21 @@ export async function runPreflight({ root, publishedDir, preset }) {
   c.pass("lockfile", "package-lock.json is the only lock file");
   npmRegistry(root, c);
 
-  // screenshots — store-screenshots (presence); screenshot-count / -format / -size are new (§4.1)
+  // screenshots — store-screenshots (presence; Greptile's rule names view AND menu-bar commands);
+  // screenshot-count / -format / -size are new (§4.1)
   const metaDir = join(root, "metadata");
   const metaEntries = existsSync(metaDir) ? readdirSync(metaDir) : null;
   const pngs = (metaEntries ?? []).filter((f) => f.toLowerCase().endsWith(".png"));
-  if (commands.some((cmd) => cmd.mode === "view")) {
-    if (!pngs.length) c.fail("screenshots", "a view command needs at least one screenshot in metadata/");
+  if (commands.some((cmd) => cmd.mode === "view" || cmd.mode === "menu-bar")) {
+    // Greptile's rule asks screenshots of NEW view / menu-bar extensions (W9 round 2 finding C): a
+    // published extension whose only such commands are menu-bar ones is a WARN, a view one a FAIL.
+    const menuBarOnly = !commands.some((cmd) => cmd.mode === "view");
+    // …unless the published copy had screenshots and this change removes them all: that stays a FAIL.
+    const publishedShots = publishedDir !== null && existsSync(join(publishedDir, "metadata")) && readdirSync(join(publishedDir, "metadata")).some((f) => f.toLowerCase().endsWith(".png"));
+    if (!pngs.length && menuBarOnly && publishedDir !== null && !publishedShots) c.warn("screenshots", "a menu-bar command has no screenshot in metadata/; the Store asks screenshots of new extensions, so this published one is not blocked, but consider adding one");
+    else if (!pngs.length) c.fail("screenshots", "a view or menu-bar command needs at least one screenshot in metadata/");
     c.pass("screenshots", `${pngs.length} screenshot${pngs.length === 1 ? "" : "s"} in metadata/`);
-  } else c.na("screenshots", "no view command; the Store needs no screenshots");
+  } else c.na("screenshots", "no view or menu-bar command; the Store needs no screenshots");
   if (metaEntries === null) for (const id of ["screenshot-count", "screenshot-format", "screenshot-size"]) c.na(id, "metadata/ absent");
   else {
     if (pngs.length > STORE.screenshot.max) c.fail("screenshot-count", `${pngs.length} screenshots in metadata/; the Store accepts at most ${STORE.screenshot.max}`);
@@ -335,6 +351,13 @@ export async function runPreflight({ root, publishedDir, preset }) {
     return !new RegExp(`(from\\s*|require\\(\\s*|import\\(\\s*|import\\s+)["'\`]${esc}(/[^"'\`]*)?["'\`]`).test(code);
   });
   if (unused.length) c.fail("unused-dependencies", `dependencies no file under src/ imports: ${unused.join(", ")}`);
+  // The reverse (Greptile's rule): a package runtime code imports, listed only in devDependencies.
+  // A text heuristic (an `import("x")` type or an import inside a string matches too; W9 round 2
+  // finding B), so WARN, never FAIL; the Greptile judgment entry for unused-dependencies covers the rest.
+  const runtime = runtimeImports(sources);
+  const devOnly = Object.keys(pkg.devDependencies ?? {}).filter((d) => !(d in (pkg.dependencies ?? {})) && !d.startsWith("@types/"));
+  const misplaced = devOnly.filter((d) => runtime.has(d));
+  if (misplaced.length) c.warn("unused-dependencies", `src/ appears to import these devDependencies-only packages at runtime (a text heuristic): ${misplaced.join(", ")}; move a real runtime import to dependencies, and write a type-only use as import type`, misplaced.map((d) => ({ file: "package.json", text: `${d}: imported by ${runtime.get(d)}` })));
   if (!deps.length) c.na("unused-dependencies", "no dependencies declared");
   else c.pass("unused-dependencies", `${deps.length} dependenc${deps.length === 1 ? "y is" : "ies are"} imported`);
 
@@ -370,8 +393,8 @@ export async function runPreflight({ root, publishedDir, preset }) {
   if (!grepSources(sources, /\bshortcut\s*[=:]/).length && !caseHits.length) c.na("shortcut-platform-case", "no shortcuts declared in src/");
   else c.pass("shortcut-platform-case", "platform keys are spelled macOS and Windows");
 
-  // What ships (agent-scaffolding, dev-material, generated-files: preset-class)
-  if (enabled("agent-scaffolding") || enabled("dev-material") || enabled("generated-files")) await fileChecks(root, publishedDir, c, enabled, keep);
+  // What ships (nested-review-config: core; agent-scaffolding, dev-material, generated-files: preset-class)
+  await fileChecks(root, publishedDir, c, enabled, keep);
 
   // warn-only heuristics
   /** @type {[string, RegExp, string][]} */
@@ -586,7 +609,16 @@ function sortKeys(v) {
 async function fileChecks(root, publishedDir, c, enabled, keep) {
   const G = STORE.greptile;
   const gitignore = read(join(root, ".gitignore")) ?? "";
-  const nestedPaths = G.nestedGreptile;
+  // no-nested-review-config: a `.greptile` or `greptile.json` (store.json names) at ANY depth of
+  // what `ray publish` copies (src/payload.mjs), outermost match only.
+  const nestedNames = new Set(G.nestedGreptile);
+  /** @type {string[]} */
+  const nestedPaths = [];
+  for (const e of listPayload(root)) {
+    if (!nestedNames.has(e.path.split("/").pop() ?? "")) continue;
+    if (nestedPaths.some((p) => e.path.startsWith(`${p}/`))) continue;
+    nestedPaths.push(e.path);
+  }
   const scaffoldPaths = [...G.agentScaffolding, ...readdirSync(root).filter((f) => /^CONTEXT.*\.md$/i.test(f))].filter((p) => !keep.includes(p));
   const devMaterial = G.devMaterial.filter((/** @type {string} */ p) => !keep.includes(p));
   const strayPaths = G.strays;
@@ -611,9 +643,11 @@ async function fileChecks(root, publishedDir, c, enabled, keep) {
   const scope = publishedDir !== null ? "new or changed versus the published copy" : "present (pass --published to see which this PR changes)";
   const details = (/** @type {string[]} */ paths) => paths.map((p) => ({ file: p, text: p }));
 
+  // no-nested-review-config (high): core, so no preset can exempt or cap it
+  const nestedGreptile = nestedPaths.filter(flagged);
+  if (nestedGreptile.length) c.fail("nested-review-config", `a nested Greptile config overrides Raycast's repo rules: ${nestedGreptile.join(", ")}`, details(nestedGreptile));
+  c.pass("nested-review-config", "no nested Greptile config would ship");
   if (enabled("agent-scaffolding")) {
-    const nestedGreptile = nestedPaths.filter(flagged);
-    if (nestedGreptile.length) c.fail("agent-scaffolding", `a nested Greptile config overrides Raycast's repo rules: ${nestedGreptile.join(", ")}`, details(nestedGreptile));
     const scaffolding = scaffoldPaths.filter(flagged);
     if (scaffolding.length) c.warn("agent-scaffolding", `agent or planning files ${scope}: ${scaffolding.join(", ")}`, details(scaffolding));
     c.pass("agent-scaffolding", keep.length ? `no agent or planning files would ship (kept on purpose: ${keep.join(", ")})` : "no agent or planning files would ship");
@@ -630,6 +664,48 @@ async function fileChecks(root, publishedDir, c, enabled, keep) {
     if (strays.length) c.warn("generated-files", `generated files would ship: ${strays.join(", ")}`, details(strays));
     c.pass("generated-files", "no build output or stray files would ship");
   }
+}
+
+/**
+ * Packages runtime code under src/ imports, each with the first file that does: value imports,
+ * side-effect imports, `export … from`, `require()` and `import()`. Type-only imports (`import
+ * type`, `export type`, or braces whose every specifier is `type X`) and test files
+ * (`*.test.*`, `*.spec.*`, `__tests__/`) do not count. Relative and `node:` specifiers are skipped;
+ * a deep import (`pkg/sub`, `@scope/pkg/sub`) counts as its package.
+ * @param {import("./context.mjs").Source[]} sources
+ * @returns {Map<string, string>}
+ */
+function runtimeImports(sources) {
+  /** @type {Map<string, string>} */
+  const out = new Map();
+  const pkgOf = (/** @type {string} */ spec) => {
+    if (spec.startsWith(".") || spec.startsWith("/") || spec.startsWith("node:")) return null;
+    const parts = spec.split("/");
+    return spec.startsWith("@") ? parts.slice(0, 2).join("/") : parts[0];
+  };
+  const add = (/** @type {string} */ spec, /** @type {string} */ file) => {
+    const p = pkgOf(spec);
+    if (p && !out.has(p)) out.set(p, file);
+  };
+  const Q = "[\"'`]";
+  const fromRe = new RegExp(`\\b(import|export)\\s+(type\\s+)?([^;"'\`]*?)\\bfrom\\s*${Q}([^"'\`]+)${Q}`, "g");
+  const bareRe = new RegExp(`\\bimport\\s*${Q}([^"'\`]+)${Q}`, "g");
+  const callRe = new RegExp(`\\b(require|import)\\(\\s*${Q}([^"'\`]+)${Q}`, "g");
+  for (const s of sources) {
+    if (/(^|\/)__tests__\/|\.(test|spec)\.[cm]?[jt]sx?$/.test(s.rel)) continue;
+    for (const m of s.code.matchAll(fromRe)) {
+      if (m[2]) continue;
+      const braces = /^\s*\{([^}]*)\}\s*$/.exec(m[3]);
+      if (braces) {
+        const specs = braces[1].split(",").map((x) => x.trim()).filter(Boolean);
+        if (specs.length && specs.every((x) => /^type\s/.test(x))) continue;
+      }
+      add(m[4], s.rel);
+    }
+    for (const m of s.code.matchAll(bareRe)) add(m[1], s.rel);
+    for (const m of s.code.matchAll(callRe)) add(m[2], s.rel);
+  }
+  return out;
 }
 
 /** @param {{ where: string, p: any }[]} prefs @param {"description" | "label"} field @param {number} max @param {string} id @param {Collector} c */

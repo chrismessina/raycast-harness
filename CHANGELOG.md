@@ -2,6 +2,37 @@
 
 ## Unreleased
 
+- `rx audit record` judges against one snapshot of the Greptile rules taken at the start, and
+  writes nothing (`ERROR audit-greptile-rules`) if an `rx greptile update` lands mid-recording.
+  `update --dest` restores every file it attempted, including one whose write failed after
+  truncating it, verifies each restored file byte for byte, and accepts an older checkout whose
+  `SOURCE.json` has no `committed`. In preflight, a package `src/` appears to import at runtime
+  but lists only in `devDependencies` is a heuristic WARN, and a published menu-bar-only
+  extension without screenshots is a WARN unless its published copy had screenshots and this
+  change removes them all.
+- An audit is bound to the Greptile rules it judged: `rx audit record` stores
+  `greptileRules { repo, sha, digest }`, and `rx guard` and `rx audit show` block when the rules
+  in use differ, so a rule whose text changed cannot reuse an old judgment. Rule copies are
+  ordered by upstream commit date (`SOURCE.json` `committed`), must name `raycast/extensions`
+  and pass a full schema check; `rx greptile update` WARNs when its copy is not the one in use,
+  and `update --dest` writes all or nothing. Preflight `screenshots` covers menu-bar commands,
+  `unused-dependencies` FAILs a runtime import of a package listed only in `devDependencies`, and
+  `nested-review-config` checks every depth of the payload. Rules preflight covers only in part
+  are judgment rules too: the audit requires 55 Greptile judgment entries.
+- Greptile rules stay current. `rx greptile outdated` (formerly `drift`) says whether the rules
+  in use match the last commit on `raycast/extensions` main that touched `.greptile/`, usually in
+  one request. `rx greptile update` fetches the live rules, validates them and writes them
+  atomically to `~/.cache/raycast-harness/greptile/rules/`; every reader uses the newest valid
+  copy that is not older than the one shipped with rx. `update --dest <checkout>` refreshes a
+  maintainer checkout's shipped copy. `rx doctor` adds a report-only `greptile-rules` check: PASS
+  current, WARN out of date, or WARN could not check.
+- The shipped Greptile rules are refreshed to `raycast/extensions` main `b6bdcb1` (58 rules: 6
+  new, 19 changed). New core preflight check `nested-review-config` (Greptile
+  `no-nested-review-config`, high), split out of the preset-class `agent-scaffolding`, which now
+  only WARNs. `platforms` FAILs a missing field (`platforms-field`), or WARNs when the published
+  copy lacks it too. Four new audit judgment rules (40 in total). Every shipped rule is bound to a
+  preflight check or listed as judgment (a test enforces it), and a rule in the rules in use that
+  this release has not classified is a required, blocking audit entry.
 - `--format md` escapes block syntax and GitHub-flavored autolinks as well as inline syntax, so
   a detail such as `+ added.d.ts`, `- removed.d.ts`, `# note`, `1. item`, `&copy;`, a bare URL,
   a `www.` address or an email address renders as literal text. `rx publication record` needs no

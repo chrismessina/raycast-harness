@@ -5,12 +5,15 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { GREPTILE_JUDGMENT_RULES, greptileJudgmentRules } from "../src/audit/greptile.mjs";
+import { GREPTILE_CONFIG, GREPTILE_JUDGMENT_RULES, GREPTILE_PREFLIGHT_RULES, greptileJudgmentRules, greptileRulesStamp, unclassifiedGreptileRules } from "../src/audit/greptile.mjs";
+import { CHECK_IDS } from "../src/preflight/catalog.mjs";
 import { dispositionKey, parseEntries } from "../src/audit/entries.mjs";
 import { _setRuntimePaths } from "../src/commands/shortcuts.mjs";
-import { REPO, rx } from "./helpers.mjs";
+import { _setBeforeWriteHookForTests } from "../src/commands/audit.mjs";
+import { SHIPPED_DIR } from "../src/greptile/rules.mjs";
+import { REPO, rx, withTempDir } from "./helpers.mjs";
 import { auditRecord, buildGated, byId, fullEntries, gates, stateDir, validPng, withGatedEnv, writeAttested, writeEntries } from "./gates-helpers.mjs";
 import { commit } from "./upstream-fixtures.mjs";
 
@@ -41,7 +44,7 @@ test("audit record: a complete entries file against a clean receipt → PASS cov
     assert.equal(r.code, 0, r.stdout + r.stderr);
     const by = byId(r);
     assert.equal(by["audit-coverage"].verdict, "PASS");
-    assert.match(by["audit-coverage"].message, /2 preset, 36 Greptile judgment/);
+    assert.match(by["audit-coverage"].message, /2 preset, 55 Greptile judgment/);
     assert.equal(by["audit-dispositions"].verdict, "N/A");
     assert.equal(by["audit-verification"].verdict, "N/A");
     assert.equal(by["shortcut-runtime-table"].verdict, "N/A", "the fixture declares no shortcuts");
@@ -58,7 +61,8 @@ test("audit record: a complete entries file against a clean receipt → PASS cov
     const audit = JSON.parse(readFileSync(await auditPath(root), "utf8"));
     assert.equal(audit.fingerprint, receipt.fingerprints.combined);
     assert.deepEqual(audit.blocking, []);
-    assert.equal(audit.entries.length, 38);
+    assert.equal(audit.entries.length, 57);
+    assert.deepEqual(audit.greptileRules, greptileRulesStamp(), "bound to the Greptile rules in use (W9 finding 1)");
     assert.ok(Array.isArray(audit.evidence.shortcuts) && audit.evidence.shortcuts.length === 3);
     assert.ok(audit.evidence.png.length >= 1);
 
@@ -318,7 +322,7 @@ test("audit show: N/A when nothing is recorded; WARN when the audit is tied to a
     const s = await rx(["audit", "show", "--root", root, "--json"]);
     assert.equal(byId(s)["audit-show"].verdict, "WARN");
     assert.equal(byId(s)["audit-show"].message, "audit.json was recorded against an earlier receipt.json; run rx audit record again");
-    assert.equal(s.json.data.audit.entries.length, 38);
+    assert.equal(s.json.data.audit.entries.length, 57);
   });
 });
 
@@ -338,12 +342,54 @@ test("entries parser: three shapes, exact keys, no duplicate rule ids", () => {
   assert.throws(() => parseEntries([{ id: "a", scope: "", result: "pass", evidence: "e" }]), /non-empty "scope"/);
 });
 
-test("greptile judgment rules: 36 ids, every one present in the core snapshot, all blocking", () => {
-  const rules = greptileJudgmentRules();
-  assert.equal(rules.length, 36);
+test("greptile coverage fails closed: every rule in the shipped snapshot is bound to a preflight check or listed as judgment", async () => {
+  assert.deepEqual(unclassifiedGreptileRules(GREPTILE_CONFIG), [], "classify each new upstream rule in src/audit/greptile.mjs before shipping the snapshot");
+  const snapshot = new Set(JSON.parse(readFileSync(GREPTILE_CONFIG, "utf8")).rules.map((/** @type {{ id: string }} */ r) => r.id));
+  for (const [rule, checks] of Object.entries(GREPTILE_PREFLIGHT_RULES)) {
+    assert.ok(snapshot.has(rule), `preflight binding for ${rule}, which the snapshot does not have`);
+    assert.ok(checks.length > 0 && checks.every((id) => CHECK_IDS.includes(id)), `${rule} binds an unknown preflight check: ${checks.join(", ")}`);
+  }
+  // A snapshot carrying a rule nobody classified is named, not skipped.
+  await withTempDir((dir) => {
+    const config = JSON.parse(readFileSync(GREPTILE_CONFIG, "utf8"));
+    config.rules.push({ id: "brand-new-upstream-rule", severity: "medium", scope: ["extensions/**"], rule: "New" });
+    writeFileSync(join(dir, "config.json"), JSON.stringify(config));
+    assert.deepEqual(unclassifiedGreptileRules(join(dir, "config.json")), ["brand-new-upstream-rule"]);
+  });
+});
+
+test("greptile judgment rules: a rule rx has not classified (an rx greptile update copy ahead of this release) is a required, blocking audit entry", async () => {
+  await withTempDir((dir) => {
+    const config = JSON.parse(readFileSync(GREPTILE_CONFIG, "utf8"));
+    config.rules.push({ id: "brand-new-upstream-rule", severity: "medium", scope: ["extensions/**"], rule: "New rule text\nsecond line" });
+    writeFileSync(join(dir, "config.json"), JSON.stringify(config));
+    const rules = greptileJudgmentRules(join(dir, "config.json"));
+    const added = rules.find((r) => r.id === "brand-new-upstream-rule");
+    assert.ok(added, "an unclassified rule must not pass an audit silently");
+    assert.deepEqual(added, { id: "brand-new-upstream-rule", entryId: "greptile/brand-new-upstream-rule", severity: "block", title: "New rule text" });
+    assert.equal(rules.length, GREPTILE_JUDGMENT_RULES.length + 1);
+  });
+});
+
+test("greptile judgment rules: 55 ids, every one present in the core snapshot, all blocking", () => {
+  const rules = greptileJudgmentRules(GREPTILE_CONFIG);
+  assert.equal(rules.length, 55);
   assert.deepEqual(rules.map((r) => r.id), [...GREPTILE_JUDGMENT_RULES]);
   assert.ok(rules.every((r) => r.severity === "block" && r.entryId === `greptile/${r.id}` && r.title.length > 0));
   assert.throws(() => greptileJudgmentRules(join(REPO, "test", "fixtures", "gates", "preset.json")), /absent from the snapshot/);
+});
+
+test("greptile classification (W9 finding 5): a rule preflight covers only in part is judgment too; preflight-only is reserved for whole-rule coverage", () => {
+  const judgment = new Set(GREPTILE_JUDGMENT_RULES);
+  const preflightRules = Object.keys(GREPTILE_PREFLIGHT_RULES);
+  for (const id of ["store-screenshots", "unused-dependencies", "eslint-flat-config", "no-custom-localization", "extension-categories", "prettier-config", "npm-lockfile-registry"]) {
+    assert.ok(judgment.has(id) && preflightRules.includes(id), `${id} is classified both (preflight covers part of it)`);
+  }
+  const preflightOnly = preflightRules.filter((id) => !judgment.has(id));
+  assert.deepEqual(preflightOnly.sort(), ["native-fetch", "no-nested-review-config", "platforms-field"], "re-read the rule text before adding a preflight-only rule");
+  assert.equal(preflightRules.filter((id) => judgment.has(id)).length, 22);
+  assert.equal(judgment.size, 55);
+  assert.equal(preflightRules.length, 25);
 });
 
 // ---- Codex Wave 3 review -------------------------------------------------------------------
@@ -484,5 +530,40 @@ test("audit record: removing the previous audit is announced, on a bad input and
     const bad = await rx(["audit", "record", "--root", root, "--json"]);
     assert.equal(bad.code, 2);
     assert.match(bad.stderr, /audit: removed the previous audit at .*audit\.json \(the arguments did not parse\); run rx audit record again/);
+  });
+});
+
+// ---- W9 round 2 finding A: one rules snapshot per recording ----------------------------------
+
+test("audit record (W9 round 2 finding A): the Greptile rules change mid-recording → ERROR audit-greptile-rules, nothing written", async () => {
+  await withGatedEnv(async (dir) => {
+    const { root } = await buildGated(dir);
+    await gates(root);
+    const shipped = JSON.parse(readFileSync(join(SHIPPED_DIR, "SOURCE.json"), "utf8")).sha.slice(0, 7);
+    // Another process finishes `rx greptile update` after the entries were judged: same ids, one
+    // rule's text changed, from a later upstream commit (so it becomes the copy in use).
+    _setBeforeWriteHookForTests(() => {
+      const copy = join(dir, "cache", "raycast-harness", "greptile", "rules", "copy-ccccccc");
+      mkdirSync(copy, { recursive: true });
+      for (const f of ["files.json", "rules.md"]) writeFileSync(join(copy, f), readFileSync(join(SHIPPED_DIR, f), "utf8"));
+      const config = JSON.parse(readFileSync(join(SHIPPED_DIR, "config.json"), "utf8"));
+      config.rules.find((/** @type {any} */ x) => x.id === "no-silent-failure").rule += "\n\nAlso flag: a requirement the audit never read.";
+      writeFileSync(join(copy, "config.json"), JSON.stringify(config));
+      writeFileSync(join(copy, "SOURCE.json"), JSON.stringify({ repo: "raycast/extensions", source: "main", sha: "c".repeat(40), committed: "2026-11-05T00:00:00Z", fetched: "2026-11-05T00:00:01.000Z" }));
+    });
+    try {
+      const r = await auditRecord(root, writeEntries(dir, fullEntries()));
+      assert.equal(r.code, 2, r.stdout);
+      assert.equal(byId(r)["audit-greptile-rules"].verdict, "ERROR");
+      assert.equal(byId(r)["audit-greptile-rules"].message, `the Greptile rules changed while the audit was being recorded (${shipped} → ccccccc); run rx audit record again`);
+      assert.equal(r.json.data.written, false);
+      assert.ok(!existsSync(await auditPath(root)), "no audit.json carrying either stamp");
+    } finally {
+      _setBeforeWriteHookForTests(null);
+    }
+    // Recorded again against the new rules: written, stamped with them.
+    const again = await auditRecord(root, writeEntries(dir, fullEntries()));
+    assert.equal(again.code, 0, again.stdout);
+    assert.equal(JSON.parse(readFileSync(await auditPath(root), "utf8")).greptileRules.sha, "c".repeat(40));
   });
 });
