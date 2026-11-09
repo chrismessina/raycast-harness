@@ -7,7 +7,7 @@
   `rx holdout`, and `holdout-tracked` names its fix (`git rm --cached <path>` and list it in the
   extension's `.gitignore`). `rx stale --preset` (and `rx gates`, which now passes its preset to
   stale) classifies a published file the preset's `holdout.localOnly` lists and the local tree
-  lacks as `REMOVE` (`stale-remove`, WARN) instead of the `ONLY-PUB` FAIL; `rx audit record`
+  lacks as `REMOVE` (`stale-remove`, WARN) instead of the `ONLY-PUB` FAIL. `rx audit record`
   accepts the disposition `remove-published` (`{ path, localHash: "absent", baseline }`) for those
   rows only, and `rx guard` recomputes the same rule. `rx pr files` reports each file's GitHub
   status (`data.files: [{ path, status, previous }]`, the path list kept as `data.paths`), and
@@ -31,11 +31,11 @@
   differences stay explicit options (only the dispatcher logs an unexpected error's stack and
   contains a failure to record an ERROR). No output, verdict or exit code changes.
 - `rx gates` stamps the receipt with exactly the Greptile rules snapshot its `greptile-rules`
-  step reported, and a final check, `gates-rules-changed`, run immediately before the receipt is
-  written, FAILs with no receipt when another `rx greptile update` installed a copy while gates
+  step reported. A final check, `gates-rules-changed`, runs immediately before the receipt is
+  written and FAILs with no receipt when another `rx greptile update` installed a copy while gates
   ran. The step has a 30-second deadline: when it expires gates WARNs, installs nothing, kills the
   pending `gh` child (the 1Password `op plugin run` fallback included) and continues on the copy in
-  use; any request still in flight when the step settles, for any reason, is cancelled too. The process runner and GitHub transport accept an optional AbortSignal for this. When the
+  use. Any request still in flight when the step settles, for any reason, is canceled too. The process runner and GitHub transport accept an optional AbortSignal for this. When the
   receipt's rules are not the rules in use, `rx guard` and `rx audit show` prescribe "run rx gates,
   then rx audit record".
 - `rx gates` keeps the Greptile rules current as its first step, `greptile-rules`, with the same
@@ -48,8 +48,8 @@
   writes nothing (`ERROR audit-greptile-rules`) if an `rx greptile update` lands mid-recording.
   `update --dest` restores every file it attempted, including one whose write failed after
   truncating it, verifies each restored file byte for byte, and accepts an older checkout whose
-  `SOURCE.json` has no `committed`. In preflight, a package `src/` appears to import at runtime
-  but lists only in `devDependencies` is a heuristic WARN, and a published menu-bar-only
+  `SOURCE.json` has no `committed`. In preflight, a package that `src/` appears to import at runtime
+  but that is listed only in `devDependencies` is a heuristic WARN, and a published menu-bar-only
   extension without screenshots is a WARN unless its published copy had screenshots and this
   change removes them all.
 - An audit is bound to the Greptile rules it judged: `rx audit record` stores
@@ -59,7 +59,7 @@
   and pass a full schema check; `rx greptile update` WARNs when its copy is not the one in use,
   and `update --dest` writes all or nothing. Preflight `screenshots` covers menu-bar commands,
   `unused-dependencies` FAILs a runtime import of a package listed only in `devDependencies`, and
-  `nested-review-config` checks every depth of the payload. Rules preflight covers only in part
+  `nested-review-config` checks every depth of the payload. Rules that preflight covers only in part
   are judgment rules too: the audit requires 55 Greptile judgment entries.
 - Greptile rules stay current. `rx greptile outdated` (formerly `drift`) says whether the rules
   in use match the last commit on `raycast/extensions` main that touched `.greptile/`, usually in
@@ -217,7 +217,7 @@
   the `rx gates` attempt they were made for. Both carry an attested `subject` (the real path
   of the root and of the git common directory), and every `rx gates` attempt, failed or
   stopped on its arguments included, first rotates a per-root generation kept outside the
-  repository under `$XDG_CONFIG_HOME/raycast-harness/generations/`; the receipt carries it
+  repository under `$XDG_CONFIG_HOME/raycast-harness/generations/`. The receipt carries it
   and the audit records the receipt's generation and MAC. The guard blocks a receipt copied
   from another checkout, one restored after a later gates attempt, and an audit recorded
   against a superseded receipt. The Bash state rule collapses `/./` and repeated `/`, and
