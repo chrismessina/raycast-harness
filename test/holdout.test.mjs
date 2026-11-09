@@ -5,6 +5,8 @@ import { cpSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, re
 import { join } from "node:path";
 import { DEFAULT_LOCAL_ONLY, expandForKeep, fingerprint, keepPathsFor, readPresetFields } from "../src/commands/holdout.mjs";
 import { REPO, fakeExtension, rx, withTempDir } from "./helpers.mjs";
+import { computeFingerprints } from "../src/fingerprint.mjs";
+import { listPayload } from "../src/payload.mjs";
 
 const FIXTURE = join(REPO, "test", "fixtures", "holdout", "basic");
 
@@ -399,5 +401,59 @@ test("arguments: out needs --preset, in takes none, an unknown subcommand and a 
     assert.equal(r.code, 2);
     assert.equal(r.json.results[0].id, "git");
     assert.ok(readdirSync(plain).includes("package.json"));
+  });
+});
+
+// The 2026-11-03 ruling: AGENTS.md, CONCEPTS.md, CLAUDE.md and HANDOFF.md never ship. A preset that
+// lists them in holdout.localOnly keeps them in the mirror and out of the payload ray publish copies.
+const RULED = ["AGENTS.md", "CONCEPTS.md", "CLAUDE.md", "HANDOFF.md"];
+
+test("the four ruled files: out moves each one out of the payload (and out of the payload fingerprint), in restores each byte for byte", async () => {
+  await withTempDir(async (dir) => {
+    const ext = fakeExtension(dir, "ext");
+    gitInit(ext);
+    gitCommit(ext, "init");
+    for (const f of RULED) writeFileSync(join(ext, f), `# ${f}\n`);
+    const preset = join(dir, "preset.json");
+    writeFileSync(preset, JSON.stringify({ holdout: { localOnly: [".env", ...RULED] } }));
+    const forbidden = join(dir, "forbidden.txt");
+    writeFileSync(forbidden, "nothing-forbidden-here\n");
+    const before = await computeFingerprints({ root: ext, version: "0.0.0", presetPath: preset, forbiddenPath: forbidden });
+    assert.deepEqual(listPayload(ext).map((e) => e.path).filter((p) => RULED.includes(p)), RULED.slice().sort(), "before: all four would ship");
+
+    const out = await rx(["holdout", "out", "--root", ext, "--preset", preset, "--json"], { cwd: dir });
+    assert.equal(out.code, 0, out.stdout);
+    assert.deepEqual(out.json.data.moved.map((/** @type {any} */ m) => m.source), RULED);
+    assert.deepEqual(listPayload(ext).map((e) => e.path).filter((p) => RULED.includes(p)), [], "after out: none is in the payload");
+    const held = await computeFingerprints({ root: ext, version: "0.0.0", presetPath: preset, forbiddenPath: forbidden });
+    assert.notEqual(held.payload, before.payload, "the receipt's payload fingerprint reflects the holdout");
+
+    const back = await rx(["holdout", "in", "--root", ext, "--json"], { cwd: dir });
+    assert.equal(back.code, 0, back.stdout);
+    for (const f of RULED) assert.equal(readFileSync(join(ext, f), "utf8"), `# ${f}\n`);
+    const after = await computeFingerprints({ root: ext, version: "0.0.0", presetPath: preset, forbiddenPath: forbidden });
+    assert.equal(after.payload, before.payload, "restored: the payload is what it was");
+  });
+});
+
+test("holdout-tracked names the fix for a tracked AGENTS.md: git rm --cached it and list it in the extension's .gitignore", async () => {
+  await withTempDir(async (dir) => {
+    const ext = fakeExtension(dir, "ext");
+    gitInit(ext);
+    writeFileSync(join(ext, "AGENTS.md"), "# Agents\n");
+    mkdirSync(join(ext, ".claude"));
+    writeFileSync(join(ext, ".claude", "settings.json"), "{}");
+    gitCommit(ext, "init: AGENTS.md and .claude committed in the mirror");
+    const preset = join(dir, "preset.json");
+    writeFileSync(preset, JSON.stringify({ holdout: { localOnly: [".claude", "AGENTS.md"] } }));
+    const r = await rx(["holdout", "out", "--root", ext, "--preset", preset, "--json"], { cwd: dir });
+    assert.equal(r.code, 1, r.stdout);
+    const t = by(r.json)["holdout-tracked"];
+    assert.equal(t.verdict, "FAIL");
+    assert.match(t.message, /tracked in this checkout's index; untrack each with git rm --cached and list it in the extension's \.gitignore/);
+    const detail = Object.fromEntries(t.details.map((/** @type {any} */ d) => [d.file, d.text]));
+    assert.match(detail["AGENTS.md"], /run `git rm --cached AGENTS\.md` \(the file stays on disk\), list AGENTS\.md in the extension's \.gitignore/);
+    assert.match(detail[".claude"], /run `git rm -r --cached \.claude` \(the file stays on disk\), list \.claude\/ in the extension's \.gitignore/);
+    assert.ok(existsSync(join(ext, "AGENTS.md")), "a tracked file is never moved");
   });
 });

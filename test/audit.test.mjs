@@ -10,6 +10,7 @@ import { join } from "node:path";
 import { GREPTILE_CONFIG, GREPTILE_JUDGMENT_RULES, GREPTILE_PREFLIGHT_RULES, greptileJudgmentRules, greptileRulesStamp, unclassifiedGreptileRules } from "../src/audit/greptile.mjs";
 import { CHECK_IDS } from "../src/preflight/catalog.mjs";
 import { dispositionKey, parseEntries } from "../src/audit/entries.mjs";
+import { decide, staleDispositions } from "../src/audit/evaluate.mjs";
 import { _setRuntimePaths } from "../src/commands/shortcuts.mjs";
 import { _setBeforeWriteHookForTests } from "../src/commands/audit.mjs";
 import { SHIPPED_DIR } from "../src/greptile/rules.mjs";
@@ -570,4 +571,27 @@ test("audit record (W9 round 2 finding A): the Greptile rules change mid-recordi
     assert.equal(again.code, 0, again.stdout);
     assert.equal(JSON.parse(readFileSync(await auditPath(root), "utf8")).greptileRules.sha, "c".repeat(40));
   });
+});
+
+test("remove-published answers a stale REMOVE row (keyed localHash \"absent\") and nothing else; keep-local never answers a REMOVE row", () => {
+  const stale = { baseline: "b".repeat(40), files: [
+    { path: "AGENTS.md", class: "REMOVE", localHash: null },
+    { path: "CHANGELOG.md", class: "CHECK", localHash: "c".repeat(40) },
+    { path: "src/gone.ts", class: "ONLY-PUB", localHash: null },
+  ] };
+  const required = staleDispositions(stale);
+  assert.deepEqual(required.map((r) => [r.path, r.localHash, r.kind]), [["AGENTS.md", "absent", "REMOVE"], ["CHANGELOG.md", "c".repeat(40), "CHECK"]], "ONLY-PUB is never dispositioned");
+  /** @type {import("../src/verdict.mjs").Result[]} */
+  const shortcuts = [{ id: "shortcuts", verdict: "PASS", message: "ok", details: [] }];
+  /** @type {import("../src/verdict.mjs").Result[]} */
+  const png = [{ id: "png", verdict: "PASS", message: "ok", details: [] }];
+  const base = { applicable: [], entries: [], verifications: [], required, effects: [], evidence: { shortcuts, png } };
+  const remove = { path: "AGENTS.md", localHash: "absent", baseline: stale.baseline, disposition: /** @type {const} */ ("remove-published"), reason: "ruling" };
+  const keep = { path: "CHANGELOG.md", localHash: "c".repeat(40), baseline: stale.baseline, disposition: /** @type {const} */ ("keep-local"), reason: "release" };
+  assert.deepEqual(decide({ ...base, dispositions: [remove, keep] }).blocking, []);
+  const keepRemove = decide({ ...base, dispositions: [{ ...remove, disposition: /** @type {const} */ ("keep-local") }, keep] });
+  assert.deepEqual([keepRemove.unresolved.map((u) => u.path), keepRemove.unmatched.map((u) => u.path)], [["AGENTS.md"], ["AGENTS.md"]]);
+  const removeCheck = decide({ ...base, dispositions: [remove, { ...keep, disposition: /** @type {const} */ ("remove-published") }] });
+  assert.deepEqual([removeCheck.unresolved.map((u) => u.path), removeCheck.unmatched.map((u) => u.path)], [["CHANGELOG.md"], ["CHANGELOG.md"]]);
+  assert.equal(parseEntries([remove]).dispositions.length, 1, "the entries parser accepts the new disposition");
 });

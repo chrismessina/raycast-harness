@@ -3,8 +3,10 @@
 //
 //   rule entry     { id, scope, result: "pass" | "fail" | "n-a", evidence }
 //                  `id` is a preset rule id, or `greptile/<rule id>` for a Greptile judgment rule
-//   disposition    { path, localHash, baseline, disposition: "keep-local" | "adopt-published", reason }
-//                  for a stale CHECK / NEW? path or a png OLDER-SHOT image (plan-review-2 F9)
+//   disposition    { path, localHash, baseline, disposition: "keep-local" | "adopt-published" | "remove-published", reason }
+//                  for a stale CHECK / NEW? path or a png OLDER-SHOT image (plan-review-2 F9):
+//                  keep-local or adopt-published; for a stale REMOVE path (a local-only file the
+//                  published copy still has): remove-published, with localHash "absent"
 //   verification   { verification: "writes-files" | "web-requests" | "calls-ai", result, evidence }
 //                  destination / runtime proof for an external effect the extension has
 //
@@ -15,12 +17,12 @@ import { readFileSync } from "node:fs";
 import { RxError } from "../errors.mjs";
 
 export const RESULTS = /** @type {const} */ (["pass", "fail", "n-a"]);
-export const DISPOSITIONS = /** @type {const} */ (["keep-local", "adopt-published"]);
+export const DISPOSITIONS = /** @type {const} */ (["keep-local", "adopt-published", "remove-published"]);
 export const EFFECTS = /** @type {const} */ (["writes-files", "web-requests", "calls-ai"]);
 
 /**
  * @typedef {{ id: string, scope: string, result: "pass" | "fail" | "n-a", evidence: string }} RuleEntry
- * @typedef {{ path: string, localHash: string, baseline: string, disposition: "keep-local" | "adopt-published", reason: string }} Disposition
+ * @typedef {{ path: string, localHash: string, baseline: string, disposition: "keep-local" | "adopt-published" | "remove-published", reason: string }} Disposition
  * @typedef {{ verification: "writes-files" | "web-requests" | "calls-ai", result: "pass" | "fail" | "n-a", evidence: string }} Verification
  * @typedef {{ entries: RuleEntry[], dispositions: Disposition[], verifications: Verification[] }} EntriesFile
  */

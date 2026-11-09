@@ -9,10 +9,12 @@
 //                  FAIL audit-<id>; a `report` rule with result fail → WARN audit-<id>
 //   shortcuts      `rx shortcuts check` run in-process and embedded; its ERROR (runtime evidence
 //                  unavailable) or FAIL blocks, and is never an accepted N/A (F4)
-//   dispositions   every stale CHECK / NEW? path in the receipt and every png OLDER-SHOT image in
-//                  this run (`rx png` run in-process against the recorded published copy) needs
-//                  a disposition matching { path, localHash, baseline } exactly; a missing or
-//                  unmatched one → FAIL audit-dispositions (F9)
+//   dispositions   every stale CHECK / NEW? / REMOVE path in the receipt and every png OLDER-SHOT
+//                  image in this run (`rx png` run in-process against the recorded published copy)
+//                  needs a disposition matching { path, localHash, baseline } exactly (a REMOVE
+//                  row's localHash is "absent", and only `remove-published` answers it, which
+//                  answers nothing else); a missing, unmatched or misfit one → FAIL
+//                  audit-dispositions (F9)
 //   verifications  one per external effect the extension has (writes files, makes web requests,
 //                  calls Raycast AI, from the applicability context) → FAIL audit-verification
 //   greptile rules the rules in use (repo, sha, digest of config.json rules + files.json) are stored
@@ -58,7 +60,7 @@ import * as shortcuts from "./shortcuts.mjs";
 const RECORD_CHECKS = {
   "audit-coverage": "one entry per applicable preset rule and Greptile judgment rule (FAIL naming the missing ids)",
   "audit-*": "audit-<rule id>: a rule whose entry says fail (FAIL for a block rule, WARN for a report rule)",
-  "audit-dispositions": "every stale CHECK / NEW? path and png OLDER-SHOT image in this run has a disposition matching { path, localHash, baseline }",
+  "audit-dispositions": "every stale CHECK / NEW? / REMOVE path and png OLDER-SHOT image in this run has a disposition matching { path, localHash, baseline } (REMOVE: localHash \"absent\", disposition remove-published, which no other row accepts)",
   "audit-verification": "a destination / runtime verification entry per external effect the extension has (writes files, web requests, Raycast AI)",
   "audit-greptile-rules": { description: "ERROR when the Greptile rules in use changed while the audit was being recorded (another rx greptile update finished mid-recording); nothing is written", levels: ["ERROR"] },
   "audit-receipt": { description: "ERROR when there is no current receipt (missing, not attested by this machine's key, malformed, written for another checkout or an earlier gates attempt, its fingerprints no longer match the tree, it records a FAIL/ERROR, it was written with a different preset, or its greptileRules are not the Greptile rules in use)", levels: ["ERROR"] },
@@ -301,6 +303,7 @@ async function recordWith(ctx, auditPath, rules) {
     }
   } else await runPng();
   const required = [...pngDispositions(pngFiles), ...staleDispositions(staleData)];
+  const given = new Map(file.dispositions.map((x) => [dispositionKey(x), x]));
 
   // 6. The decision, from the same function rx guard recomputes with.
   const d = decide({ applicable, entries: file.entries, dispositions: file.dispositions, verifications: file.verifications, required, effects, evidence: { shortcuts: sc.results.items, png: pngResults } });
@@ -315,18 +318,19 @@ async function recordWith(ctx, auditPath, rules) {
     else results.warn(id, `${rule.id}: fail (report-only)`, details);
   }
 
-  const given = new Map(file.dispositions.map((x) => [dispositionKey(x), x]));
   if (d.unresolved.length || d.unmatched.length) {
     results.fail("audit-dispositions", `${d.unresolved.length} outcome(s) without a disposition; ${d.unmatched.length} disposition(s) match nothing in this run`, [
-      ...d.unresolved.map((n) => ({ file: n.path, text: `${n.kind} needs a disposition: localHash=${n.localHash} baseline=${n.baseline}` })),
-      ...d.unmatched.map((x) => ({ file: x.path, text: `stale disposition: localHash=${x.localHash} baseline=${x.baseline} matches no current CHECK / NEW? / OLDER-SHOT` })),
+      ...d.unresolved.map((n) => ({ file: n.path, text: `${n.kind} needs a disposition${n.kind === "REMOVE" ? " remove-published" : ""}: localHash=${n.localHash} baseline=${n.baseline}` })),
+      ...d.unmatched.map((x) => ({ file: x.path, text: required.some((n) => dispositionKey(n) === dispositionKey(x))
+        ? `${x.disposition} does not answer this row: remove-published answers a stale REMOVE row and nothing else`
+        : `stale disposition: localHash=${x.localHash} baseline=${x.baseline} matches no current CHECK / NEW? / REMOVE / OLDER-SHOT` })),
     ]);
   } else if (required.length) {
     results.pass("audit-dispositions", `${required.length} outcome(s) dispositioned`, required.map((n) => {
       const g = given.get(dispositionKey(n));
       return { file: n.path, text: `${n.kind}: ${g?.disposition} — ${String(g?.reason ?? "").split(/\r?\n/)[0]}` };
     }));
-  } else results.na("audit-dispositions", "no stale CHECK / NEW? path and no png OLDER-SHOT image in this run");
+  } else results.na("audit-dispositions", "no stale CHECK / NEW? / REMOVE path and no png OLDER-SHOT image in this run");
 
   const byEffect = new Map(file.verifications.map((v) => [v.verification, v]));
   if (d.missingEffects.length || d.failedEffects.length) {

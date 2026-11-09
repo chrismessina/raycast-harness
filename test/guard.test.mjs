@@ -11,7 +11,8 @@ import { homedir } from "node:os";
 import { denyDocument, run as guardRun } from "../src/commands/guard.mjs";
 import { mentionsPublish, mentionsReady, readCommand } from "../src/audit/publish-command.mjs";
 import { Results } from "../src/verdict.mjs";
-import { auditRecord, bashPayload, buildGated, byId, fullEntries, gates, guard, stateDir, withGatedEnv, writeAttested, writeEntries } from "./gates-helpers.mjs";
+import { commit, g as gitIn } from "./upstream-fixtures.mjs";
+import { FORBIDDEN, PRESET, auditRecord, bashPayload, buildGated, byId, fullEntries, gates, guard, readJson as readJsonFile, stateDir, withGatedEnv, writeAttested, writeEntries } from "./gates-helpers.mjs";
 import { rx } from "./helpers.mjs";
 import { SHIPPED_DIR } from "../src/greptile/rules.mjs";
 
@@ -622,5 +623,60 @@ test("guard (W9 finding 1): changed rule text under the same ids blocks a record
     assert.match(guardResult(await guard(bashPayload(PUBLISH, root))).message, /greptileRules is not \{ repo, sha \(40 hex\), digest \(64 hex\) \}/);
     writeAttested(auditPath, audit);
     assert.equal(guardResult(await guard(bashPayload(PUBLISH, root))).verdict, "PASS");
+  });
+});
+
+test("guard (2026-11-03 ruling): a publish that deletes a published AGENTS.md, held out of the mirror, is allowed end to end through gates, a remove-published disposition and the guard", async () => {
+  await withGatedEnv(async (dir) => {
+    // Published copy: the first commit, AGENTS.md included. The mirror then untracks it and lists it
+    // in .gitignore (holdout-tracked's fix), and rx holdout out moves it aside before gates.
+    const { root, up } = await buildGated(dir, { published: true, files: { "AGENTS.md": "# Agents\n\nMirror notes.\n" } });
+    await gitIn(root, ["rm", "-q", "--cached", "AGENTS.md"]);
+    await commit(root, { ".gitignore": "node_modules/\n*.local\nAGENTS.md\n" }, "keep AGENTS.md in the mirror only");
+    const preset = join(dir, "preset-ruling.json");
+    const base = JSON.parse(readFileSync(PRESET, "utf8"));
+    writeFileSync(preset, JSON.stringify({ ...base, holdout: { localOnly: [".env", "AGENTS.md", "CONCEPTS.md", "CLAUDE.md", "HANDOFF.md"] } }, null, 2));
+
+    const held = await rx(["holdout", "out", "--root", root, "--preset", preset, "--json"]);
+    assert.equal(held.code, 0, held.stdout);
+    assert.deepEqual(held.json.data.moved.map((/** @type {any} */ m) => m.source), ["AGENTS.md"]);
+
+    const g = await rx(["gates", "--root", root, "--preset", preset, "--forbidden", FORBIDDEN, "--json"]);
+    assert.equal(g.code, 0, g.stdout);
+    assert.ok(g.json.data.receipt, "a receipt is written: REMOVE is a WARN, not the ONLY-PUB FAIL");
+    const rows = Object.fromEntries(readJsonFile(join(await stateDir(root), "receipt.json")).data.stale.files.map((/** @type {any} */ f) => [f.path, f]));
+    assert.equal(rows["AGENTS.md"].class, "REMOVE");
+    assert.equal(byId(g)["stale-remove"].verdict, "WARN");
+
+    const baseline = String(up?.sha);
+    const changelog = { path: "CHANGELOG.md", localHash: rows["CHANGELOG.md"].localHash, baseline, disposition: "keep-local", reason: "the local entry is this release" };
+    const gitignore = { path: ".gitignore", localHash: rows[".gitignore"].localHash, baseline, disposition: "keep-local", reason: "AGENTS.md is now listed" };
+    const remove = { path: "AGENTS.md", localHash: "absent", baseline, disposition: "remove-published", reason: "Chris's 2026-11-03 ruling: AGENTS.md stays in the mirror and is deleted from raycast/extensions" };
+    const record = (/** @type {unknown[]} */ extra) => rx(["audit", "record", "--root", root, "--preset", preset, "--entries", writeEntries(dir, fullEntries({ extra })), "--json"]);
+
+    // keep-local does not answer a REMOVE row, and remove-published answers nothing but one.
+    const wrongKind = await record([changelog, gitignore, { ...remove, disposition: "keep-local" }]);
+    assert.equal(wrongKind.code, 1, wrongKind.stdout);
+    assert.match(byId(wrongKind)["audit-dispositions"].message, /1 outcome\(s\) without a disposition; 1 disposition\(s\) match nothing/);
+    const misfit = byId(wrongKind)["audit-dispositions"].details.find((/** @type {any} */ d) => d.text.startsWith("keep-local does not answer"));
+    assert.equal(misfit?.file, "AGENTS.md");
+    assert.equal((await guard(bashPayload(PUBLISH, root))).json.data.decision, "block");
+    const elsewhere = await record([{ ...changelog, disposition: "remove-published" }, gitignore, remove]);
+    assert.equal(elsewhere.code, 1, elsewhere.stdout);
+    assert.deepEqual(elsewhere.json.data.blocking, ["dispositions: 1 missing, 1 unmatched"]);
+
+    // The right dispositions: the audit is clean and the guard allows the publish.
+    const ok = await record([changelog, gitignore, remove]);
+    assert.equal(ok.code, 0, ok.stdout);
+    assert.deepEqual(ok.json.data.blocking, []);
+    assert.match(byId(ok)["audit-dispositions"].details.find((/** @type {any} */ d) => d.file === "AGENTS.md").text, /^REMOVE: remove-published/);
+    const allowed = await guard(bashPayload(PUBLISH, root));
+    assert.equal(allowed.code, 0, allowed.stdout);
+    assert.equal(guardResult(allowed).verdict, "PASS", guardResult(allowed).message);
+    assert.equal(allowed.json.data.decision, "allow");
+
+    const back = await rx(["holdout", "in", "--root", root, "--json"]);
+    assert.equal(back.code, 0, back.stdout);
+    assert.equal(readFileSync(join(root, "AGENTS.md"), "utf8"), "# Agents\n\nMirror notes.\n", "the mirror keeps it");
   });
 });

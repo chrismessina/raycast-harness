@@ -140,7 +140,7 @@ rx preflight --preset "$PRESET" --published "$PUB"
 rx changelog --published "$PUB"
 ```
 
-`stale-only-pub` and `stale-upstream` FAILs mean publishing would delete or revert someone else's work; stop and pull the contributions first.
+`stale-only-pub` and `stale-upstream` FAILs mean publishing would delete or revert someone else's work; stop and pull the contributions first. With `--preset` (`rx gates` always passes it), a published file the preset's `holdout.localOnly` lists and the local tree lacks, such as an `AGENTS.md` that `rx holdout out` moved aside, is `stale-remove` instead: a WARN that the publish deletes it on purpose, answered in the audit with a `remove-published` disposition keyed `{ path, localHash: "absent", baseline }`.
 
 ### Compare screenshots and icons
 
@@ -170,7 +170,8 @@ Hold out first: moving files changes the payload, which the receipt fingerprints
 ### Review a contributor PR's touched files
 
 ```sh
-rx pr files <N> --extension <name>                        # FAIL on any file outside extensions/<name>/
+rx pr files <N> --extension <name> [--preset <file>]      # FAIL on any file outside extensions/<name>/; each file's status in details
+                                                          # with --preset: FAIL on a local-only file (AGENTS.md, …) not removed
 rx pr verify <N> --author <login> --extension <name>      # author, head branch, draft, open, base
 ```
 

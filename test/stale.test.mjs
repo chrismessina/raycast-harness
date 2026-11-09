@@ -1,6 +1,6 @@
 import { test, after } from "node:test";
 import assert from "node:assert/strict";
-import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, symlinkSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fakeExtension, rx, withTempDir } from "./helpers.mjs";
 import { _setUpstreamForTests, lockHeld, upstreamDir } from "../src/upstream.mjs";
@@ -240,5 +240,45 @@ test("stale holds the upstream cache lock from the fetch through the comparison"
       _setUpstreamForTests({ lockWaitMs: null });
       rmSync(join(upstreamDir(), ".rx-lock"), { recursive: true, force: true });
     }
+  });
+});
+
+test("stale --preset: a published file the preset's holdout.localOnly lists and local lacks is REMOVE (WARN); an unlisted one stays ONLY-PUB (FAIL); without --preset both are ONLY-PUB", async () => {
+  await withTempDir(async (dir) => {
+    process.env.XDG_CACHE_HOME = join(dir, "cache");
+    const files = extensionFiles("gamma");
+    const up = await fakeUpstream(dir, { gamma: { ...files, "AGENTS.md": "# Agents\n", "HANDOFF.md": "# Handoff\n", ".claude/settings.json": "{}\n", "src/gone.ts": "export {};\n" } });
+    _setUpstreamForTests({ url: up.url, probe: async () => true });
+    const local = await initRepo(join(dir, "gamma"));
+    await commit(local, files, "the four mirror files are not in this tree");
+    const preset = join(dir, "preset.json");
+    writeFileSync(preset, JSON.stringify({ holdout: { localOnly: [".claude", "AGENTS.md", "CONCEPTS.md", "CLAUDE.md", "HANDOFF.md"] } }));
+    // A holdout in progress names AGENTS.md (the inventory is all stale reads).
+    const state = (await g(local, ["rev-parse", "--path-format=absolute", "--git-path", "rx"])).stdout;
+    mkdirSync(join(state, "holdout"), { recursive: true });
+    writeFileSync(join(state, "holdout", "inventory.json"), JSON.stringify({ version: 1, root: local, createdAt: "x", entries: [{ source: "AGENTS.md", destination: join(state, "holdout", "files", "AGENTS.md"), type: "file", hash: "sha256:0" }] }));
+
+    const r = await rx(["stale", "--preset", preset, "--json"], { cwd: local });
+    assert.equal(r.code, 1, r.stdout);
+    const classes = Object.fromEntries(r.json.data.files.map((/** @type {any} */ f) => [f.path, f.class]));
+    assert.equal(classes["AGENTS.md"], "REMOVE");
+    assert.equal(classes["HANDOFF.md"], "REMOVE");
+    assert.equal(classes[".claude/settings.json"], "REMOVE", "a path under a listed directory");
+    assert.equal(classes["src/gone.ts"], "ONLY-PUB", "an unlisted published-only path keeps its FAIL");
+    const by = Object.fromEntries(r.json.results.map((/** @type {any} */ x) => [x.id, x]));
+    assert.equal(by["stale-remove"].verdict, "WARN");
+    assert.equal(by["stale-only-pub"].verdict, "FAIL");
+    assert.deepEqual(by["stale-only-pub"].details.map((/** @type {any} */ d) => d.file), ["src/gone.ts"]);
+    const notes = Object.fromEntries(by["stale-remove"].details.map((/** @type {any} */ d) => [d.file, d.text]));
+    assert.match(notes["AGENTS.md"], /^REMOVE local-only \(AGENTS\.md in the preset's holdout\.localOnly\), held out by rx holdout; publishing deletes the published copy$/);
+    assert.match(notes["HANDOFF.md"], /absent locally/);
+    const agents = r.json.data.files.find((/** @type {any} */ f) => f.path === "AGENTS.md");
+    assert.equal(agents.localHash, null);
+    assert.match(agents.publishedHash, /^[0-9a-f]{40}$/);
+
+    const bare = await rx(["stale", "--json"], { cwd: local });
+    assert.equal(bare.code, 1);
+    assert.ok(bare.json.data.files.filter((/** @type {any} */ f) => f.path !== "src/index.tsx" && f.class !== "MINE").every((/** @type {any} */ f) => f.class === "ONLY-PUB"), "no preset, no REMOVE");
+    assert.ok(!bare.json.results.some((/** @type {any} */ x) => x.id === "stale-remove"));
   });
 });

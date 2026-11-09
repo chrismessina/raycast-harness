@@ -4,9 +4,10 @@
 // included), and a tracked-and-ignored file cannot be held back by `.gitignore` at all.
 //
 //   out   moves ONLY untracked entries the preset's `holdout.localOnly` names (default `.env`,
-//         `.claude`, `.superpowers`) to the repo state dir, writing an inventory first. A tracked
-//         localOnly path is a committed leak (FAIL holdout-tracked), handled as a committed
-//         deletion, never moved. Anything in the preset's `ship.keep` is never touched. An empty
+//         `.claude`, `.superpowers`) to the repo state dir, writing an inventory first. A
+//         localOnly path tracked in this checkout's index (the mirror's, never the published
+//         copy's) is never moved: FAIL holdout-tracked, whose detail says the fix, `git rm
+//         --cached` it (the file stays on disk) and list it in the extension's `.gitignore`. Anything in the preset's `ship.keep` is never touched. An empty
 //         inventory while a listed path still exists in the root is an ERROR (plan-review-1 #8,
 //         #32975: a filtered `ls` hid `.claude`, nothing moved, the inventory came back empty).
 //   in    restores every inventory entry, refusing to overwrite a destination that reappeared
@@ -48,7 +49,7 @@ export const spec = {
       },
       checks: {
         "holdout-out": { description: "untracked local-only entries moved (PASS with one detail per path; N/A when nothing matches)", levels: ["PASS", "N/A"] },
-        "holdout-tracked": "no local-only path is tracked (FAIL: a committed leak, handle it as a committed deletion)",
+        "holdout-tracked": "no local-only path is tracked in this checkout's index (FAIL names each one with its fix: git rm --cached <path>, the file stays on disk, and list it in the extension's .gitignore)",
         "holdout-inventory": { description: "inventory written and non-empty whenever a movable local-only path exists (ERROR otherwise, or when a holdout is already in progress)", levels: ["PASS", "ERROR"] },
       },
       data: { moved: "[{ source, destination, type, hash }]", restored: "[] (always empty for out)", skipped: "[{ path, reason }]" },
@@ -254,7 +255,8 @@ async function out({ args, cwd, results, log }, root, inventoryPath, filesDir) {
     for (const c of candidates) {
       const ls = await git(["ls-files", "--error-unmatch", "--", c], { cwd: root, allowFail: true });
       if (ls.code === 0) {
-        tracked.push({ file: c, text: "tracked: a committed leak; delete it in the PR, never hold it out" });
+        const dir = lstatSync(join(root, c)).isDirectory();
+        tracked.push({ file: c, text: `tracked in this checkout's index, so it cannot be held out: run \`git rm ${dir ? "-r " : ""}--cached ${c}\` (the file stays on disk), list ${c}${dir ? "/" : ""} in the extension's .gitignore, commit, then run rx holdout out again` });
         skipped.push({ path: c, reason: "tracked" });
         continue;
       }
@@ -287,7 +289,7 @@ async function out({ args, cwd, results, log }, root, inventoryPath, filesDir) {
   }
   if (moved.length !== planned.length) writeInventory(inventoryPath, { ...inv, entries: moved });
 
-  if (tracked.length) results.fail("holdout-tracked", `${tracked.length} local-only path(s) are tracked`, tracked);
+  if (tracked.length) results.fail("holdout-tracked", `${tracked.length} local-only path(s) are tracked in this checkout's index; untrack each with git rm --cached and list it in the extension's .gitignore`, tracked);
   else results.pass("holdout-tracked", "no local-only path is tracked");
 
   if (moved.length) results.pass("holdout-out", `${moved.length} untracked local-only entr${moved.length === 1 ? "y" : "ies"} moved to ${filesDir}`, moved.map((e) => ({ file: e.source, text: `${e.type} ${e.hash}` })));

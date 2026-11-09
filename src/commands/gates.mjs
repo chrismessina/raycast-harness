@@ -13,7 +13,7 @@
 //      and the run continues on the copy in use, with nothing installed. The stamp
 //      { repo, sha, digest } (src/audit/greptile.mjs stampOf) of exactly the snapshot the step
 //      reported (the routine's `selected`, never a reload) goes into the receipt as `greptileRules`.
-//   3. stale → scan → preflight (only when published: --published, the copy of stale's exact
+//   3. stale (with the preset: holdout.localOnly decides REMOVE) → scan → preflight (only when published: --published, the copy of stale's exact
 //      baseline, read through the published-copy service under the upstream lock) → api-floor,
 //      each run in-process (src/audit/step.mjs) and merged with its own ids
 //   4. `npm run build` → `npx --no-install tsc --noEmit` → `npm run lint` (build first: it
@@ -79,7 +79,7 @@ export const spec = {
   root: "required",
   flags: {
     "--root": { type: "string", value: "<dir>", help: "extension root" },
-    "--preset": { type: "string", value: "<file>", required: true, help: "preset JSON (passed to preflight and api-floor; its bytes are fingerprinted)" },
+    "--preset": { type: "string", value: "<file>", required: true, help: "preset JSON (passed to stale, preflight and api-floor; its bytes are fingerprinted)" },
     "--forbidden": { type: "string", value: "<file>", required: true, help: "forbidden-values file for rx scan (its bytes are fingerprinted)" },
   },
   network: "greptile-rules' (GitHub API via gh: the latest raycast/extensions commit touching .greptile/ on main, then its .greptile/ contents when that differs from the copy in use); stale's (GitHub API, git fetch of raycast/extensions); api-floor's optional npm read; `npm run build` and `npm run lint` do whatever the project's scripts do. Never installs packages",
@@ -325,7 +325,9 @@ export async function run(ctx) {
   const before = await computeFingerprints({ root, version, presetPath, forbiddenPath });
 
   // 3. The rx steps.
-  const staleRun = await runStep(stale, ctx, { root, flags: { "--root": root } });
+  // The preset goes to stale too: its holdout.localOnly turns a held-out published file into the
+  // deliberate deletion REMOVE (an audit disposition) instead of the ONLY-PUB FAIL.
+  const staleRun = await runStep(stale, ctx, { root, flags: { "--root": root, "--preset": presetPath } });
   record("stale", staleRun.results);
   const staleName = typeof staleRun.data.name === "string" ? staleRun.data.name : null;
   const published = staleRun.data.published === true && typeof staleRun.data.baseline === "string" && staleName !== null;

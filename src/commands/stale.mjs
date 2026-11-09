@@ -8,23 +8,35 @@
 //   NEW?       local file the published tree lacks
 //   UPSTREAM   published blob not in this path's history
 //   ONLY-PUB   published has a file local does not
+//   REMOVE     an ONLY-PUB path the preset's `holdout.localOnly` lists (the path itself or a path
+//              under a listed directory), absent locally because `rx holdout out` holds it out or
+//              because it is simply not there: publishing deletes it upstream, deliberately
+//              (Chris's 2026-11-03 ruling: AGENTS.md, CONCEPTS.md, CLAUDE.md and HANDOFF.md never
+//              ship). Only with --preset; without one every such path stays ONLY-PUB.
 //   UNHANDLED  symlink, mode change, or an undecidable path
-// CHECK and NEW? are WARN "requiring an audit disposition" keyed by { path, localHash, baseline }
-// (data.files[]), which `rx audit record` matches.
+// CHECK, NEW? and REMOVE are WARN "requiring an audit disposition" keyed by { path, localHash,
+// baseline } (data.files[]), which `rx audit record` matches. A REMOVE row has localHash null
+// (absent locally); its disposition key uses the literal "absent" (src/audit/evaluate.mjs) and its
+// only accepted disposition is `remove-published`.
 
 import { lstatSync, readFileSync, readdirSync } from "node:fs";
-import { join, relative } from "node:path";
+import { join, relative, resolve } from "node:path";
 import { RxError } from "../errors.mjs";
 import { git } from "../git.mjs";
 import { withPublishedCopy, writeStaleBaseline } from "../published-copy.mjs";
 import { blobId, skipSegment } from "../upstream.mjs";
+import { repoStatePathReadOnly } from "../state.mjs";
+import { readPresetFields } from "./holdout.mjs";
 
 /** @type {import("../cli.mjs").CommandSpec} */
 export const spec = {
   name: "stale",
   summary: "compare the local extension with its published copy in raycast/extensions, path by path",
   root: "required",
-  flags: { "--root": { type: "string", value: "<dir>", help: "extension root" } },
+  flags: {
+    "--root": { type: "string", value: "<dir>", help: "extension root" },
+    "--preset": { type: "string", value: "<file>", help: "preset JSON; reads holdout.localOnly so a listed path the published copy has and local lacks is REMOVE (a deliberate deletion), not ONLY-PUB" },
+  },
   network: "GitHub API (publication lookup) and `git fetch` of raycast/extensions into the cross-repo cache",
   state: "reads/writes cache/upstream/ (sparse checkout); writes repo/stale/baseline.json { name, published, baseline, at } (no cache path)",
   checks: {
@@ -34,6 +46,7 @@ export const spec = {
     "stale-new": { description: "local files the published tree lacks; WARN requiring an audit disposition", levels: ["WARN"] },
     "stale-upstream": "published content not in these paths' history (FAIL)",
     "stale-only-pub": "published files local lacks; publishing deletes them (FAIL)",
+    "stale-remove": { description: "published files the preset's holdout.localOnly lists and local lacks (held out by rx holdout, or absent); publishing deletes them on purpose; WARN requiring an audit disposition remove-published", levels: ["WARN"] },
     "stale-unhandled": "symlink, mode change or undecidable path (FAIL)",
   },
   data: {
@@ -41,7 +54,7 @@ export const spec = {
     published: "boolean",
     publishedDir: "string | null — cache path of the published copy (a convenience for this run; never persisted)",
     baseline: "string | null — raycast/extensions main commit the comparison used",
-    files: "[{ path, class, localHash, publishedHash | null, note }] — class ∈ MINE CHECK NEW? UPSTREAM ONLY-PUB UNHANDLED; localHash is the git blob id of the on-disk bytes (null when absent locally)",
+    files: "[{ path, class, localHash, publishedHash | null, note }] — class ∈ MINE CHECK NEW? UPSTREAM ONLY-PUB REMOVE UNHANDLED; localHash is the git blob id of the on-disk bytes (null when absent locally; a REMOVE disposition keys it as \"absent\")",
   },
 };
 
@@ -52,26 +65,32 @@ const CLASSES = /** @type {const} */ ({
   "NEW?": { id: "stale-new", verdict: "WARN", summary: "not published (your new file, or deleted upstream); audit disposition required" },
   UPSTREAM: { id: "stale-upstream", verdict: "FAIL", summary: "published content is not in this path's history; publishing would revert it" },
   "ONLY-PUB": { id: "stale-only-pub", verdict: "FAIL", summary: "published has files local lacks; publishing would delete them" },
+  REMOVE: { id: "stale-remove", verdict: "WARN", summary: "local-only per the preset and absent here; publishing deletes the published copy; audit disposition remove-published required" },
   UNHANDLED: { id: "stale-unhandled", verdict: "FAIL", summary: "classify by hand" },
 });
 
 /** @typedef {keyof typeof CLASSES} Class */
 /** @typedef {{ path: string, class: Class, localHash: string | null, publishedHash: string | null, note: string }} FileRow */
+/** @typedef {{ localOnly: string[], heldOut: Set<string> }} LocalOnly the preset's holdout.localOnly and the paths rx holdout holds out now */
 
 /** @type {import("../cli.mjs").CommandModule["run"]} */
-export async function run({ results, root, log }) {
+export async function run({ args, cwd, results, root, log }) {
   const dir = /** @type {string} */ (root);
   const name = readName(dir);
+  const presetFile = typeof args.flags["--preset"] === "string" ? resolve(cwd, args.flags["--preset"]) : null;
+  const localOnly = presetFile ? readPresetFields(presetFile).localOnly : [];
+  const heldOut = localOnly.length ? await heldOutPaths(dir) : new Set();
   // The service holds the upstream lock from the fetch through the whole comparison: another rx
   // fetching a different extension would otherwise move the shared tree while this one reads it.
-  return withPublishedCopy({ name, refresh: true, log }, (copy) => compare(dir, name, copy, results));
+  return withPublishedCopy({ name, refresh: true, log }, (copy) => compare(dir, name, copy, results, { localOnly, heldOut }));
 }
 
 /**
  * @param {string} dir @param {string} name @param {import("../published-copy.mjs").PublishedCopy} copy @param {import("../verdict.mjs").Results} results
+ * @param {LocalOnly} localOnly
  * @returns {Promise<import("../cli.mjs").CommandOutput>}
  */
-async function compare(dir, name, copy, results) {
+async function compare(dir, name, copy, results, localOnly) {
   await writeStaleBaseline(dir, { name, published: copy.published, baseline: copy.baseline, at: /** @type {string} */ (copy.at) });
 
   if (!copy.published) {
@@ -80,7 +99,7 @@ async function compare(dir, name, copy, results) {
   }
 
   const publishedDir = /** @type {string} */ (copy.directory);
-  const files = await classify(dir, publishedDir);
+  const files = await classify(dir, publishedDir, localOnly);
 
   /** @type {Map<Class, FileRow[]>} */
   const byClass = new Map();
@@ -101,6 +120,29 @@ async function compare(dir, name, copy, results) {
     }
   }
   return { data: { name, published: true, publishedDir, baseline: copy.baseline, files } };
+}
+
+/**
+ * The sources `rx holdout out` recorded for this root (its inventory), or an empty set. Read
+ * only: a missing or unreadable inventory means nothing is held out; it never fails stale.
+ * @param {string} dir
+ * @returns {Promise<Set<string>>}
+ */
+async function heldOutPaths(dir) {
+  try {
+    const inv = JSON.parse(readFileSync(await repoStatePathReadOnly(dir, "holdout", "inventory.json"), "utf8"));
+    return new Set(Array.isArray(inv?.entries) ? inv.entries.map((/** @type {any} */ e) => e?.source).filter((/** @type {unknown} */ s) => typeof s === "string") : []);
+  } catch {
+    return new Set();
+  }
+}
+
+/**
+ * Is `path` one the preset lists as local-only: the listed path itself, or a path under a listed
+ * directory? @param {string} path @param {string[]} localOnly
+ */
+export function listedLocalOnly(path, localOnly) {
+  return localOnly.find((p) => path === p || path.startsWith(`${p}/`)) ?? null;
 }
 
 /** @param {string} dir */
@@ -165,9 +207,10 @@ async function lsTree(cwd, ref) {
  * The classifier. Exported for tests.
  * @param {string} dir local extension root
  * @param {string} publishedDir the published copy on disk (inside the upstream cache)
+ * @param {LocalOnly} [localOnly] without it (no --preset) nothing is REMOVE
  * @returns {Promise<FileRow[]>}
  */
-export async function classify(dir, publishedDir) {
+export async function classify(dir, publishedDir, localOnly = { localOnly: [], heldOut: new Set() }) {
   const local = walkPayload(dir);
   const published = walkPayload(publishedDir);
   const pubTree = await lsTree(publishedDir, "HEAD");
@@ -186,7 +229,12 @@ export async function classify(dir, publishedDir) {
     const row = (/** @type {Class} */ cls, /** @type {string} */ note) => rows.push({ path, class: cls, localHash, publishedHash, note });
 
     if ((l && l.kind !== "file") || (p && p.kind !== "file")) { row("UNHANDLED", `${l?.kind ?? p?.kind} (not a regular file)`); continue; }
-    if (p && !l) { row("ONLY-PUB", "published has this file; local does not"); continue; }
+    if (p && !l) {
+      const listed = listedLocalOnly(path, localOnly.localOnly);
+      if (listed === null) row("ONLY-PUB", "published has this file; local does not");
+      else row("REMOVE", `local-only (${listed} in the preset's holdout.localOnly), ${[...localOnly.heldOut].some((h) => path === h || path.startsWith(`${h}/`)) ? "held out by rx holdout" : "absent locally"}; publishing deletes the published copy`);
+      continue;
+    }
     if (l && !p) { row("NEW?", "not published: your new file, or deleted upstream"); continue; }
     if (!l || !p) continue;
 

@@ -49,8 +49,21 @@ export function effectsOf(applyCtx) {
   return out;
 }
 
+/** The localHash a REMOVE row's disposition carries: the file is absent locally. */
+export const ABSENT = "absent";
+
 /**
- * The stale CHECK / NEW? rows of a receipt's recorded stale data, as required dispositions.
+ * Does disposition `d` answer requirement `n`'s kind? A stale REMOVE row takes
+ * `remove-published` and nothing else; every other row takes anything but `remove-published`.
+ * @param {{ disposition: string }} d @param {{ kind: string }} n
+ */
+export function dispositionFits(d, n) {
+  return (n.kind === "REMOVE") === (d.disposition === "remove-published");
+}
+
+/**
+ * The stale CHECK / NEW? / REMOVE rows of a receipt's recorded stale data, as required
+ * dispositions. A REMOVE row is absent locally, so its key carries localHash ABSENT.
  * @param {any} staleData receipt.data.stale
  * @returns {RequiredDisposition[]}
  */
@@ -60,6 +73,7 @@ export function staleDispositions(staleData) {
   if (!staleData || typeof staleData.baseline !== "string") return out;
   for (const f of Array.isArray(staleData.files) ? staleData.files : []) {
     if ((f?.class === "CHECK" || f?.class === "NEW?") && typeof f.path === "string" && typeof f.localHash === "string") out.push({ path: f.path, localHash: f.localHash, baseline: staleData.baseline, kind: f.class });
+    else if (f?.class === "REMOVE" && typeof f.path === "string" && f.localHash === null) out.push({ path: f.path, localHash: ABSENT, baseline: staleData.baseline, kind: "REMOVE" });
   }
   return out;
 }
@@ -123,10 +137,18 @@ export function decide({ applicable, entries, dispositions, verifications, requi
   if (!evidence.png.length) blocking.push("png evidence missing");
   for (const r of evidence.png) if (r.verdict === "FAIL" || r.verdict === "ERROR") blocking.push(`png: ${r.message}`);
 
+  // A disposition counts only when its key matches AND its kind fits the row (remove-published
+  // for REMOVE, never elsewhere); a misfit is both an unresolved row and an unmatched disposition.
   const given = new Map(dispositions.map((d) => [dispositionKey(d), d]));
-  const unresolved = required.filter((n) => !given.has(dispositionKey(n)));
-  const needed = new Set(required.map(dispositionKey));
-  const unmatched = dispositions.filter((d) => !needed.has(dispositionKey(d)));
+  const unresolved = required.filter((n) => {
+    const g = given.get(dispositionKey(n));
+    return !g || !dispositionFits(g, n);
+  });
+  const needed = new Map(required.map((n) => [dispositionKey(n), n]));
+  const unmatched = dispositions.filter((d) => {
+    const n = needed.get(dispositionKey(d));
+    return !n || !dispositionFits(d, n);
+  });
   if (unresolved.length || unmatched.length) blocking.push(`dispositions: ${unresolved.length} missing, ${unmatched.length} unmatched`);
 
   const byEffect = new Map(verifications.map((v) => [v.verification, v]));

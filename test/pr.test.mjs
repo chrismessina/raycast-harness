@@ -463,3 +463,61 @@ test("pr body --apply --prospective <file>: the write is bound to the scanned fi
     assert.equal(same.state.patches.length, 1);
   });
 });
+
+test("pr files: data.files and the details carry each file's GitHub status, with the rename source; data.paths keeps every changed path", async () => {
+  const files = [[
+    { filename: "extensions/sample-ext/src/index.tsx", status: "modified" },
+    { filename: "extensions/sample-ext/src/new.tsx", status: "added" },
+    { filename: "extensions/sample-ext/AGENTS.md", status: "removed" },
+    { filename: "extensions/sample-ext/src/b.tsx", previous_filename: "extensions/sample-ext/src/a.tsx", status: "renamed" },
+  ]];
+  const r = await withFake(fakeGitHub({ files }).t, ["pr", "files", PR, "--extension", "sample-ext"]);
+  assert.equal(r.code, 0, r.stdout);
+  assert.deepEqual(r.json.data.files, [
+    { path: "extensions/sample-ext/src/index.tsx", status: "modified", previous: null },
+    { path: "extensions/sample-ext/src/new.tsx", status: "added", previous: null },
+    { path: "extensions/sample-ext/AGENTS.md", status: "removed", previous: null },
+    { path: "extensions/sample-ext/src/b.tsx", status: "renamed", previous: "extensions/sample-ext/src/a.tsx" },
+  ]);
+  assert.deepEqual(r.json.data.paths, ["extensions/sample-ext/src/index.tsx", "extensions/sample-ext/src/new.tsx", "extensions/sample-ext/AGENTS.md", "extensions/sample-ext/src/b.tsx", "extensions/sample-ext/src/a.tsx"]);
+  assert.deepEqual(r.by["pr-files"].details.map((/** @type {any} */ d) => `${d.file}: ${d.text}`), [
+    "extensions/sample-ext/src/index.tsx: modified",
+    "extensions/sample-ext/src/new.tsx: added",
+    "extensions/sample-ext/AGENTS.md: removed",
+    "extensions/sample-ext/src/b.tsx: renamed from extensions/sample-ext/src/a.tsx",
+  ]);
+  assert.equal(r.by["pr-local-only"].verdict, "N/A", "no --preset, no local-only list");
+});
+
+test("pr files --preset: pr-local-only FAILs when AGENTS.md, CONCEPTS.md, CLAUDE.md or HANDOFF.md is added, changed or renamed in; a removal passes", async () => {
+  await withTempDir(async (dir) => {
+    const preset = join(dir, "preset.json");
+    writeFileSync(preset, JSON.stringify({ holdout: { localOnly: [".env", "AGENTS.md", "CONCEPTS.md", "CLAUDE.md", "HANDOFF.md"] } }));
+    const run = (/** @type {any[]} */ list) => withFake(fakeGitHub({ files: [list] }).t, ["pr", "files", PR, "--extension", "sample-ext", "--preset", preset]);
+    const removed = await run([
+      { filename: "extensions/sample-ext/src/index.tsx", status: "modified" },
+      { filename: "extensions/sample-ext/AGENTS.md", status: "removed" },
+      { filename: "extensions/sample-ext/HANDOFF.md", status: "removed" },
+    ]);
+    assert.equal(removed.code, 0, removed.stdout);
+    assert.equal(removed.by["pr-local-only"].verdict, "PASS");
+    assert.match(removed.by["pr-local-only"].message, /2 local-only file\(s\) in the PR, every one removed/);
+    const shipped = await run([
+      { filename: "extensions/sample-ext/AGENTS.md", status: "modified" },
+      { filename: "extensions/sample-ext/CONCEPTS.md", status: "added" },
+      { filename: "extensions/sample-ext/CLAUDE.md", previous_filename: "extensions/sample-ext/NOTES.md", status: "renamed" },
+      { filename: "extensions/sample-ext/HANDOFF.md", status: "removed" },
+      { filename: "extensions/sample-ext/docs/AGENTS.md", status: "added" },
+    ]);
+    assert.equal(shipped.code, 1, shipped.stdout);
+    assert.equal(shipped.by["pr-files"].verdict, "PASS", "pr-files' stray logic is unchanged");
+    assert.equal(shipped.by["pr-local-only"].verdict, "FAIL");
+    assert.deepEqual(shipped.by["pr-local-only"].details.map((/** @type {any} */ d) => `${d.file}: ${d.text}`), [
+      "extensions/sample-ext/AGENTS.md: modified",
+      "extensions/sample-ext/CONCEPTS.md: added",
+      "extensions/sample-ext/CLAUDE.md: renamed from extensions/sample-ext/NOTES.md",
+    ]);
+    const clean = await run([{ filename: "extensions/sample-ext/src/index.tsx", status: "modified" }]);
+    assert.equal(clean.by["pr-local-only"].verdict, "PASS");
+  });
+});

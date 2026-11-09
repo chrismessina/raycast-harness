@@ -611,6 +611,20 @@ test("file checks with --published: identical files are not flagged, changed or 
   });
 });
 
+test("file checks with --published: a changed file inside an already-published directory is flagged with the same path set; bytes, not decoded text, decide (live preflight.test.mjs port, W13)", async () => {
+  await withTempDir(async (dir) => {
+    const pub = makeExt(join(dir, "pub"), { files: { ".claude/settings.json": "{}", "dist/a": Buffer.from([0x80]) } });
+    const changed = await preflight(makeExt(join(dir, "changed"), { files: { ".claude/settings.json": '{"x":1}', "dist/a": Buffer.from([0x80]) } }), { published: pub });
+    assert.equal(changed.verdict("agent-scaffolding"), "WARN");
+    assert.deepEqual(changed.by["agent-scaffolding"].details.map((d) => d.file), [".claude"]);
+    assert.equal(changed.verdict("generated-files"), "PASS", "an identical dist/ is not flagged");
+    // 0x80 and 0x81 both decode to U+FFFD as UTF-8, so only a byte comparison tells them apart.
+    const bytes = await preflight(makeExt(join(dir, "bytes"), { files: { ".claude/settings.json": "{}", "dist/a": Buffer.from([0x81]) } }), { published: pub });
+    assert.equal(bytes.verdict("generated-files"), "FAIL");
+    assert.equal(bytes.verdict("agent-scaffolding"), "PASS", "an identical .claude/ is not flagged");
+  });
+});
+
 test("dev-material and generated-files: LICENSE, contributor docs, docs/, tools/ warn; dist/.build fail; .DS_Store warns; ignored and never-copied paths pass", async () => {
   await withTempDir(async (dir) => {
     for (const f of [["LICENSE", "MIT\n"], ["CONTRIBUTING.md", "x"], ["docs/setup.md", "x"], ["tools/test.mjs", "x"]])

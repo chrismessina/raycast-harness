@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+- Chris's 2026-11-03 file ruling (`AGENTS.md`, `CONCEPTS.md`, `CLAUDE.md` and `HANDOFF.md`
+  never ship) works through a guarded publish. The plugin preset holds them out with
+  `rx holdout`, and `holdout-tracked` names its fix (`git rm --cached <path>` and list it in the
+  extension's `.gitignore`). `rx stale --preset` (and `rx gates`, which now passes its preset to
+  stale) classifies a published file the preset's `holdout.localOnly` lists and the local tree
+  lacks as `REMOVE` (`stale-remove`, WARN) instead of the `ONLY-PUB` FAIL; `rx audit record`
+  accepts the disposition `remove-published` (`{ path, localHash: "absent", baseline }`) for those
+  rows only, and `rx guard` recomputes the same rule. `rx pr files` reports each file's GitHub
+  status (`data.files: [{ path, status, previous }]`, the path list kept as `data.paths`), and
+  with `--preset` its `pr-local-only` check FAILs when a local-only file is added, modified or
+  renamed in rather than removed.
+- Synced with the live skills plugin: the published-copy comparison has a test for a file changed
+  inside an already-published directory with an unchanged file list (ported from the live
+  `preflight.test.mjs`), and `docs/check-classes.md` no longer lists `AGENTS.md` as a file an
+  owner ships on purpose (Chris's 2026-11-03 ruling: `AGENTS.md` and `CONCEPTS.md` stay in the
+  mirror, listed in the extension's `.gitignore`).
 - Published-copy access is one scoped operation (`src/published-copy.mjs` `withPublishedCopy`):
   the service owns cache detection, the upstream lock for the whole read and exact-baseline
   validation, and `stale`, `preflight`, `png`, `changelog`, `contributions`, `gates` and
