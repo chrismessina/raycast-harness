@@ -14,7 +14,7 @@
 //                  needs a disposition matching { path, localHash, baseline } exactly (a REMOVE
 //                  row's localHash is "absent", and only `remove-published` answers it, which
 //                  answers nothing else); a missing, unmatched or misfit one → FAIL
-//                  audit-dispositions (F9)
+//                  audit-dispositions
 //   verifications  one per external effect the extension has (writes files, makes web requests,
 //                  calls Raycast AI, from the applicability context) → FAIL audit-verification
 //   greptile rules the rules in use (repo, sha, digest of config.json rules + files.json) are stored
@@ -181,7 +181,7 @@ async function record(ctx) {
   const removed = existsSync(auditPath);
   rmSync(auditPath, { force: true });
   if (removed) ctx.log(`audit: removed the previous audit at ${auditPath}; a new one is written only when the inputs are valid\n`);
-  // One snapshot of the Greptile rules for the whole recording (W9 round 2 finding A).
+  // One snapshot of the Greptile rules for the whole recording.
   return withGreptileRulesSnapshot((rules) => recordWith(ctx, auditPath, rules));
 }
 

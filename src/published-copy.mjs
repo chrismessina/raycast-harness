@@ -23,11 +23,12 @@
 // publication status and baseline identity, never a cache path. Readers go through
 // readStaleBaseline, which also accepts the older shape that carried `publishedDir` and ignores it.
 
-import { existsSync, readFileSync, statSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { RxError } from "./errors.mjs";
 import { repoStatePath, repoStatePathReadOnly, writeJsonAtomic } from "./state.mjs";
 import { cachedUpstream, ensureUpstream, insideUpstreamCache, withUpstreamLock } from "./upstream.mjs";
+import { isDirectory } from "./util.mjs";
 
 /**
  * @typedef {{
@@ -80,15 +81,6 @@ function makeCopy({ name, published, baseline, at, cached, directory }) {
     exists: (rel) => directory !== null && existsSync(join(directory, rel)),
     read: (rel) => readFileSync(path(rel)),
   };
-}
-
-/** @param {string} dir */
-function isDirectory(dir) {
-  try {
-    return statSync(dir).isDirectory();
-  } catch {
-    return false;
-  }
 }
 
 /**

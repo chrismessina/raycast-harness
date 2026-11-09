@@ -3,6 +3,8 @@
 // and the live `.greptile/` in raycast/extensions, and where the live copy is. No I/O here except
 // through the injected fetcher.
 
+import { isObject } from "../util.mjs";
+
 export const SNAPSHOT_FILES = ["config.json", "files.json", "rules.md"];
 
 /** The one repository Greptile's Raycast rules come from. Every upstream request names it. */
@@ -31,8 +33,6 @@ export function commitTime(value, label, now = Date.now()) {
  * @typedef {{ config: any, files: any, rules: string }} RuleSet
  */
 
-/** @param {unknown} v */
-const isObject = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
 /** @param {unknown} v */
 const isText = (v) => typeof v === "string" && v.trim().length > 0;
 /** @param {unknown} v */

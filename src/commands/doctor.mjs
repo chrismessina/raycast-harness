@@ -15,6 +15,7 @@ import { git } from "../git.mjs";
 import { GREPTILE_REPO, diffRuleSets, fetchLive, lastGreptileCommit } from "../greptile/compare.mjs";
 import { describeRules, loadGreptileRules } from "../greptile/rules.mjs";
 import { transport } from "../pr/transport.mjs";
+import { Results } from "../verdict.mjs";
 
 /** @type {import("../cli.mjs").CommandSpec} */
 export const spec = {
@@ -94,6 +95,13 @@ export async function run({ results, root, log }) {
     else results.warn("ray", `node_modules/.bin/ray missing in ${root}; run npm install there`);
   }
 
+  // The greptile-rules network work starts now, alongside the gh probe, into its own result set;
+  // its result is merged where it is reported (last), so the order is unchanged. The
+  // no-op catch only keeps an early rejection from counting as unhandled; the await below rethrows.
+  const greptileResults = new Results();
+  const greptilePending = greptileRules(greptileResults, log);
+  greptilePending.catch(() => {});
+
   // gh auth (network)
   try {
     const r = await ghProbe(["auth", "status"]);
@@ -112,9 +120,8 @@ export async function run({ results, root, log }) {
   const cwd = root ?? process.cwd();
   const cfg = async (/** @type {string} */ k, /** @type {string[]} */ extra = []) =>
     (await git(["config", ...extra, "--get", k], { cwd, allowFail: true })).stdout.trim() || null;
-  const gpgsign = (await cfg("commit.gpgsign", ["--bool"])) === "true"; // yes/on/1 all read as true
-  const format = await cfg("gpg.format");
-  const key = await cfg("user.signingkey");
+  const [gpgsignValue, format, key] = await Promise.all([cfg("commit.gpgsign", ["--bool"]), cfg("gpg.format"), cfg("user.signingkey")]);
+  const gpgsign = gpgsignValue === "true"; // yes/on/1 all read as true
   data.signing = { gpgsign, format, key: key ? key.slice(0, 24) + (key.length > 24 ? "…" : "") : null };
   if (gpgsign && key) results.pass("git-signing", `commits signed (${format ?? "openpgp"})`);
   else results.warn("git-signing", gpgsign ? "commit.gpgsign is true but user.signingkey is unset" : "commit.gpgsign is not true; commits will be unsigned");
@@ -145,7 +152,8 @@ export async function run({ results, root, log }) {
   else if (k.status === "missing") results.warn("attest-key", `${k.path} not created yet; rx gates creates it`);
   else results.error("attest-key", k.message);
 
-  data.greptileRules = await greptileRules(results, log);
+  data.greptileRules = await greptilePending;
+  results.merge(greptileResults);
   return { data };
 }
 

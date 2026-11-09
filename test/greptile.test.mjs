@@ -936,7 +936,7 @@ test("greptile: subcommand roots are as contracted (fetch/wait/can-reply optiona
   assert.deepEqual(Object.keys(p.subcommands.body.checks).sort(), ["pr-body-diff", "pr-body-write"]);
 });
 
-// ---- Wave 9 Codex round 1: findings 2, 3, 4, 7 ---------------------------------------------------
+// ---- Copy ordering, cache-copy validity, upstream repo and --dest restoration -------------------
 
 test("lookup (W9 finding 2): copies are ordered by upstream commit date; an earlier-same-day cache copy fetched later does not shadow the newer shipped copy", async () => {
   await withCache((_dir, cache) => {

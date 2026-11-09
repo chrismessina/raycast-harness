@@ -307,13 +307,13 @@ export async function runPreflight({ root, publishedDir, preset }) {
   npmRegistry(root, c);
 
   // screenshots — store-screenshots (presence; Greptile's rule names view AND menu-bar commands);
-  // screenshot-count / -format / -size are new (§4.1)
+  // then screenshot-count / -format / -size
   const metaDir = join(root, "metadata");
   const metaEntries = existsSync(metaDir) ? readdirSync(metaDir) : null;
   const pngs = (metaEntries ?? []).filter((f) => f.toLowerCase().endsWith(".png"));
   if (commands.some((cmd) => cmd.mode === "view" || cmd.mode === "menu-bar")) {
-    // Greptile's rule asks screenshots of NEW view / menu-bar extensions (W9 round 2 finding C): a
-    // published extension whose only such commands are menu-bar ones is a WARN, a view one a FAIL.
+    // Greptile's rule asks screenshots of NEW view / menu-bar extensions: a published extension
+    // whose only such commands are menu-bar ones is a WARN, a view one a FAIL.
     const menuBarOnly = !commands.some((cmd) => cmd.mode === "view");
     // …unless the published copy had screenshots and this change removes them all: that stays a FAIL.
     const publishedShots = publishedDir !== null && existsSync(join(publishedDir, "metadata")) && readdirSync(join(publishedDir, "metadata")).some((f) => f.toLowerCase().endsWith(".png"));
@@ -352,8 +352,8 @@ export async function runPreflight({ root, publishedDir, preset }) {
   });
   if (unused.length) c.fail("unused-dependencies", `dependencies no file under src/ imports: ${unused.join(", ")}`);
   // The reverse (Greptile's rule): a package runtime code imports, listed only in devDependencies.
-  // A text heuristic (an `import("x")` type or an import inside a string matches too; W9 round 2
-  // finding B), so WARN, never FAIL; the Greptile judgment entry for unused-dependencies covers the rest.
+  // A text heuristic (an `import("x")` type or an import inside a string matches too),
+  // so WARN, never FAIL; the Greptile judgment entry for unused-dependencies covers the rest.
   const runtime = runtimeImports(sources);
   const devOnly = Object.keys(pkg.devDependencies ?? {}).filter((d) => !(d in (pkg.dependencies ?? {})) && !d.startsWith("@types/"));
   const misplaced = devOnly.filter((d) => runtime.has(d));

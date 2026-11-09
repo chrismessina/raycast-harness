@@ -8,13 +8,13 @@ import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { helpText, parseArgs } from "./args.mjs";
-import { ArgError, RootError, RxError } from "./errors.mjs";
+import { ArgError, RootError, RxError, firstLine } from "./errors.mjs";
 import { CLI_ERRORS, appendThrownError, declaredChecks, executeCommand, strayResult, validateCompletion } from "./command-execution.mjs";
 import { resolveRoot } from "./root.mjs";
 import { FORMATS, emit } from "./output.mjs";
 import { Results } from "./verdict.mjs";
 
-// The completion kernel's registry helpers, re-exported where commands have always imported them.
+// The completion kernel's registry helpers, re-exported for the commands.
 export { PROTOCOL_IDS, declared } from "./command-execution.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -104,11 +104,6 @@ async function commandsFor(name, dir = COMMANDS_DIR) {
     if (mod.spec.name === name) return new Map([[name, mod]]);
   }
   return loadCommands(dir);
-}
-
-/** @param {string} s */
-function firstLine(s) {
-  return String(s ?? "").split(/\r?\n/).find((l) => l.trim())?.trim() ?? "(no message)";
 }
 
 /** @param {() => Promise<string>} [stdinReader] */
@@ -231,7 +226,7 @@ export async function runCli(argv, io = {}) {
     return fromError(e, results, finish, log);
   }
   // The command threw and the kernel already recorded the ERROR. Its report is rendered outside the
-  // catch above, as the dispatcher always did: output that fails while reporting an error escapes
+  // catch above: output that fails while reporting an error escapes
   // after one write attempt instead of being reported a second time.
   return finish(out.data, out.fingerprint);
 }

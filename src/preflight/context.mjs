@@ -5,6 +5,7 @@ import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { extname, join, relative } from "node:path";
 import { readStaleBaseline } from "../published-copy.mjs";
 import { stripComments } from "./lexer.mjs";
+import { isObject as isObj } from "../util.mjs";
 
 const SOURCE_EXT = new Set([".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"]);
 export const WEB_REQUESTS_RE = /\bfetch\s*\(|axios|node-fetch|useFetch|@chrismessina\/raycast-downloader|from "(node:)?https?"|from "(undici|got|ky)"/;
@@ -16,8 +17,7 @@ export function read(file) {
   try { return readFileSync(file, "utf8"); } catch { return null; }
 }
 
-/** @param {unknown} v */
-export function isObj(v) { return v !== null && typeof v === "object" && !Array.isArray(v); }
+export { isObj };
 
 /**
  * Every source file under src/ (absolute paths), skipping node_modules and dot-directories.

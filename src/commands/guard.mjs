@@ -29,7 +29,7 @@
 //   unknown   the command's text mentions the word `publish` but is not one of those shapes
 //             (`npm run "publish"`, `npx ray publish`, `FOO=1 npm run publish`, `(cd x); npm run
 //             publish`, `git commit -m "ray publish"`, …): blocked, "write it as a plain command".
-//             Words that only contain publish (`--published`, `--record-publication`) are not
+//             Words that only contain publish (`--published`, `publication`) are not
 //             mentions, so the plugin's own rx calls pass.
 //   state     the command's text mentions `.git/rx` or `raycast-harness/attest.key` (same
 //             normalization, plus `/./` and repeated `/` collapsed), or any path-like word in it
@@ -79,7 +79,6 @@ import { resolveRoot } from "../root.mjs";
 import { repoStatePathReadOnly } from "../state.mjs";
 import { checkProtectedPath, pathMemo } from "../audit/protected-paths.mjs";
 import { classifyCommand } from "../audit/publish-command.mjs";
-import { greptileRulesAgreementProblem, greptileRulesStamp } from "../audit/greptile.mjs";
 
 export const HOOKS_DOC_URL = "https://code.claude.com/docs/en/hooks";
 export const PLUGINS_DOC_URL = "https://code.claude.com/docs/en/plugins-reference";
@@ -156,6 +155,7 @@ export async function checkRoot(root, version) {
     { validateAudit, validateReceipt },
     { dispositionKey, parseEntries },
     { applicableRules, decide: decideAudit, effectsOf, staleDispositions },
+    { greptileRulesAgreementProblem, greptileRulesStamp },
   ] = await Promise.all([
     import("../binding.mjs"),
     import("../fingerprint.mjs"),
@@ -164,6 +164,7 @@ export async function checkRoot(root, version) {
     import("../audit/artifacts.mjs"),
     import("../audit/entries.mjs"),
     import("../audit/evaluate.mjs"),
+    import("../audit/greptile.mjs"),
   ]);
   const receiptState = { present: false, fresh: false, complete: false };
   const auditState = { present: false, fresh: false, blocking: true };
@@ -232,7 +233,7 @@ export async function checkRoot(root, version) {
   // The rules the judgment entries were read against must be the rules in use now (an
   // `rx greptile update` or an `rx gates` run can change a rule's text under the same id), and the
   // rules the receipt was written under must be those same rules.
-  /** @type {{ repo: string, sha: string, digest: string }} */
+  /** @type {import("../audit/greptile.mjs").RulesStamp} */
   let rulesNow;
   try {
     rulesNow = greptileRulesStamp();

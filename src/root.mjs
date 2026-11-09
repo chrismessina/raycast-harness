@@ -6,6 +6,7 @@
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { RootError } from "./errors.mjs";
+import { isDirectory } from "./util.mjs";
 
 /** @param {string} dir */
 export function isExtensionDir(dir) {
@@ -37,11 +38,10 @@ export function resolveRoot({ root = null, cwd = process.cwd() } = {}) {
     dir = parent;
   }
   // Directory symlinks are followed (statSync), a dangling one is skipped.
-  const isDir = (/** @type {string} */ p) => { try { return statSync(p).isDirectory(); } catch { return false; } };
   const children = readdirSync(resolve(cwd), { withFileTypes: true })
     .filter((e) => e.name !== "node_modules" && !e.name.startsWith("."))
     .map((e) => join(resolve(cwd), e.name))
-    .filter((p) => isDir(p) && isExtensionDir(p))
+    .filter((p) => isDirectory(p) && isExtensionDir(p))
     .sort();
   if (children.length === 1) return children[0];
   if (children.length > 1)

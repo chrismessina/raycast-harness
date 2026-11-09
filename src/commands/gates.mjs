@@ -187,7 +187,7 @@ async function toolStep(name, root, results, env, log) {
  * and reported (never a reload), or null when no copy loads (an ERROR; no receipt). Never an
  * ERROR for a network, validation, write failure or an expired deadline.
  * @param {import("../verdict.mjs").Results} results @param {(s: string) => void} log
- * @returns {Promise<{ repo: string, sha: string, digest: string } | null>}
+ * @returns {Promise<import("../audit/greptile.mjs").RulesStamp | null>}
  */
 async function greptileRulesStep(results, log) {
   /** @type {import("../greptile/update.mjs").UpdateOutcome} */
@@ -227,11 +227,11 @@ async function greptileRulesStep(results, log) {
 
 /**
  * gates-rules-changed: the rules in use now are still the snapshot the greptile-rules step stamped.
- * @param {{ repo: string, sha: string, digest: string }} stamped
+ * @param {import("../audit/greptile.mjs").RulesStamp} stamped
  * @param {import("../verdict.mjs").Results} results @param {(s: string) => void} log
  */
 function checkRulesUnchanged(stamped, results, log) {
-  /** @type {{ repo: string, sha: string, digest: string }} */
+  /** @type {import("../audit/greptile.mjs").RulesStamp} */
   let now;
   try {
     now = stampOf(loadGreptileRules({ warn: log }));

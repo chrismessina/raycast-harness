@@ -10,18 +10,16 @@
 //   - a thrown RxError is ERROR under its own id; any other throw is `ERROR internal`
 //   - ERROR outranks FAIL (Results.exit, src/verdict.mjs)
 //
-// Where the two paths differed before this kernel existed, the difference is kept as an explicit
-// option rather than unified: see ErrorPolicy below and runStep's `checkIds`. Per-command error
-// policy (a judge provider outage becomes an advisory fallback, an npm currency failure N/A, a
-// failed executable start ERROR) lives in the commands, never here.
+// Per-command error policy (a judge provider outage becomes an advisory fallback, an npm currency
+// failure N/A, a failed executable start ERROR) lives in the commands, never here.
 
-import { RxError } from "./errors.mjs";
+import { RxError, firstLine } from "./errors.mjs";
 
 /** Ids the dispatcher itself may emit; a command need not declare them. */
 export const PROTOCOL_IDS = new Set(["args", "root", "input", "tooling", "github", "npm", "git", "protocol", "internal"]);
 
 /**
- * How a throw is reported. The dispatcher and the step runner have always differed here, and the
+ * How a throw is reported. The dispatcher and the step runner differ here, and the
  * difference is observable, so each keeps its own:
  *   - `logStack`: write the stack of a non-RxError throw to `log` (stderr). The dispatcher does;
  *     a step does not (its composite's own stderr carries no step stacks).
@@ -82,11 +80,6 @@ export function validateCompletion(name, checks, results) {
  */
 export function requireResults(name, results) {
   if (results.items.length === 0) results.error("protocol", `${name} produced no results; silence is never a pass`);
-}
-
-/** @param {string} s */
-function firstLine(s) {
-  return String(s ?? "").split(/\r?\n/).find((l) => l.trim())?.trim() ?? "(no message)";
 }
 
 /**

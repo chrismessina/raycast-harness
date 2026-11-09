@@ -564,7 +564,7 @@ test("guard state mentions: a Bash command that mentions .git/rx or the attestat
   });
 });
 
-// ---- Wave 9 Codex finding 1: the audit is bound to the Greptile rules it judged ----------------
+// ---- The audit is bound to the Greptile rules it judged -----------------------------------------
 
 /**
  * Write an `rx greptile update`-shaped cache copy of the shipped rules under the test's cache,
@@ -593,7 +593,7 @@ test("guard (W9 finding 1): changed rule text under the same ids blocks a record
 
     // Same ids, one judgment rule's text changed: the applicable-id set is unchanged, so only the
     // rules binding can catch it. The receipt names the old rules too, so the recovery is
-    // rx gates, then rx audit record (W10 round 1 P3).
+    // rx gates, then rx audit record.
     const copy = cachedRules(dir, "cccccccccccccccccccccccccccccccccccccccc", (c) => {
       const r = c.rules.find((/** @type {any} */ x) => x.id === "no-silent-failure");
       r.rule += "\n\nAlso flag: a new requirement the audit never read.";

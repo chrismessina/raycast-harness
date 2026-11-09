@@ -1,4 +1,4 @@
-// Wave 10: `rx gates` keeps the Greptile rules current as its first step (greptile-rules), binds
+// `rx gates` keeps the Greptile rules current as its first step (greptile-rules), binds
 // the receipt to them (`greptileRules`), `rx audit record` refuses a receipt written under other
 // rules, and `rx guard` / `rx audit show` require the receipt's, the audit's and the current rules
 // to agree. No network: every GitHub request goes to an injected fake (greptileFake), and the
@@ -244,7 +244,7 @@ test("guard: the receipt alone names other rules (audit = now ≠ receipt) → b
   });
 });
 
-// ---- Wave 10 round 1 fixes ----------------------------------------------------------------------
+// ---- greptile-rules races, deadlines and disagreement -------------------------------------------
 
 test("gates greptile-rules: rules installed by another update while the step's request is pending → FAIL gates-rules-changed, no receipt; the stamp is the snapshot the step reported", async () => {
   await withGatedEnv(async (dir) => {

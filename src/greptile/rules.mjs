@@ -190,7 +190,7 @@ export function writeUpdatedCopy(raw, source) {
  * in a hidden temp directory beside the destination and validated there (the same readRuleDir the
  * lookup uses); only then are the destination's files overwritten, the originals held in memory.
  * Each file is recorded as attempted BEFORE its write, so a write that truncates and then throws
- * (ENOSPC) is restored too (W9 round 2 finding D). On any failure every attempted file is restored
+ * (ENOSPC) is restored too. On any failure every attempted file is restored
  * and read back; the error says every file was restored only when each read-back equals the
  * original bytes, else it is marked `partial` and names the files that could not be restored.
  * @param {string} destDir a checkout's src/rules/greptile @param {Record<string, string>} raw the

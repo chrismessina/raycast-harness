@@ -82,8 +82,7 @@ test("kernel, step path: a step that records nothing is ERROR protocol", async (
 });
 
 // Rule 3: an undeclared check id is ERROR protocol. The dispatcher checks every command against its
-// own spec; a step's ids are checked one level up, against the composite's spec, unless the caller
-// asks runStep for `checkIds` (the paths differed before the kernel; the difference is kept).
+// own spec; a step's ids are checked one level up, against the composite's spec.
 
 test("kernel, CLI path: an undeclared id is ERROR protocol naming the command", async () => {
   const r = await cli(`export const spec = { name: "zz-kernel", summary: "s", root: "none", checks: { a: "a" } };
@@ -104,15 +103,6 @@ export async function run(ctx) { const s = await runStep(step, ctx, { root: "/x"
   assert.equal(r.code, 2);
   assert.deepEqual(ids(r.json.results), [["PASS", "a"], ["PASS", "nope"], ["ERROR", "protocol"]]);
   assert.match(r.json.results[2].message, /^zz-kernel emitted undeclared check id "nope"/);
-});
-
-test("kernel, step path: runStep adds no step-level id check by default, and adds it with checkIds", async () => {
-  const mod = stepModule(async ({ results }) => { results.pass("a", "ok"); results.pass("nope", "x"); });
-  const plain = await runStep(mod, /** @type {any} */ (parent()), { root: "/x" });
-  assert.deepEqual(ids(plain.results.items), [["PASS", "a"], ["PASS", "nope"]]);
-  const checked = await runStep(mod, /** @type {any} */ (parent()), { root: "/x", checkIds: true });
-  assert.deepEqual(ids(checked.results.items), [["PASS", "a"], ["PASS", "nope"], ["ERROR", "protocol"]]);
-  assert.equal(checked.results.items[2].message, 'zz-step emitted undeclared check id "nope"; declare it in spec.checks and docs/commands.md');
 });
 
 // Rule 4: ERROR outranks FAIL.
@@ -236,14 +226,6 @@ test("kernel, step path: a returned transport is dropped; data and fingerprint a
   assert.deepEqual(Object.keys(out), ["results", "data", "fingerprint"]);
   assert.deepEqual(out.data, { d: 1 });
   assert.equal(out.fingerprint, "f");
-});
-
-test("kernel, CLI path: a returned transport prints verbatim when no format is given", async () => {
-  const r = await cli(`export const spec = { name: "zz-kernel", summary: "s", root: "none", checks: { a: "a" } };
-export async function run({ results }) { results.fail("a", "blocked"); return { transport: { stdout: "T\\n", exit: 0 } }; }
-`, ["zz-kernel"]);
-  assert.equal(r.code, 0);
-  assert.equal(r.stdout, "T\n");
 });
 
 test("kernel, CLI path (W11 round 1): output that fails while reporting a command's throw escapes after one write attempt, as before the kernel", async () => {

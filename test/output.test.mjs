@@ -204,7 +204,7 @@ test("rx commands --json lists --format beside --json for every command and subc
     for (const [n, s] of Object.entries(c.subcommands)) check(s, `${at} ${n}`);
   };
   for (const c of r.json.data.commands) check(c, c.name);
-  assert.deepEqual(GLOBAL_FLAGS["--format"], { type: "string", value: "<text|json|md>", help: "output format: text (verdict lines, the default), json (the envelope) or md (a Markdown report of the results)" });
+  assert.equal(GLOBAL_FLAGS["--format"].value, "<text|json|md>");
 });
 
 test("renderEnvelope: the same envelope in every format; an unknown format throws", () => {

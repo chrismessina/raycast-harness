@@ -37,9 +37,9 @@
 //             `npx ray publish`, `npm run publish; npm test`, `git commit -m "ray publish"` and
 //             `echo publish` all block. The cost is one retry with a reworded or split command;
 //             the gain is that there is no shell grammar to argue with. Words that merely contain
-//             `publish` (`--published`, `publishRange`, `--record-publication`, `publishing`) are
-//             not mentions, so the plugin's own `rx preflight --published` and
-//             `rx.mjs --record-publication` calls pass.
+//             `publish` (`--published`, `publishRange`, `publication`, `publishing`) are not
+//             mentions, so the plugin's own `rx preflight --published` and
+//             `rx publication record` calls pass.
 //   other     anything else: allowed without reading any state.
 //
 // Out of the threat model, and documented as such in docs/commands.md §4.9: a command that builds
@@ -203,18 +203,16 @@ export function pathWords(command) {
 /**
  * Does any path-like word of the command resolve to a protected path? `~` and `~/…` are the home
  * directory; `~user` is skipped (only the shell knows that home); everything else resolves
- * against `cwd`.
+ * against `cwd`. The words are checked concurrently (the memo shares each directory's pending
+ * lookup); any lookup that rejects rejects the whole check, so it fails closed.
  * @param {string} command
  * @param {string} cwd
  * @param {import("./protected-paths.mjs").PathMemo} [memo] shared across the words of one decision
  */
 export async function mentionsProtectedPath(command, cwd, memo = pathMemo()) {
-  for (const w of pathWords(command)) {
-    const p = w === "~" ? homedir() : w.startsWith("~/") ? join(homedir(), w.slice(2)) : w.startsWith("~") ? null : w;
-    if (p === null) continue;
-    if ((await checkProtectedPath(p, cwd, memo)).protected) return true;
-  }
-  return false;
+  const paths = pathWords(command).flatMap((w) => (w === "~" ? [homedir()] : w.startsWith("~/") ? [join(homedir(), w.slice(2))] : w.startsWith("~") ? [] : [w]));
+  const checks = await Promise.all(paths.map((p) => checkProtectedPath(p, cwd, memo)));
+  return checks.some((c) => c.protected);
 }
 
 /** Does the command's text mention the word `publish`, in any quoting? @param {string} command */

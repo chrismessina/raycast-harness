@@ -25,7 +25,7 @@
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join, sep } from "node:path";
-import { RxError } from "./errors.mjs";
+import { RxError, firstLine } from "./errors.mjs";
 import { PUBLISH_SKIPS } from "./payload.mjs";
 import { ghApi } from "./gh.mjs";
 import { git } from "./git.mjs";
@@ -217,11 +217,6 @@ export async function ensureUpstream(name, { maxAgeMs = 0, log = () => {} } = {}
   const info = { name, published: true, publishedDir, baseline, at };
   writeFileSync(metaPath(name), JSON.stringify(info, null, 2) + "\n");
   return info;
-}
-
-/** @param {string} s */
-function firstLine(s) {
-  return String(s ?? "").split(/\r?\n/).find((l) => l.trim())?.trim() ?? "(no message)";
 }
 
 /** Create the partial clone skeleton once. @param {string} dir */

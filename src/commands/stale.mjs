@@ -27,6 +27,7 @@ import { withPublishedCopy, writeStaleBaseline } from "../published-copy.mjs";
 import { blobId, skipSegment } from "../upstream.mjs";
 import { repoStatePathReadOnly } from "../state.mjs";
 import { readPresetFields } from "./holdout.mjs";
+import { isUnder } from "../util.mjs";
 
 /** @type {import("../cli.mjs").CommandSpec} */
 export const spec = {
@@ -142,7 +143,7 @@ async function heldOutPaths(dir) {
  * directory? @param {string} path @param {string[]} localOnly
  */
 export function listedLocalOnly(path, localOnly) {
-  return localOnly.find((p) => path === p || path.startsWith(`${p}/`)) ?? null;
+  return localOnly.find((p) => isUnder(path, p)) ?? null;
 }
 
 /** @param {string} dir */
@@ -232,7 +233,7 @@ export async function classify(dir, publishedDir, localOnly = { localOnly: [], h
     if (p && !l) {
       const listed = listedLocalOnly(path, localOnly.localOnly);
       if (listed === null) row("ONLY-PUB", "published has this file; local does not");
-      else row("REMOVE", `local-only (${listed} in the preset's holdout.localOnly), ${[...localOnly.heldOut].some((h) => path === h || path.startsWith(`${h}/`)) ? "held out by rx holdout" : "absent locally"}; publishing deletes the published copy`);
+      else row("REMOVE", `local-only (${listed} in the preset's holdout.localOnly), ${[...localOnly.heldOut].some((h) => isUnder(path, h)) ? "held out by rx holdout" : "absent locally"}; publishing deletes the published copy`);
       continue;
     }
     if (l && !p) { row("NEW?", "not published: your new file, or deleted upstream"); continue; }

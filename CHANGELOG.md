@@ -90,7 +90,7 @@
 - `rx publication record <repo> <pr> <sha> [--root <dir>]` writes the plain publication record
   `repo/publication.json` (`{repo, pr, remoteSha, at}`; no attestation, no network). Its writer
   and `rx greptile can-reply --claims-fix` share one validator, and a malformed record is now
-  `ERROR input` rather than evidence. The plugin runner's `--record-publication` forwards to it.
+  `ERROR input` rather than evidence. The plugin runner records a publication through it.
 - Initial scaffold: verdict protocol, argument parser, root resolution,
   `rx commands --json`, `rx doctor`, commit-message hook.
 - `rx preflight`: the skills plugin's `scripts/preflight.mjs` ported with every one of its

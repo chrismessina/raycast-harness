@@ -32,6 +32,11 @@ import { fileURLToPath } from "node:url";
 import { RxError } from "../errors.mjs";
 import { loadGreptileRules, rulesDigest } from "../greptile/rules.mjs";
 
+/**
+ * A rule set's identity, as a receipt and an audit store it in `greptileRules`.
+ * @typedef {{ repo: string, sha: string, digest: string }} RulesStamp
+ */
+
 const HERE = dirname(fileURLToPath(import.meta.url));
 export const GREPTILE_CONFIG = join(HERE, "..", "rules", "greptile", "config.json");
 
@@ -77,7 +82,7 @@ export const GREPTILE_JUDGMENT_RULES = Object.freeze([
   "extension-overlap",
   "data-hooks-bugs",
   "oauth-token-bugs",
-  // Preflight covers part of each of these (classification "both"; Wave 9 Codex finding 5).
+  // Preflight covers part of each of these (classification "both").
   "store-screenshots",
   "unused-dependencies",
   "eslint-flat-config",
@@ -156,7 +161,7 @@ function rulesInUse() {
 }
 
 /**
- * Run `fn` with ONE snapshot of the rules in use (W9 round 2 finding A): applicability, the known
+ * Run `fn` with ONE snapshot of the rules in use: applicability, the known
  * entry ids and the recorded stamp all read this snapshot, never a copy an `rx greptile update`
  * in another process wrote mid-recording. The pin is released when `fn` settles.
  * @template T @param {(snapshot: import("../greptile/rules.mjs").LoadedRules) => Promise<T>} fn
@@ -175,7 +180,7 @@ export async function withGreptileRulesSnapshot(fn) {
 /**
  * A rule set's identity: provenance and digest.
  * @param {import("../greptile/rules.mjs").LoadedRules} r
- * @returns {{ repo: string, sha: string, digest: string }}
+ * @returns {RulesStamp}
  */
 export function stampOf(r) {
   return { repo: r.source.repo, sha: r.source.sha, digest: rulesDigest(r.rules) };
@@ -183,7 +188,7 @@ export function stampOf(r) {
 
 /**
  * What `rx audit record` stores as `greptileRules`: the rules in use, by provenance and digest.
- * @returns {{ repo: string, sha: string, digest: string }}
+ * @returns {RulesStamp}
  */
 export function greptileRulesStamp() {
   return stampOf(rulesInUse());
@@ -198,15 +203,13 @@ export function freshGreptileRulesStamp() {
  * The guard's sentence when an audit's `greptileRules` (absent on an audit written before this
  * field existed) differs from the rules in use now, else null. `rerun` is the command it
  * prescribes: `rx audit record` alone works only while the receipt names the rules in use.
- * @param {unknown} recorded the audit's greptileRules @param {{ repo: string, sha: string, digest: string }} current
+ * @param {unknown} recorded the audit's greptileRules @param {RulesStamp} current
  * @param {string} [rerun]
  * @returns {string | null}
  */
-export function greptileRulesProblem(recorded, current, rerun = "run rx audit record again") {
-  const r = /** @type {any} */ (recorded);
-  if (r && r.repo === current.repo && r.sha === current.sha && r.digest === current.digest) return null;
-  const old = typeof r?.sha === "string" ? r.sha.slice(0, 7) : "unrecorded";
-  return `the Greptile rules changed since the audit was recorded (${old} → ${current.sha.slice(0, 7)}); ${rerun}`;
+function greptileRulesProblem(recorded, current, rerun = "run rx audit record again") {
+  if (sameGreptileRules(recorded, current)) return null;
+  return `the Greptile rules changed since the audit was recorded (${stampSha7(recorded)} → ${current.sha.slice(0, 7)}); ${rerun}`;
 }
 
 /**
@@ -228,7 +231,7 @@ export function stampSha7(s) {
 /**
  * `rx audit record`'s sentence when the receipt's `greptileRules` is not the snapshot the recording
  * took (the receipt was written against other rules), else null.
- * @param {unknown} receiptRules @param {{ repo: string, sha: string, digest: string }} snapshot
+ * @param {unknown} receiptRules @param {RulesStamp} snapshot
  * @returns {string | null}
  */
 export function receiptRulesProblem(receiptRules, snapshot) {
@@ -243,7 +246,7 @@ export function receiptRulesProblem(receiptRules, snapshot) {
  *   - the audit alone differs (the receipt and the rules in use agree; the audit recorded the
  *     field): "the audit was recorded against other Greptile rules than the receipt …; run rx
  *     audit record again"
- *   - the audit differs from the rules in use otherwise (the Wave 9 check, including `unrecorded`
+ *   - the audit differs from the rules in use otherwise (the rules-agreement check, including `unrecorded`
  *     for an audit written before the field existed): "the Greptile rules changed since the audit
  *     was recorded …; run rx audit record again" while the receipt names the rules in use, else
  *     "…; run rx gates, then rx audit record" (recording alone would refuse that receipt)
@@ -252,7 +255,7 @@ export function receiptRulesProblem(receiptRules, snapshot) {
  * Whenever the receipt's rules are not the rules in use, the command is `rx gates`, then `rx audit
  * record`: `rx audit record` refuses a receipt written under other rules.
  * @param {unknown} receiptRules @param {unknown} auditRules
- * @param {{ repo: string, sha: string, digest: string }} current
+ * @param {RulesStamp} current
  * @returns {string | null}
  */
 export function greptileRulesAgreementProblem(receiptRules, auditRules, current) {

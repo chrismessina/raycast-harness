@@ -890,7 +890,7 @@ test("N3 (gate): --published outside the cache on a machine with no cache runs c
   });
 });
 
-// ---- Wave 9 Codex round 1: findings 5 (mechanical gaps) and 6 ------------------------------------
+// ---- Screenshots, runtime devDependencies and nested review config ------------------------------
 
 test("screenshots (W9 finding 5): a menu-bar command needs screenshots too, as Greptile's store-screenshots says", async () => {
   await withTempDir(async (dir) => {

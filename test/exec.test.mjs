@@ -40,7 +40,7 @@ test("runOk throws on non-zero exit with the first stderr line", async () => {
   await assert.rejects(runOk(node, ["-e", "console.error('bad thing\\nmore'); process.exit(1)"]), /failed: bad thing/);
 });
 
-// ---- AbortSignal (W10: the greptile-rules step's deadline kills its gh child) -------------------
+// ---- AbortSignal: the greptile-rules step's deadline kills its gh child -------------------------
 
 /** A script that sleeps 10 s. @param {string} dir */
 function sleeper(dir) {

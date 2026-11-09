@@ -393,7 +393,7 @@ async function update({ args, results, log }) {
   /** @type {import("../greptile/rules.mjs").LoadedRules} */
   let before;
   try {
-    // An older checkout's SOURCE.json may predate `committed` (W9 round 2 finding E): it is
+    // An older checkout's SOURCE.json may predate `committed`: it is
     // accepted here and treated as older than any dated copy (the epoch).
     const r = readRuleDir(destDir, "--dest", { legacy: true });
     before = { rules: r.set, source: { kind: "shipped", repo: r.source.repo, sha: r.source.sha, committed: r.source.committed ?? LEGACY_COMMITTED, fetched: r.source.fetched, path: destDir, origin: r.source.source, pr: r.source.pr ?? null } };

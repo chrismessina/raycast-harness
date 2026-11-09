@@ -534,7 +534,7 @@ test("audit record: removing the previous audit is announced, on a bad input and
   });
 });
 
-// ---- W9 round 2 finding A: one rules snapshot per recording ----------------------------------
+// ---- One Greptile rules snapshot per recording --------------------------------------------------
 
 test("audit record (W9 round 2 finding A): the Greptile rules change mid-recording → ERROR audit-greptile-rules, nothing written", async () => {
   await withGatedEnv(async (dir) => {
@@ -563,7 +563,7 @@ test("audit record (W9 round 2 finding A): the Greptile rules change mid-recordi
       _setBeforeWriteHookForTests(null);
     }
     // The receipt was written under the old rules, so recording again is refused until rx gates
-    // runs under the new ones (W10); then it is written, stamped with them.
+    // runs under the new ones; then it is written, stamped with them.
     const refused = await auditRecord(root, writeEntries(dir, fullEntries()));
     assert.equal(byId(refused)["audit-receipt"].verdict, "ERROR");
     assert.equal((await gates(root)).code, 0);

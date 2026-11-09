@@ -11,6 +11,7 @@ import * as preflight from "../commands/preflight.mjs";
 import { REQUIRED_STEPS } from "../commands/gates.mjs";
 import { EFFECTS, parseEntries } from "./entries.mjs";
 import { isResult } from "./evaluate.mjs";
+import { isObject as isObj } from "../util.mjs";
 
 /** Does a result id belong to a step's output? @type {Record<string, (id: string) => boolean>} */
 export const STEP_RESULT_IDS = {
@@ -24,8 +25,6 @@ export const STEP_RESULT_IDS = {
   lint: (id) => id === "lint",
 };
 
-/** @param {unknown} v */
-const isObj = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
 /** @param {unknown} v */
 const str = (v) => typeof v === "string" && v.length > 0;
 

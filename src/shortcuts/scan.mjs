@@ -39,9 +39,10 @@
 //   - Object literals are read as JSON after quoting keys; a computed key or an expression value
 //     (`key: props.key`) makes the shortcut unresolved.
 
-import { readdirSync, readFileSync, statSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { join, relative } from "node:path";
 import { PLATFORMS, readBinding } from "./table.mjs";
+import { isDirectory as isDir } from "../util.mjs";
 
 /**
  * @typedef {import("./table.mjs").Binding} Binding
@@ -84,11 +85,6 @@ export function sourceFiles(root) {
   };
   if (isDir(base)) walk(base);
   return out.sort();
-}
-
-/** @param {string} p */
-function isDir(p) {
-  try { return statSync(p).isDirectory(); } catch { return false; }
 }
 
 /**

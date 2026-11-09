@@ -11,7 +11,7 @@
 //
 // Every outcome carries `selected`: the snapshot that is the copy in use as the routine finishes
 // (`before`, or `now` after a write). `rx gates` stamps exactly that object into its receipt and
-// never reloads, so the stamp always describes the snapshot the step reported (W10 round 1 P2).
+// never reloads, so the stamp always describes the snapshot the step reported.
 // updateWithin() bounds the whole routine with a deadline for `rx gates`; once it expires the
 // routine never starts a write, and a write already started is synchronous and finishes (or
 // removes its staged directory) before the deadline can be observed.

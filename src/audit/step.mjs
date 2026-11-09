@@ -7,7 +7,7 @@
 // parsing, no root resolution, no `invalidate`, no output, and no hook transport (a returned
 // `transport` is dropped).
 
-import { STEP_ERRORS, declaredChecks, executeCommand, validateCompletion } from "../command-execution.mjs";
+import { STEP_ERRORS, executeCommand } from "../command-execution.mjs";
 import { Results } from "../verdict.mjs";
 
 /**
@@ -21,17 +21,14 @@ import { Results } from "../verdict.mjs";
  *   root: string | null,
  *   flags?: Record<string, string | boolean | number | string[]>,
  *   subcommand?: string | null,
- *   checkIds?: boolean,
- *   errors?: import("../command-execution.mjs").ErrorPolicy,
  * }} p
- *   `checkIds` (default false) also applies the check-id registry against the step's own spec.
- *   Off by default because a step's undeclared id has always been caught one level up instead:
- *   the composite merges the step's results and the dispatcher checks them against the
- *   composite's spec, which spreads every step's checks. `errors` defaults to STEP_ERRORS (no stack
- *   on stderr; a failure to record the ERROR escapes to the composite).
+ *   A step's undeclared id is caught one level up: the composite merges the step's results and
+ *   the dispatcher checks them against the composite's spec, which spreads every step's checks.
+ *   Errors follow STEP_ERRORS (no stack on stderr; a failure to record the ERROR escapes to the
+ *   composite).
  * @returns {Promise<StepOutcome>}
  */
-export async function runStep(mod, parent, { root, flags = {}, subcommand = null, checkIds = false, errors = STEP_ERRORS }) {
+export async function runStep(mod, parent, { root, flags = {}, subcommand = null }) {
   const results = new Results();
   /** @type {import("../cli.mjs").CommandContext} */
   const ctx = {
@@ -44,8 +41,7 @@ export async function runStep(mod, parent, { root, flags = {}, subcommand = null
     log: parent.log,
     version: parent.version,
   };
-  const out = await executeCommand(mod, ctx, errors);
-  if (checkIds) validateCompletion(mod.spec.name, declaredChecks(mod.spec, subcommand), results);
+  const out = await executeCommand(mod, ctx, STEP_ERRORS);
   return { results, data: out.data, fingerprint: out.fingerprint };
 }
 

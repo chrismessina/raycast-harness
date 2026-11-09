@@ -2,6 +2,11 @@
 // that stops a check from running at all: bad arguments, an unresolvable root, unreadable input.
 // A check that ran and found a problem is a FAIL result, not an error.
 
+/** The first non-blank line of a message, trimmed; "(no message)" when there is none. @param {string} s */
+export function firstLine(s) {
+  return String(s ?? "").split(/\r?\n/).find((l) => l.trim())?.trim() ?? "(no message)";
+}
+
 export class RxError extends Error {
   /**
    * @param {string} message

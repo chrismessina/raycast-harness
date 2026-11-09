@@ -23,6 +23,7 @@ import { RxError } from "../errors.mjs";
 import { checklistItems, lineDiff, missingChecklist, splice, validateEdits } from "../pr/body.mjs";
 import { parsePrNumber, parseRepo, transport } from "../pr/transport.mjs";
 import { cachePath } from "../state.mjs";
+import { isUnder } from "../util.mjs";
 import { readPresetFields } from "./holdout.mjs";
 
 const DEFAULT_REPO = "raycast/extensions";
@@ -165,7 +166,7 @@ async function files({ args, results, cwd }) {
   // the rest of the preset's holdout.localOnly) may appear in a Store PR only as a deletion.
   if (localOnly === null) results.na("pr-local-only", "no --preset: the local-only file list is the preset's holdout.localOnly");
   else {
-    const hits = changed.filter((c) => c.path.startsWith(prefix) && localOnly.some((p) => c.path === `${prefix}${p}` || c.path.startsWith(`${prefix}${p}/`)));
+    const hits = changed.filter((c) => c.path.startsWith(prefix) && localOnly.some((p) => isUnder(c.path, `${prefix}${p}`)));
     const shipped = hits.filter((c) => c.status !== "removed");
     if (shipped.length) results.fail("pr-local-only", `${shipped.length} local-only file(s) the PR adds or changes; they stay in the mirror, listed in the extension's .gitignore, and are held out by rx holdout out`, shipped.map((c) => ({ file: c.path, text: describe(c) })));
     else if (hits.length) results.pass("pr-local-only", `${hits.length} local-only file(s) in the PR, every one removed`, hits.map((c) => ({ file: c.path, text: c.status })));
