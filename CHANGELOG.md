@@ -4,8 +4,9 @@
 
 - Chris's 2026-11-03 file ruling (`AGENTS.md`, `CONCEPTS.md`, `CLAUDE.md` and `HANDOFF.md`
   never ship) works through a guarded publish. The plugin preset holds them out with
-  `rx holdout`, and `holdout-tracked` names its fix (`git rm --cached <path>` and list it in the
-  extension's `.gitignore`). `rx stale --preset` (and `rx gates`, which now passes its preset to
+  `rx holdout`, and `holdout-tracked` names its fix (`git rm --cached <path>`, list it in the
+  extension's `.gitignore`, commit, then `rx holdout in` before `rx holdout out` again, because
+  the untracked entries still move when the check FAILs). `rx stale --preset` (and `rx gates`, which now passes its preset to
   stale) classifies a published file the preset's `holdout.localOnly` lists and the local tree
   lacks as `REMOVE` (`stale-remove`, WARN) instead of the `ONLY-PUB` FAIL. `rx audit record`
   accepts the disposition `remove-published` (`{ path, localHash: "absent", baseline }`) for those

@@ -256,7 +256,7 @@ async function out({ args, cwd, results, log }, root, inventoryPath, filesDir) {
       const ls = await git(["ls-files", "--error-unmatch", "--", c], { cwd: root, allowFail: true });
       if (ls.code === 0) {
         const dir = lstatSync(join(root, c)).isDirectory();
-        tracked.push({ file: c, text: `tracked in this checkout's index, so it cannot be held out: run \`git rm ${dir ? "-r " : ""}--cached ${c}\` (the file stays on disk), list ${c}${dir ? "/" : ""} in the extension's .gitignore, commit, then run rx holdout out again` });
+        tracked.push({ file: c, text: `tracked in this checkout's index, so it cannot be held out: run \`git rm ${dir ? "-r " : ""}--cached ${c}\` (the file stays on disk), list ${c}${dir ? "/" : ""} in the extension's .gitignore, commit, then run \`rx holdout in\` to restore anything this run moved, and run \`rx holdout out\` again` });
         skipped.push({ path: c, reason: "tracked" });
         continue;
       }

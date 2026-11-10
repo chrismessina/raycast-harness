@@ -170,6 +170,35 @@ test("out never moves a tracked local-only path: FAIL holdout-tracked, the file 
   });
 });
 
+test("following the holdout-tracked remedy as written ends in a clean holdout", async () => {
+  await withTempDir(async (dir) => {
+    const ext = fakeExtension(dir, "ext");
+    gitInit(ext);
+    writeFileSync(join(ext, "AGENTS.md"), "# Agents\n");
+    gitCommit(ext, "init: AGENTS.md committed in the mirror");
+    writeFileSync(join(ext, ".env"), "x\n");
+    const preset = join(dir, "preset.json");
+    writeFileSync(preset, JSON.stringify({ holdout: { localOnly: [".env", "AGENTS.md"] } }));
+    const args = ["holdout", "out", "--root", ext, "--preset", preset, "--json"];
+    let r = await rx(args, { cwd: dir });
+    assert.equal(r.code, 1, r.stdout);
+    assert.equal(by(r.json)["holdout-out"].verdict, "PASS", "the untracked .env moved");
+    // The remedy, step by step: untrack, ignore, commit, restore, hold out again.
+    execFileSync("git", ["rm", "-q", "--cached", "AGENTS.md"], { cwd: ext });
+    writeFileSync(join(ext, ".gitignore"), "AGENTS.md\n");
+    execFileSync("git", ["add", ".gitignore"], { cwd: ext });
+    execFileSync("git", ["commit", "-q", "-m", "untrack AGENTS.md"], { cwd: ext });
+    const back = await rx(["holdout", "in", "--root", ext, "--json"], { cwd: dir });
+    assert.equal(back.code, 0, back.stdout);
+    r = await rx(args, { cwd: dir });
+    assert.equal(r.code, 0, r.stdout);
+    const b = by(r.json);
+    assert.equal(b["holdout-tracked"].verdict, "PASS");
+    assert.deepEqual(r.json.data.moved.map((/** @type {any} */ m) => m.source).sort(), [".env", "AGENTS.md"]);
+    assert.ok(!existsSync(join(ext, "AGENTS.md")) && !existsSync(join(ext, ".env")));
+  });
+});
+
 test("out with nothing to move: N/A holdout-out and a PASS inventory when no listed path exists; ERROR when one exists but was not moved", async () => {
   await withTempDir(async (dir) => {
     const ext = fakeExtension(dir, "ext");
@@ -454,6 +483,7 @@ test("holdout-tracked names the fix for a tracked AGENTS.md: git rm --cached it 
     const detail = Object.fromEntries(t.details.map((/** @type {any} */ d) => [d.file, d.text]));
     assert.match(detail["AGENTS.md"], /run `git rm --cached AGENTS\.md` \(the file stays on disk\), list AGENTS\.md in the extension's \.gitignore/);
     assert.match(detail[".claude"], /run `git rm -r --cached \.claude` \(the file stays on disk\), list \.claude\/ in the extension's \.gitignore/);
+    for (const text of Object.values(detail)) assert.match(text, /commit, then run `rx holdout in` to restore anything this run moved, and run `rx holdout out` again$/, "the remedy restores first: a second out is refused while this run's inventory exists");
     assert.ok(existsSync(join(ext, "AGENTS.md")), "a tracked file is never moved");
   });
 });
