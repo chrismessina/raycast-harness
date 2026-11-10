@@ -175,16 +175,37 @@ export function fingerprint(abs) {
   return { type: "file", hash: `sha256:${h.update(readFileSync(abs)).digest("hex")}` };
 }
 
-/** Move across a filesystem boundary when rename cannot. @param {string} from @param {string} to */
-function move(from, to) {
+/**
+ * Move across a filesystem boundary when rename cannot. `ops` is a test seam.
+ * @param {string} from @param {string} to
+ * @param {{ renameSync: Function, cpSync: Function, rmSync: Function }} [ops]
+ */
+export function move(from, to, ops = { renameSync, cpSync, rmSync }) {
   mkdirSync(dirname(to), { recursive: true });
   try {
-    renameSync(from, to);
+    ops.renameSync(from, to);
   } catch (e) {
     if (/** @type {NodeJS.ErrnoException} */ (e).code !== "EXDEV") throw e;
-    cpSync(from, to, { recursive: true, verbatimSymlinks: true, preserveTimestamps: true });
-    rmSync(from, { recursive: true, force: true });
+    try {
+      ops.cpSync(from, to, { recursive: true, verbatimSymlinks: true, preserveTimestamps: true });
+    } catch (copyError) {
+      // A partial copy left behind would make every later `out` refuse the occupied destination.
+      ops.rmSync(to, { recursive: true, force: true });
+      throw copyError;
+    }
+    try {
+      ops.rmSync(from, { recursive: true, force: true });
+    } catch (removeError) {
+      // The complete copy is held: the caller records it, so `in` still knows about it (and keeps
+      // both copies, FAILing, when what is left of the source differs) instead of losing track of it.
+      throw Object.assign(/** @type {Error} */ (removeError), { held: true });
+    }
   }
+}
+
+/** Quote one word for a POSIX shell when it needs it. @param {string} word */
+function shellWord(word) {
+  return /^[\w@%+=:,./-]+$/.test(word) ? word : `'${word.replace(/'/g, "'\\''")}'`;
 }
 
 /** @param {string} path */
@@ -256,7 +277,7 @@ async function out({ args, cwd, results, log }, root, inventoryPath, filesDir) {
       const ls = await git(["ls-files", "--error-unmatch", "--", c], { cwd: root, allowFail: true });
       if (ls.code === 0) {
         const dir = lstatSync(join(root, c)).isDirectory();
-        tracked.push({ file: c, text: `tracked in this checkout's index, so it cannot be held out: run \`git rm ${dir ? "-r " : ""}--cached ${c}\` (the file stays on disk), list ${c}${dir ? "/" : ""} in the extension's .gitignore, commit, then run \`rx holdout in\` to restore anything this run moved, and run \`rx holdout out\` again` });
+        tracked.push({ file: c, text: `tracked in this checkout's index, so it cannot be held out: run \`git -C ${shellWord(root)} rm ${dir ? "-r " : ""}--cached -- ${shellWord(c)}\` (the file stays on disk), list ${c}${dir ? "/" : ""} in that checkout's .gitignore, then run \`rx holdout in --root ${shellWord(root)}\` to restore anything this run moved, and run \`rx holdout out\` again with the same arguments` });
         skipped.push({ path: c, reason: "tracked" });
         continue;
       }
@@ -283,8 +304,11 @@ async function out({ args, cwd, results, log }, root, inventoryPath, filesDir) {
       move(join(root, e.source), e.destination);
       moved.push(e);
     } catch (err) {
-      moveFailures.push({ file: e.source, text: `move failed: ${/** @type {Error} */ (err).message}` });
-      skipped.push({ path: e.source, reason: `move failed: ${/** @type {Error} */ (err).message}` });
+      const held = /** @type {{ held?: boolean }} */ (err).held === true;
+      if (held) moved.push(e); // the copy is complete; keep it in the inventory so `in` finds it
+      const text = held ? `copied, but the source could not be removed: ${/** @type {Error} */ (err).message}` : `move failed: ${/** @type {Error} */ (err).message}`;
+      moveFailures.push({ file: e.source, text });
+      skipped.push({ path: e.source, reason: text });
     }
   }
   if (moved.length !== planned.length) writeInventory(inventoryPath, { ...inv, entries: moved });

@@ -1,9 +1,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { cpSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { DEFAULT_LOCAL_ONLY, expandForKeep, fingerprint, keepPathsFor, readPresetFields } from "../src/commands/holdout.mjs";
+import { DEFAULT_LOCAL_ONLY, expandForKeep, fingerprint, keepPathsFor, move, readPresetFields } from "../src/commands/holdout.mjs";
 import { REPO, fakeExtension, rx, withTempDir } from "./helpers.mjs";
 import { computeFingerprints } from "../src/fingerprint.mjs";
 import { listPayload } from "../src/payload.mjs";
@@ -481,9 +481,32 @@ test("holdout-tracked names the fix for a tracked AGENTS.md: git rm --cached it 
     assert.equal(t.verdict, "FAIL");
     assert.match(t.message, /tracked in this checkout's index; untrack each with git rm --cached and list it in the extension's \.gitignore/);
     const detail = Object.fromEntries(t.details.map((/** @type {any} */ d) => [d.file, d.text]));
-    assert.match(detail["AGENTS.md"], /run `git rm --cached AGENTS\.md` \(the file stays on disk\), list AGENTS\.md in the extension's \.gitignore/);
-    assert.match(detail[".claude"], /run `git rm -r --cached \.claude` \(the file stays on disk\), list \.claude\/ in the extension's \.gitignore/);
-    for (const text of Object.values(detail)) assert.match(text, /commit, then run `rx holdout in` to restore anything this run moved, and run `rx holdout out` again$/, "the remedy restores first: a second out is refused while this run's inventory exists");
+    const q = (/** @type {string} */ v) => v.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    assert.match(detail["AGENTS.md"], new RegExp(`run \`git -C ${q(ext)} rm --cached -- AGENTS\\.md\` \\(the file stays on disk\\), list AGENTS\\.md in that checkout's \\.gitignore`));
+    assert.match(detail[".claude"], new RegExp(`run \`git -C ${q(ext)} rm -r --cached -- \\.claude\` \\(the file stays on disk\\), list \\.claude/ in that checkout's \\.gitignore`));
+    for (const text of Object.values(detail)) assert.match(text, new RegExp(`then run \`rx holdout in --root ${q(ext)}\` to restore anything this run moved, and run \`rx holdout out\` again with the same arguments$`), "the remedy is bound to the root, restores first, and needs no commit");
     assert.ok(existsSync(join(ext, "AGENTS.md")), "a tracked file is never moved");
+  });
+});
+
+test("move: a cross-device copy that fails leaves no partial destination; a copy that lands but cannot delete its source says it is held", async () => {
+  await withTempDir((dir) => {
+    const exdev = () => { throw Object.assign(new Error("cross-device"), { code: "EXDEV" }); };
+    writeFileSync(join(dir, "src"), "secret\n");
+    const dest = join(dir, "held", "src");
+    assert.throws(() => move(join(dir, "src"), dest, {
+      renameSync: exdev,
+      cpSync: (/** @type {string} */ _f, /** @type {string} */ t) => { writeFileSync(t, "sec"); throw Object.assign(new Error("disk full"), { code: "ENOSPC" }); },
+      rmSync: (/** @type {string} */ p, /** @type {any} */ o) => rmSync(p, o),
+    }), (/** @type {any} */ e) => e.code === "ENOSPC" && !e.held);
+    assert.ok(!existsSync(dest), "the partial copy is removed, so a retry is not refused");
+    assert.ok(existsSync(join(dir, "src")), "the source is untouched");
+
+    assert.throws(() => move(join(dir, "src"), dest, {
+      renameSync: exdev,
+      cpSync: (/** @type {string} */ f, /** @type {string} */ t) => cpSync(f, t),
+      rmSync: (/** @type {string} */ p) => { if (p === join(dir, "src")) throw Object.assign(new Error("busy"), { code: "EBUSY" }); rmSync(p, { recursive: true, force: true }); },
+    }), (/** @type {any} */ e) => e.code === "EBUSY" && e.held === true);
+    assert.equal(readFileSync(dest, "utf8"), "secret\n", "the complete copy stays held, for the inventory to record");
   });
 });
