@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { cpSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { DEFAULT_LOCAL_ONLY, expandForKeep, fingerprint, keepPathsFor, move, readPresetFields } from "../src/commands/holdout.mjs";
+import { DEFAULT_LOCAL_ONLY, expandForKeep, fingerprint, keepPathsFor, move, performMoves, readPresetFields } from "../src/commands/holdout.mjs";
 import { REPO, fakeExtension, rx, withTempDir } from "./helpers.mjs";
 import { computeFingerprints } from "../src/fingerprint.mjs";
 import { listPayload } from "../src/payload.mjs";
@@ -509,4 +509,17 @@ test("move: a cross-device copy that fails leaves no partial destination; a copy
     }), (/** @type {any} */ e) => e.code === "EBUSY" && e.held === true);
     assert.equal(readFileSync(dest, "utf8"), "secret\n", "the complete copy stays held, for the inventory to record");
   });
+});
+
+test("performMoves: a held copy is recorded for the inventory but never reported as moved", () => {
+  const entry = (/** @type {string} */ source) => ({ source, destination: `/held/${source}`, type: /** @type {const} */ ("file"), hash: "sha256:x" });
+  const mover = (/** @type {string} */ from) => {
+    if (from.endsWith("held")) throw Object.assign(new Error("busy"), { held: true });
+    if (from.endsWith("bad")) throw new Error("denied");
+  };
+  const r = performMoves([entry("ok"), entry("held"), entry("bad")], "/root", mover, () => {});
+  assert.deepEqual(r.moved.map((e) => e.source), ["ok"], "only a completed move counts as moved");
+  assert.deepEqual(r.held.map((e) => e.source), ["held"], "a complete copy whose source remains is held, for the inventory");
+  assert.deepEqual(r.failures.map((d) => d.file), ["held", "bad"]);
+  assert.match(r.failures[0].text, /^copied, but the source could not be removed: busy$/);
 });

@@ -36,6 +36,10 @@ Each should land as its own change, with the existing tests as proof and an adve
 
 ## Known issues accepted for 0.1.0
 
+- A cross-device `rx holdout out` whose copy fails partway, and whose cleanup of that partial copy
+  also fails, leaves an unrecorded copy in `.git/rx/holdout/files/`. The next `out` refuses that
+  destination until someone removes it by hand. Recording a `partial` entry in the inventory would
+  let `in` report it. (Codex round 2 on `89f8140`.)
 - A `generations/` directory whose owner lost write permission (mode 0500) makes both the
   rotation and the revoking unlink fail, so a restored receipt and audit pass until the
   directory is repaired and `rx gates` runs again. A per-root revocation marker in the parent,

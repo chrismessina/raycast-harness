@@ -203,6 +203,37 @@ export function move(from, to, ops = { renameSync, cpSync, rmSync }) {
   }
 }
 
+/**
+ * Run the planned moves. `moved` lists completed moves only; `held` lists complete copies whose
+ * source could not be removed, which the inventory records but which are not out of the root.
+ * @param {InventoryEntry[]} planned @param {string} root
+ * @param {(from: string, to: string) => void} mover @param {(s: string) => void} log
+ */
+export function performMoves(planned, root, mover, log) {
+  /** @type {InventoryEntry[]} */
+  const moved = [];
+  /** @type {InventoryEntry[]} */
+  const held = [];
+  /** @type {import("../verdict.mjs").Detail[]} */
+  const failures = [];
+  /** @type {{ path: string, reason: string }[]} */
+  const skipped = [];
+  for (const e of planned) {
+    log(`holdout: ${e.source} -> ${e.destination}\n`);
+    try {
+      mover(join(root, e.source), e.destination);
+      moved.push(e);
+    } catch (err) {
+      const isHeld = /** @type {{ held?: boolean }} */ (err).held === true;
+      if (isHeld) held.push(e);
+      const text = isHeld ? `copied, but the source could not be removed: ${/** @type {Error} */ (err).message}` : `move failed: ${/** @type {Error} */ (err).message}`;
+      failures.push({ file: e.source, text });
+      skipped.push({ path: e.source, reason: text });
+    }
+  }
+  return { moved, held, failures, skipped };
+}
+
 /** Quote one word for a POSIX shell when it needs it. @param {string} word */
 function shellWord(word) {
   return /^[\w@%+=:,./-]+$/.test(word) ? word : `'${word.replace(/'/g, "'\\''")}'`;
@@ -296,35 +327,26 @@ async function out({ args, cwd, results, log }, root, inventoryPath, filesDir) {
   /** @type {Inventory} */
   const inv = { version: 1, root: realRoot, createdAt: new Date().toISOString(), entries: planned };
   writeInventory(inventoryPath, inv);
-  /** @type {import("../verdict.mjs").Detail[]} */
-  const moveFailures = [];
-  for (const e of planned) {
-    log(`holdout: ${e.source} -> ${e.destination}\n`);
-    try {
-      move(join(root, e.source), e.destination);
-      moved.push(e);
-    } catch (err) {
-      const held = /** @type {{ held?: boolean }} */ (err).held === true;
-      if (held) moved.push(e); // the copy is complete; keep it in the inventory so `in` finds it
-      const text = held ? `copied, but the source could not be removed: ${/** @type {Error} */ (err).message}` : `move failed: ${/** @type {Error} */ (err).message}`;
-      moveFailures.push({ file: e.source, text });
-      skipped.push({ path: e.source, reason: text });
-    }
-  }
-  if (moved.length !== planned.length) writeInventory(inventoryPath, { ...inv, entries: moved });
+  const { moved: done, held, failures: moveFailures, skipped: failedMoves } = performMoves(planned, root, move, log);
+  moved.push(...done);
+  skipped.push(...failedMoves);
+  // Held copies stay in the inventory so `in` finds them; they are not reported as moved.
+  const recorded = [...moved, ...held];
+  if (recorded.length !== planned.length) writeInventory(inventoryPath, { ...inv, entries: recorded });
 
   if (tracked.length) results.fail("holdout-tracked", `${tracked.length} local-only path(s) are tracked in this checkout's index; untrack each with git rm --cached and list it in the extension's .gitignore`, tracked);
   else results.pass("holdout-tracked", "no local-only path is tracked");
 
   if (moved.length) results.pass("holdout-out", `${moved.length} untracked local-only entr${moved.length === 1 ? "y" : "ies"} moved to ${filesDir}`, moved.map((e) => ({ file: e.source, text: `${e.type} ${e.hash}` })));
+  else if (planned.length) results.na("holdout-out", "nothing moved; see holdout-inventory");
   else results.na("holdout-out", "nothing untracked matches the preset's localOnly list");
 
   // The #32975 shape: something movable exists, yet nothing moved. Kept and tracked paths are
   // not movable and never trigger this; a failed move does.
-  if (!moved.length && planned.length) {
+  if (!recorded.length && planned.length) {
     results.error("holdout-inventory", `inventory is empty while movable local-only path(s) exist in the root: ${planned.map((e) => e.source).join(", ")}`, moveFailures);
   } else if (moveFailures.length) {
-    results.error("holdout-inventory", `${moveFailures.length} planned move(s) failed; ${moved.length} recorded in ${inventoryPath}`, moveFailures);
+    results.error("holdout-inventory", `${moveFailures.length} planned move(s) failed; ${recorded.length} recorded in ${inventoryPath}`, moveFailures);
   } else {
     results.pass("holdout-inventory", `${moved.length} entr${moved.length === 1 ? "y" : "ies"} recorded in ${inventoryPath}`);
   }

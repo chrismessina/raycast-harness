@@ -7,9 +7,9 @@
   `rx holdout`, and `holdout-tracked` names its fix, bound to the root: `git -C <root> rm --cached
   -- <path>`, list it in that checkout's `.gitignore`, then `rx holdout in --root <root>` before
   `rx holdout out` again with the same arguments, because the untracked entries still move when
-  the check FAILs. A cross-device holdout move that fails partway no longer leaves a partial copy
-  that blocks every later `out`, and a copy whose source could not be removed stays in the
-  inventory. `rx stale --preset` (and `rx gates`, which now passes its preset to
+  the check FAILs. A cross-device holdout move that fails partway removes its partial copy, so it
+  no longer blocks every later `out` (unless that removal fails too), and a copy whose source
+  could not be removed stays in the inventory without counting as moved. `rx stale --preset` (and `rx gates`, which now passes its preset to
   stale) classifies a published file the preset's `holdout.localOnly` lists and the local tree
   lacks as `REMOVE` (`stale-remove`, WARN) instead of the `ONLY-PUB` FAIL. `rx audit record`
   accepts the disposition `remove-published` (`{ path, localHash: "absent", baseline }`) for those
