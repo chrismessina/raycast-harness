@@ -4,7 +4,7 @@ This guide explains what `rx` is, how to run it, the ideas it is built on, and t
 
 ## 1. What rx is
 
-`rx` (the npm package `@chrismessina/raycast-harness`) is a command-line tool that runs the deterministic part of building and shipping a Raycast extension: is the published copy older than mine, does every README link resolve, does the CHANGELOG carry exactly one `{PR_MERGE_DATE}`, is this screenshot pixel-identical to the published one, may this publish go ahead. Each command prints one verdict line per check and exits by the worst verdict, so an agent or a person branches on the exit code instead of reading prose.
+`rx` (the npm package `@chrismessina/raycast-harness`) is a command-line tool that runs the deterministic part of building and shipping a Raycast extension: is the published copy older than mine, does every relative README link resolve and ship, does the CHANGELOG carry exactly one `{PR_MERGE_DATE}`, is this screenshot pixel-identical to the published one, may this publish go ahead. Each command prints one verdict line per check and exits by the worst verdict, so an agent or a person branches on the exit code instead of reading prose.
 
 The `raycast-extensions` Claude Code plugin is the other half. Its skills (`develop`, `ship`, `raycast-pr-loop`, `api-changelog`, and others) decide *when* to run a check and what to do with the result; they never re-implement a check in shell. Every skill calls rx through one runner script, `scripts/rx.mjs` in the plugin, and the plugin's `PreToolUse` hook is `rx guard`, which blocks a publish that is not backed by a current receipt and audit.
 
