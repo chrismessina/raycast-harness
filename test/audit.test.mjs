@@ -7,7 +7,9 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import * as greptileAudit from "../src/audit/greptile.mjs";
 import { GREPTILE_CONFIG, GREPTILE_JUDGMENT_RULES, GREPTILE_PREFLIGHT_RULES, greptileJudgmentRules, greptileRulesStamp, unclassifiedGreptileRules } from "../src/audit/greptile.mjs";
+import * as greptileRules from "../src/greptile/rules.mjs";
 import { CHECK_IDS } from "../src/preflight/catalog.mjs";
 import { dispositionKey, parseEntries } from "../src/audit/entries.mjs";
 import { decide, staleDispositions } from "../src/audit/evaluate.mjs";
@@ -378,6 +380,41 @@ test("greptile judgment rules: 55 ids, every one present in the core snapshot, a
   assert.deepEqual(rules.map((r) => r.id), [...GREPTILE_JUDGMENT_RULES]);
   assert.ok(rules.every((r) => r.severity === "block" && r.entryId === `greptile/${r.id}` && r.title.length > 0));
   assert.throws(() => greptileJudgmentRules(join(REPO, "test", "fixtures", "gates", "preset.json")), /absent from the snapshot/);
+});
+
+test("greptile mechanical exemptions (Codex P2): each is bound to the digest of the rule text and scope it was reviewed against; a changed rule needs a judgment entry again", async () => {
+  const mechanical = greptileAudit.GREPTILE_MECHANICAL_RULES;
+  assert.ok(mechanical, "GREPTILE_MECHANICAL_RULES is exported");
+  // The shipped rules give exactly today's coverage: these three exempt, the 55 judgment rules required.
+  assert.deepEqual(Object.keys(mechanical).sort(), ["native-fetch", "no-nested-review-config", "platforms-field"]);
+  const shipped = JSON.parse(readFileSync(GREPTILE_CONFIG, "utf8"));
+  for (const [id, digest] of Object.entries(mechanical)) {
+    assert.ok(Object.hasOwn(GREPTILE_PREFLIGHT_RULES, id) && !GREPTILE_JUDGMENT_RULES.includes(id), `${id} is preflight-only`);
+    assert.equal(digest, greptileRules.ruleContentDigest(shipped.rules.find((/** @type {any} */ r) => r.id === id)), `${id} was reviewed against the shipped rule`);
+  }
+  assert.deepEqual(greptileJudgmentRules(GREPTILE_CONFIG).map((r) => r.id), [...GREPTILE_JUDGMENT_RULES]);
+  await withTempDir((dir) => {
+    const variant = (/** @type {string} */ name, /** @type {(c: any) => void} */ edit) => {
+      const config = JSON.parse(readFileSync(GREPTILE_CONFIG, "utf8"));
+      edit(config);
+      const path = join(dir, `${name}.json`);
+      writeFileSync(path, JSON.stringify(config));
+      return greptileJudgmentRules(path);
+    };
+    const rule = (/** @type {any} */ c, /** @type {string} */ id) => c.rules.find((/** @type {any} */ r) => r.id === id);
+    // Upstream broadens native-fetch: preflight still checks only polyfill imports, so the rule is judgment again.
+    const broadened = variant("text", (c) => { rule(c, "native-fetch").rule += "\n\nAlso flag a fetch call without a request timeout."; });
+    const nf = broadened.find((r) => r.id === "native-fetch");
+    assert.ok(nf, "a changed mechanical rule is a required audit entry");
+    assert.equal(nf.entryId, "greptile/native-fetch");
+    assert.equal(nf.severity, "block");
+    assert.match(nf.why ?? "", /^Greptile rule changed since its mechanical mapping to rx preflight was reviewed; the mapping needs re-review, so judge the rule in the audit$/);
+    assert.equal(broadened.length, 56);
+    // A scope change alone counts too.
+    assert.ok(variant("scope", (c) => { rule(c, "platforms-field").scope = ["extensions/**"]; }).some((r) => r.id === "platforms-field"));
+    // A severity change alone does not change what the rule asks for.
+    assert.equal(variant("severity", (c) => { rule(c, "no-nested-review-config").severity = "medium"; }).length, 55);
+  });
 });
 
 test("greptile classification (W9 finding 5): a rule preflight covers only in part is judgment too; preflight-only is reserved for whole-rule coverage", () => {

@@ -36,6 +36,18 @@ Each should land as its own change, with the existing tests as proof and an adve
 
 ## Known issues accepted for 0.1.0
 
+- The plugin runner reuses a tarball install that carries its completion marker without checking
+  it again, so an install that later loses a dependency (`node_modules/pngjs` deleted, say) keeps
+  failing until someone deletes `~/.cache/raycast-harness/runner/tarball/<hash>/`. It fails
+  closed: the guard blocks every publish rather than allowing one. Reinstalling once when a cached
+  install fails to load would fix it without adding a process to every hook call. (Codex round 2
+  of the whole-branch review.)
+- When the runner replaces an older tarball install that has no completion marker, it removes that
+  directory and retries the rename. A second run that finishes and promotes its own install in that
+  window can have it deleted, and then installs again on its next call.
+- Preflight evaluates every `.gitignore` the extension ships, but not the root `.gitignore` of the
+  `raycast/extensions` fork, which the fork-side `git add` also honors. A file that pattern holds
+  back is reported as shipping.
 - A cross-device `rx holdout out` whose copy fails partway, and whose cleanup of that partial copy
   also fails, leaves an unrecorded copy in `.git/rx/holdout/files/`. The next `out` refuses that
   destination until someone removes it by hand. Recording a `partial` entry in the inventory would

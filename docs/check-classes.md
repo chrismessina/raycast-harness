@@ -55,7 +55,7 @@ Count: 21 core, 6 preset.
 | `screenshot-format` | core | The Store's `metadata-images` job collects `.png/.jpg/.jpeg/.webp/.gif/.bmp` and rejects all but PNG; anything else under `metadata/` is a FAIL. | — |
 | `screenshot-size` | core | Store screenshots are 2000×1250. | — |
 | `icon-size` | core | The Store icon is 512×512. | — |
-| `readme-links` | core | A relative link that does not resolve is broken on the Store page (Q9). | — |
+| `readme-links` | core | A relative link that does not resolve, or whose target exists locally but does not ship, is broken on the Store page (Q9). | — |
 | `changelog-placeholder` | core | Greptile `changelog-entries`: exactly one `{PR_MERGE_DATE}`, on the top entry (Q10). | — |
 | `nested-review-config` | core | Greptile `no-nested-review-config` (high; split out of `no-agent-scaffolding` on `main` `b6bdcb1`): a nested `.greptile/` or `greptile.json`, at any depth of what `ray publish` copies, can switch off Raycast's repo rules, and CI fails on it. No owner may ship one, so no preset exempts or caps it. | — |
 | `pref-description-length` | preset | The 80-character budget is a measurement Chris made (`house-style.md` `pref-description-length`). | `options.max` |

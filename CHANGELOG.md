@@ -2,14 +2,32 @@
 
 ## Unreleased
 
+- Preflight reads every `.gitignore` the extension ships, nested ones included, each relative to
+  its own directory, as the fork-side `git add` does. A nested `!greptile.json` can no longer let
+  a review config pass `nested-review-config`, and a file a nested `.gitignore` drops is no longer
+  reported as shipping. `readme-links` now requires each target to ship, so a link into `.github/`
+  or an ignored file FAILs and names the reason.
+- A Greptile rule that preflight covers mechanically keeps that exemption only while its text and
+  scope match the digest the mapping was reviewed against (`GREPTILE_MECHANICAL_RULES`). After
+  `rx greptile update` changes such a rule, the audit requires a judgment entry for it again.
+- `rx holdout out` stops with ERROR `holdout-tracked`, before writing an inventory or moving a
+  file, when git cannot read the index; before, a corrupt index made every path look untracked.
+  `rx holdout out`, `rx pr files --preset` and `rx stale --preset` validate the whole preset
+  against its schema, so a mistyped key is ERROR `input` instead of a silent default.
+- The guard treats `gh pr --repo o/r ready 42`, `-R o/r` and any other flag between `pr` and
+  `ready` as marking a PR ready, and blocks it.
+- `rx pr files` reports ERROR `github` for a files row with no `filename` string, or with a
+  rename source that is malformed or missing on a `renamed` row, instead of skipping the row and
+  passing.
 - Chris's 2026-11-03 file ruling (`AGENTS.md`, `CONCEPTS.md`, `CLAUDE.md` and `HANDOFF.md`
   never ship) works through a guarded publish. The plugin preset holds them out with
-  `rx holdout`, and `holdout-tracked` names its fix, bound to the root: `git -C <root> rm --cached
-  -- <path>`, list it in that checkout's `.gitignore`, then `rx holdout in --root <root>` before
-  `rx holdout out` again with the same arguments, because the untracked entries still move when
-  the check FAILs. A cross-device holdout move that fails partway removes its partial copy, so it
-  no longer blocks every later `out` (unless that removal fails too), and a copy whose source
-  could not be removed stays in the inventory without counting as moved. `rx stale --preset` (and `rx gates`, which now passes its preset to
+  `rx holdout`, and `holdout-tracked` names its fix, bound to the root. The fix runs
+  `git -C <root> rm --cached -- <path>`, lists the path in that checkout's `.gitignore`, and runs
+  `rx holdout in --root <root>` before `rx holdout out` again with the same arguments. The restore
+  is needed because the untracked entries still move when the check FAILs. A cross-device holdout
+  move that fails partway removes its partial copy, so the copy no longer blocks every later `out`
+  unless that removal fails too. A copy whose source could not be removed stays in the inventory
+  without counting as moved. `rx stale --preset` (and `rx gates`, which now passes its preset to
   stale) classifies a published file the preset's `holdout.localOnly` lists and the local tree
   lacks as `REMOVE` (`stale-remove`, WARN) instead of the `ONLY-PUB` FAIL. `rx audit record`
   accepts the disposition `remove-published` (`{ path, localHash: "absent", baseline }`) for those

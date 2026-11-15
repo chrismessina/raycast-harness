@@ -42,7 +42,7 @@ export const CHECKS = {
   "screenshot-format": { class: "core", level: "FAIL", description: "only .png files under metadata/" },
   "screenshot-size": { class: "core", level: "FAIL", description: "every screenshot is 2000×1250" },
   "icon-size": { class: "core", level: "FAIL", description: "the extension icon (and PNG command icons) are 512×512" },
-  "readme-links": { class: "core", level: "FAIL", description: "every relative link in README.md and docs/**/*.md resolves from its own directory" },
+  "readme-links": { class: "core", level: "FAIL", description: "every relative link in README.md and docs/**/*.md resolves from its own directory to a file that ships" },
   "changelog-placeholder": { class: "core", level: "FAIL", description: "exactly one {PR_MERGE_DATE}, on the top changelog entry" },
   "nested-review-config": { class: "core", level: "FAIL", description: "no nested Greptile config (.greptile/, greptile.json) at any depth would ship" },
   // new preset-class

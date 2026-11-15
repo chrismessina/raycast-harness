@@ -4,7 +4,7 @@
 // is never a pass).
 
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import * as changelogParse from "../changelog/parse.mjs";
 import { RxError } from "../errors.mjs";
@@ -14,8 +14,8 @@ import {
   allPreferences, buildApplyContext, commandsOf, filesUnder, grepSources, isObj, loadSources, pngSize, read,
   readLockfile, readPublished,
 } from "./context.mjs";
-import { gitIgnoredSet, gitignoreMatcher } from "./gitignore.mjs";
-import { listPayload } from "../payload.mjs";
+import { ignoredPredicate } from "./gitignore.mjs";
+import { PUBLISH_SKIPS, isSkipped, listPayload } from "../payload.mjs";
 import { extractEmbeds, isExternal, targetPath } from "./markdown.mjs";
 
 /** The N/A message when a comparison check ran without --published (a missing flag, not a fact about publication). */
@@ -340,7 +340,7 @@ export async function runPreflight({ root, publishedDir, preset }) {
   iconSize(root, pkg, commands, c);
 
   // readme-assets (T3, T4) and readme-links (Q9)
-  readmeChecks(root, c);
+  await readmeChecks(root, publishedDir, c);
 
   // unused-dependencies
   const code = sources.map((s) => s.code).join("\n");
@@ -512,8 +512,28 @@ function iconSize(root, pkg, commands, c) {
   c.pass("icon-size", `${icons.length} icon${icons.length === 1 ? "" : "s"} ${STORE.icon.width}×${STORE.icon.height}`);
 }
 
-/** @param {string} root @param {Collector} c */
-function readmeChecks(root, c) {
+/**
+ * Why a file the extension holds would not reach the Store PR, or null when it would. It ships
+ * when `ray publish` copies it (src/payload.mjs: no segment on the skip list) and the fork-side
+ * `git add` stages it: no .gitignore the extension ships excludes it (src/preflight/gitignore.mjs,
+ * nested files included), or the published copy already has it (an ignore rule cannot hold back
+ * an update to a tracked path). Git decides the ignore rules for `files`, the paths the caller
+ * will ask about.
+ * @param {string} root @param {string | null} publishedDir @param {string[]} files
+ * @returns {Promise<(rel: string) => string | null>}
+ */
+async function notShippedReason(root, publishedDir, files) {
+  const ignored = await ignoredPredicate(root, files.filter((f) => !isSkipped(f)));
+  return (rel) => {
+    const skip = rel.split("/").find((seg) => PUBLISH_SKIPS.includes(seg));
+    if (skip) return `ray publish never copies ${skip}`;
+    if (!ignored(rel, false) || (publishedDir !== null && existsSync(join(publishedDir, rel)))) return null;
+    return "a .gitignore the extension ships excludes it";
+  };
+}
+
+/** @param {string} root @param {string | null} publishedDir @param {Collector} c */
+async function readmeChecks(root, publishedDir, c) {
   const readmePath = join(root, "README.md");
   const readme = read(readmePath);
   if (readme === null) { c.fail("readme-assets", "README.md is missing"); }
@@ -544,21 +564,45 @@ function readmeChecks(root, c) {
   };
   walk("docs");
   if (!docs.length) { c.na("readme-links", "no README.md and no docs/**/*.md"); return; }
-  /** @type {Detail[]} */
-  const broken = [];
-  let total = 0;
+  // A target resolves only when it is in what ships (Codex P2): present locally, inside the
+  // extension, and not dropped by ray publish or the shipped .gitignore files (notShippedReason). A
+  // directory ships when a file under it does.
+  /** @type {{ detail: Detail, rel: string | null, why: string | null }[]} */
+  const links = [];
   for (const rel of docs) {
     const text = read(join(root, rel)) ?? "";
     for (const e of extractEmbeds(text)) {
       if (!e.target || isExternal(e.target) || e.target.startsWith("#")) continue;
       const p = targetPath(e.target);
       if (!p) continue;
-      total++;
       const abs = p.startsWith("/") ? join(root, p) : resolve(root, dirname(rel), p);
-      if (!existsSync(abs)) broken.push({ file: rel, line: e.line, text: e.target });
+      const detail = { file: rel, line: e.line, text: e.target };
+      if (!existsSync(abs)) { links.push({ detail, rel: null, why: null }); continue; }
+      const inRoot = relative(root, abs).split(sep).join("/");
+      if (inRoot === ".." || inRoot.startsWith("../") || isAbsolute(inRoot)) links.push({ detail, rel: null, why: "it is outside the extension directory" });
+      else links.push({ detail, rel: inRoot, why: null });
     }
   }
-  if (broken.length) c.fail("readme-links", `${broken.length} relative link${broken.length === 1 ? "" : "s"} do${broken.length === 1 ? "es" : ""} not resolve`, broken);
+  const under = (/** @type {string} */ rel) => (rel ? filesUnder(root, rel) : []);
+  const reason = await notShippedReason(root, publishedDir, links.flatMap((l) => (l.rel ? under(l.rel) : [])));
+  /** @type {(Detail & { unshipped?: true })[]} */
+  const broken = [];
+  for (const l of links) {
+    if (l.rel === "") continue; // the extension directory itself
+    if (l.rel !== null) {
+      const files = under(l.rel);
+      if (files.some((f) => reason(f) === null)) continue;
+      l.why = files.length ? reason(files[0]) : "it holds no file, and git does not track an empty directory";
+    }
+    broken.push(l.why ? { ...l.detail, text: `${l.detail.text}: exists locally but does not ship (${l.why})`, unshipped: true } : l.detail);
+  }
+  const total = links.length;
+  if (broken.length) {
+    const unshipped = broken.filter((b) => b.unshipped).length;
+    const one = (/** @type {number} */ n, /** @type {string} */ a, /** @type {string} */ b) => (n === 1 ? a : b);
+    const tail = unshipped ? `; ${unshipped} of them ${one(unshipped, "exists", "exist")} locally but ${one(unshipped, "does", "do")} not ship` : "";
+    c.fail("readme-links", `${broken.length} relative link${one(broken.length, "", "s")} ${one(broken.length, "does", "do")} not resolve${tail}`, broken.map(({ unshipped: _, ...d }) => d));
+  }
   c.pass("readme-links", `${total} relative link${total === 1 ? "" : "s"} resolve${total === 1 ? "s" : ""} across ${docs.length} file${docs.length === 1 ? "" : "s"}`);
 }
 
@@ -608,7 +652,6 @@ function sortKeys(v) {
  */
 async function fileChecks(root, publishedDir, c, enabled, keep) {
   const G = STORE.greptile;
-  const gitignore = read(join(root, ".gitignore")) ?? "";
   // no-nested-review-config: a `.greptile` or `greptile.json` (store.json names) at ANY depth of
   // what `ray publish` copies (src/payload.mjs), outermost match only.
   const nestedNames = new Set(G.nestedGreptile);
@@ -623,11 +666,8 @@ async function fileChecks(root, publishedDir, c, enabled, keep) {
   const devMaterial = G.devMaterial.filter((/** @type {string} */ p) => !keep.includes(p));
   const strayPaths = G.strays;
   const candidates = [...nestedPaths, ...scaffoldPaths, ...devMaterial, ...G.generatedDirs, ...strayPaths].flatMap((rel) => filesUnder(root, rel));
-  const fromGit = gitignore ? await gitIgnoredSet(gitignore, candidates) : new Set();
-  const ignored = fromGit ? (/** @type {string} */ f) => fromGit.has(f) : gitignoreMatcher(gitignore);
-  const skipped = (/** @type {string} */ rel) => rel.split("/").some((part) => STORE.publishSkips.includes(part));
-  const shipping = (/** @type {string} */ rel) =>
-    filesUnder(root, rel).filter((f) => !skipped(f) && (!ignored(f, false) || (publishedDir !== null && existsSync(join(publishedDir, f)))));
+  const reason = await notShippedReason(root, publishedDir, candidates);
+  const shipping = (/** @type {string} */ rel) => filesUnder(root, rel).filter((f) => reason(f) === null);
   const flagged = (/** @type {string} */ rel) => {
     const files = shipping(rel);
     if (!files.length) return false;

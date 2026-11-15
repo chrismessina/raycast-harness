@@ -2,7 +2,8 @@
 //
 // A Bash command is one of five things to `rx guard`:
 //
-//   ready     its text mentions marking a PR ready for review (`pr ready`, `draft=false`,
+//   ready     its text mentions marking a PR ready for review (`pr ready`, also with flags between
+//             the two words such as `pr --repo o/r ready` or `pr -R o/r ready`, `draft=false`,
 //             `ready_for_review=`, `markPullRequestReadyForReview`), anywhere, in any quoting:
 //             always blocked; marking ready is Chris's click.
 //   state     its text (same normalization, then `/./` and repeated `/` collapsed until stable)
@@ -78,7 +79,11 @@ const SHAPE = new RegExp(String.raw`^[ \t]*(?:cd[ \t]+(${DIR})[ \t]*&&[ \t]*)?(n
 
 // `ready_for_review` counts only when something is assigned to it (`-f ready_for_review=true`): the
 // ship skill's attribution query READS timeline events of that name, and a read is not a mention.
-const READY_MENTIONS = [/\bpr[ \t]+ready(?![\w-])/, /\bdraft[ \t]*=[ \t]*false\b/, /ready_for_review[ \t]*=/, /markpullrequestreadyforreview/];
+// `pr` may be followed by flags before `ready`: gh's inherited `-R`/`--repo <v>` and `--repo=<v>`.
+// Any flag word, with or without one value word after it, is skipped, so an unknown flag or a flag
+// whose value might be the word `ready` reads as ready (fail closed). The first word after `pr` that
+// is not a flag and not such a value must be `ready` itself, so `gh pr list --label ready` is not one.
+const READY_MENTIONS = [/\bpr(?:[ \t]+-\S+(?:[ \t]+[^\s-]\S*)?)*[ \t]+ready(?![\w-])/,/\bdraft[ \t]*=[ \t]*false\b/, /ready_for_review[ \t]*=/, /markpullrequestreadyforreview/];
 const PUBLISH_MENTION = /\bpublish\b/;
 const STATE_MENTIONS = [/\.git\/rx(?![a-z0-9_.-])/, /raycast-harness\/attest\.key/];
 

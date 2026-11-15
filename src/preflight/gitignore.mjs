@@ -1,12 +1,25 @@
-// Which paths the extension's own .gitignore excludes. Only that file counts: the fork-side
-// `git add` sees the extension's .gitignore, never its .git/info/exclude, and nested .gitignore
-// files are not read. Git itself decides when it is available (check-ignore in a scratch repo with
-// global excludes off); the pure-JS matcher is the fallback and is tested against git.
+// Which paths the .gitignore files an extension ships exclude. Every `.gitignore` in the payload
+// (src/payload.mjs: what `ray publish` copies) counts, nested ones included, because the fork-side
+// `git add` reads each of them: a pattern is relative to its own file's directory, a deeper file
+// takes precedence over a shallower one, and nothing under an excluded directory can be
+// re-included. The extension's .git/info/exclude never counts (it is not copied). Git itself
+// decides when it is available (check-ignore in a scratch repo holding every shipped .gitignore at
+// its path, global excludes off); the pure-JS matcher is the fallback and is tested against git.
+//
+// Exports
+//   gitignoreMatcher(text)            one .gitignore at the root, as a (rel, isDir) => boolean
+//   gitignoreTreeMatcher(files)       the whole hierarchy, files = { dir, text }[] (dir "" is the root)
+//   shippedGitignores(root)           every .gitignore the payload ships, as { dir, text }[]
+//   gitIgnoredSet(files, paths)       which of paths the hierarchy excludes, decided by git; null when git cannot answer
+//   ignoredPredicate(root, paths)     shippedGitignores + gitIgnoredSet, falling back to gitignoreTreeMatcher
 
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { run } from "../exec.mjs";
+import { listPayload, readPayloadBytes } from "../payload.mjs";
+
+/** @typedef {{ dir: string, text: string }} GitignoreFile `dir` is `/`-joined and relative to the root; "" is the root. */
 
 /**
  * One .gitignore pattern as a regex source: "\x" is a literal x, "[...]" a class ("!" or "^"
@@ -42,13 +55,13 @@ function globToRegex(s) {
 }
 
 /**
- * The .gitignore read the way git does for one file: patterns in order, the last match wins,
- * "!" re-includes, a trailing "/" matches directories only, and nothing under an excluded
- * directory can be re-included.
+ * One .gitignore compiled the way git reads a single file: patterns in order, the last match
+ * wins, "!" re-includes, a trailing "/" matches directories only. Returns true (excluded), false
+ * (re-included) or undefined (no pattern matched) for a path relative to the file's directory.
  * @param {string} text
- * @returns {(rel: string, isDir: boolean) => boolean}
+ * @returns {(path: string, isDir: boolean) => boolean | undefined}
  */
-export function gitignoreMatcher(text) {
+function compile(text) {
   /** @type {{ negate: boolean, dirOnly: boolean, anchored: boolean, re: RegExp }[]} */
   const patterns = [];
   for (let line of (text ?? "").split("\n")) {
@@ -66,13 +79,45 @@ export function gitignoreMatcher(text) {
       // A pattern git accepts but this translation cannot express; git itself is used when present.
     }
   }
-  const exact = (/** @type {string} */ path, /** @type {boolean} */ isDir) => {
-    let ignored = false;
+  return (path, isDir) => {
+    /** @type {boolean | undefined} */
+    let ignored;
     for (const p of patterns) {
       if (p.dirOnly && !isDir) continue;
       if (p.re.test(p.anchored ? path : /** @type {string} */ (path.split("/").pop()))) ignored = !p.negate;
     }
     return ignored;
+  };
+}
+
+/**
+ * The root .gitignore alone, read the way git does: see gitignoreTreeMatcher.
+ * @param {string} text
+ * @returns {(rel: string, isDir: boolean) => boolean}
+ */
+export function gitignoreMatcher(text) {
+  return gitignoreTreeMatcher([{ dir: "", text }]);
+}
+
+/**
+ * A .gitignore hierarchy read the way git does: each path is tested against the files of the
+ * directories that contain it, deepest first, each with the path relative to its own directory;
+ * the first file with a matching pattern decides (within it the last match wins). A path under a
+ * directory the hierarchy excludes is excluded, whatever a deeper file says.
+ * @param {GitignoreFile[]} files
+ * @returns {(rel: string, isDir: boolean) => boolean}
+ */
+export function gitignoreTreeMatcher(files) {
+  const compiled = files
+    .map((f) => ({ dir: f.dir.replace(/^\/+|\/+$/g, ""), test: compile(f.text) }))
+    .sort((a, b) => (b.dir ? b.dir.split("/").length : 0) - (a.dir ? a.dir.split("/").length : 0));
+  const exact = (/** @type {string} */ path, /** @type {boolean} */ isDir) => {
+    for (const f of compiled) {
+      if (f.dir && !path.startsWith(`${f.dir}/`)) continue;
+      const r = f.test(f.dir ? path.slice(f.dir.length + 1) : path, isDir);
+      if (r !== undefined) return r;
+    }
+    return false;
   };
   return (rel, isDir) => {
     const parts = rel.split("/");
@@ -82,19 +127,35 @@ export function gitignoreMatcher(text) {
 }
 
 /**
- * Which of `paths` the .gitignore excludes, decided by git itself. Returns null when git cannot
- * answer; callers fall back to gitignoreMatcher.
- * @param {string} gitignore
+ * Every `.gitignore` the payload ships, read as ray publish copies it (a symlink publishes its
+ * target's bytes, which git then reads as a regular file).
+ * @param {string} root absolute extension root
+ * @returns {GitignoreFile[]}
+ */
+export function shippedGitignores(root) {
+  return listPayload(root)
+    .filter((e) => e.type !== "dir" && (e.path === ".gitignore" || e.path.endsWith("/.gitignore")))
+    .map((e) => ({ dir: e.path.slice(0, -".gitignore".length).replace(/\/$/, ""), text: readPayloadBytes(root, e).toString("utf8") }));
+}
+
+/**
+ * Which of `paths` the .gitignore hierarchy excludes, decided by git itself: every file is written
+ * at its directory in a scratch repo, so check-ignore applies them as the fork-side `git add`
+ * would. Returns null when git cannot answer; callers fall back to gitignoreTreeMatcher.
+ * @param {GitignoreFile[]} files
  * @param {string[]} paths
  * @returns {Promise<Set<string> | null>}
  */
-export async function gitIgnoredSet(gitignore, paths) {
-  if (!paths.length) return new Set();
+export async function gitIgnoredSet(files, paths) {
+  if (!paths.length || !files.length) return new Set();
   const scratch = mkdtempSync(join(tmpdir(), "rx-ignore-"));
   try {
     const init = await run("git", ["init", "-q"], { cwd: scratch });
     if (init.code !== 0) return null;
-    writeFileSync(join(scratch, ".gitignore"), gitignore);
+    for (const f of files) {
+      mkdirSync(join(scratch, f.dir), { recursive: true });
+      writeFileSync(join(scratch, f.dir, ".gitignore"), f.text);
+    }
     const r = await run("git", ["-c", "core.excludesFile=", "check-ignore", "--no-index", "--stdin", "-z"], {
       cwd: scratch,
       input: paths.join("\0") + "\0",
@@ -106,4 +167,17 @@ export async function gitIgnoredSet(gitignore, paths) {
   } finally {
     rmSync(scratch, { recursive: true, force: true });
   }
+}
+
+/**
+ * Is a path excluded by the .gitignore files the extension at `root` ships? Git decides for
+ * `paths` (the ones the caller will ask about); the pure-JS matcher answers when git cannot.
+ * @param {string} root absolute extension root
+ * @param {string[]} paths
+ * @returns {Promise<(rel: string, isDir: boolean) => boolean>}
+ */
+export async function ignoredPredicate(root, paths) {
+  const files = shippedGitignores(root);
+  const fromGit = await gitIgnoredSet(files, paths);
+  return fromGit ? (rel) => fromGit.has(rel) : gitignoreTreeMatcher(files);
 }

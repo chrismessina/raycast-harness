@@ -973,6 +973,18 @@ test("lookup (W9 findings 2–4): a future or unparseable commit date, a foreign
   });
 });
 
+test("audit coverage (Codex P2): with an updated copy that changed a mechanical rule, applicableRules requires it and says the mapping needs re-review", async () => {
+  await withCache(async (_dir, cache) => {
+    cacheCopy(cache, { name: "broadened", sha: SHA_C, config: (c) => { c.rules.find((/** @type {any} */ r) => r.id === "native-fetch").rule += "\n\nAlso flag a fetch call without a request timeout."; } });
+    const { applicableRules } = await import("../src/audit/evaluate.mjs");
+    const rows = applicableRules(/** @type {any} */ ({ preset: { rules: [] } }), /** @type {any} */ ({}));
+    const nf = rows.find((r) => r.id === "greptile/native-fetch");
+    assert.ok(nf, "the changed mechanical rule needs an audit entry");
+    assert.match(nf.why, /mechanical mapping to rx preflight was reviewed; the mapping needs re-review/);
+    assert.equal(rows.find((r) => r.id === "greptile/no-silent-failure")?.why, "Greptile judgment rule");
+  });
+});
+
 test("audit (W9 finding 4): a cache copy with `rule: {}` on a judgment id is skipped, so the judgment rules still load from the shipped copy", async () => {
   await withCache(async (_dir, cache) => {
     cacheCopy(cache, { name: "object-body", sha: SHA_C, config: (c) => { c.rules.find((/** @type {any} */ r) => r.id === "no-silent-failure").rule = {}; } });

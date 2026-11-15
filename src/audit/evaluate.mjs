@@ -30,7 +30,7 @@ export function applicableRules(loaded, applyCtx) {
     if (applied.value === false) continue;
     out.push({ id: rule.id, severity: rule.severity, why: applied.value === true ? render(rule.applies) : `${applied.reason} (decide and record)` });
   }
-  for (const g of greptileJudgmentRules()) out.push({ id: g.entryId, severity: g.severity, why: "Greptile judgment rule" });
+  for (const g of greptileJudgmentRules()) out.push({ id: g.entryId, severity: g.severity, why: g.why ?? "Greptile judgment rule" });
   return out;
 }
 

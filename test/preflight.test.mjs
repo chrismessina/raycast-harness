@@ -8,6 +8,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 
 import { join } from "node:path";
 import { execFileSync } from "node:child_process";
 import { CHECK_IDS } from "../src/preflight/catalog.mjs";
+import * as gitignore from "../src/preflight/gitignore.mjs";
 import { gitignoreMatcher } from "../src/preflight/gitignore.mjs";
 import { stripComments } from "../src/preflight/lexer.mjs";
 import { extractEmbeds, stripCode } from "../src/preflight/markdown.mjs";
@@ -668,6 +669,80 @@ test("gitignore matcher agrees with git check-ignore --no-index; the fallback sk
       assert.equal(ours(p, false), git, p);
     }
     assert.equal(gitignoreMatcher("[z-a]\n*.md\n")("x.md", false), true);
+  });
+});
+
+test("nested .gitignore files (Codex P1): every .gitignore the payload ships decides, each relative to its own directory, the deeper file first", async () => {
+  await withTempDir(async (dir) => {
+    const nested = async (/** @type {string} */ name, /** @type {Record<string, string>} */ files, /** @type {string | undefined} */ published = undefined) => {
+      const r = await preflight(makeExt(join(dir, name), { files }), { preset: null, ...(published ? { published } : {}) });
+      return { verdict: r.verdict("nested-review-config"), files: (r.by["nested-review-config"].details ?? []).map((d) => d.file) };
+    };
+    // (a) The root ignores greptile.json; src/.gitignore re-includes it, so the fork-side git add stages src/greptile.json.
+    assert.deepEqual(await nested("reinclude", { "src/greptile.json": "{}", ".gitignore": "greptile.json\n", "src/.gitignore": "!greptile.json\n" }), { verdict: "FAIL", files: ["src/greptile.json"] });
+    // (b) Only src/.gitignore ignores it, so git never stages it.
+    assert.equal((await nested("nested-ignore", { "src/greptile.json": "{}", "src/.gitignore": "greptile.json\n" })).verdict, "PASS");
+    // An anchored pattern in a nested file is relative to that file's directory.
+    assert.deepEqual(await nested("anchored", { "greptile.json": "{}", "src/greptile.json": "{}", "src/.gitignore": "/greptile.json\n" }), { verdict: "FAIL", files: ["greptile.json"] });
+    // A nested file cannot re-include a path under a directory a shallower file excludes.
+    assert.equal((await nested("excluded-dir", { "src/cfg/greptile.json": "{}", ".gitignore": "src/cfg/\n", "src/cfg/.gitignore": "!greptile.json\n" })).verdict, "PASS");
+    // The tracked-upstream exception holds for a nested ignore: a changed tracked file still ships.
+    const pub = makeExt(join(dir, "pub"), { files: { "src/greptile.json": "{\"old\": true}" } });
+    assert.deepEqual(await nested("tracked", { "src/greptile.json": "{}", "src/.gitignore": "greptile.json\n" }, pub), { verdict: "FAIL", files: ["src/greptile.json"] });
+  });
+});
+
+test("gitignore tree matcher agrees with git check-ignore --no-index over a nested .gitignore hierarchy", async () => {
+  await withTempDir(async (dir) => {
+    const tree = [
+      { dir: "", text: "*.log\n/build\ngreptile.json\nsecret/\n" },
+      { dir: "src", text: "!greptile.json\n/local.ts\n*.tmp\n!keep.log\n" },
+      { dir: "src/deep", text: "greptile.json\n!x.tmp\n/only-here.md\n" },
+      { dir: "secret", text: "!*\n" },
+      { dir: "docs", text: "*\n!*.md\n" },
+    ];
+    const paths = ["a.log", "src/a.log", "src/keep.log", "src/deep/keep.log", "build/x", "src/build/x", "greptile.json", "src/greptile.json", "src/deep/greptile.json", "src/deep/more/greptile.json", "src/local.ts", "src/deep/local.ts", "src/a.tmp", "src/deep/x.tmp", "src/deep/y.tmp", "secret/a", "src/secret/a", "src/deep/only-here.md", "only-here.md", "docs/a.md", "docs/a.txt", "docs/sub/a.md"];
+    execFileSync("git", ["init", "-q"], { cwd: dir });
+    for (const g of tree) {
+      mkdirSync(join(dir, g.dir), { recursive: true });
+      writeFileSync(join(dir, g.dir, ".gitignore"), g.text);
+    }
+    const ours = gitignore.gitignoreTreeMatcher(tree);
+    const fromGit = await gitignore.gitIgnoredSet(tree, paths);
+    assert.ok(fromGit, "git answered");
+    for (const p of paths) {
+      let git = true;
+      try { execFileSync("git", ["-c", "core.excludesFile=", "check-ignore", "-q", "--no-index", "--", p], { cwd: dir, stdio: "ignore" }); } catch { git = false; }
+      assert.equal(ours(p, false), git, `matcher: ${p}`);
+      assert.equal(fromGit.has(p), git, `gitIgnoredSet: ${p}`);
+    }
+  });
+});
+
+test("readme-links (Codex P2): a link resolves only to a target that ships: present, not skipped by ray publish, not ignored by a shipped .gitignore unless tracked upstream", async () => {
+  await withTempDir(async (dir) => {
+    const links = async (/** @type {string} */ name, /** @type {Record<string, string>} */ files, /** @type {string | undefined} */ published = undefined) => {
+      const r = await preflight(makeExt(join(dir, name), { files }), published ? { published } : {});
+      return r.by["readme-links"];
+    };
+    const policy = await links("github", { "README.md": "# L\n\n[policy](.github/policy.md)\n", ".github/policy.md": "x\n" });
+    assert.equal(policy.verdict, "FAIL");
+    assert.match(policy.message, /1 relative link does not resolve; 1 of them exists locally but does not ship/);
+    assert.deepEqual(policy.details.map((d) => d.text), [".github/policy.md: exists locally but does not ship (ray publish never copies .github)"]);
+    const ignored = await links("ignored", { "README.md": "# L\n\n[lic](LICENSE) [draft](docs/draft.md)\n", LICENSE: "MIT\n", ".gitignore": "LICENSE\n", "docs/draft.md": "x\n", "docs/.gitignore": "draft.md\n" });
+    assert.equal(ignored.verdict, "FAIL");
+    assert.deepEqual(ignored.details.map((d) => d.text), ["LICENSE: exists locally but does not ship (a .gitignore the extension ships excludes it)", "docs/draft.md: exists locally but does not ship (a .gitignore the extension ships excludes it)"]);
+    // Tracked upstream: git add still updates an ignored path the published copy has.
+    const pub = makeExt(join(dir, "pub"), { files: { LICENSE: "MIT\n" } });
+    assert.equal((await links("tracked", { "README.md": "# L\n\n[lic](LICENSE)\n", LICENSE: "MIT\n", ".gitignore": "LICENSE\n" }, pub)).verdict, "PASS");
+    // A directory ships when a file under it ships.
+    assert.equal((await links("dir-ok", { "README.md": "# L\n\n[media](media/)\n" })).verdict, "PASS");
+    assert.equal((await links("dir-skipped", { "README.md": "# L\n\n[ci](.github/)\n", ".github/ci.yml": "x\n" })).verdict, "FAIL");
+    // Outside the extension directory nothing ships.
+    writeFileSync(join(dir, "outside.md"), "x\n");
+    const outside = await links("outside", { "README.md": "# L\n\n[out](../outside.md)\n" });
+    assert.equal(outside.verdict, "FAIL");
+    assert.deepEqual(outside.details.map((d) => d.text), ["../outside.md: exists locally but does not ship (it is outside the extension directory)"]);
   });
 });
 

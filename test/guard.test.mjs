@@ -254,6 +254,20 @@ test("guard classifiers: the exact-shape allowlist", () => {
   for (const c of ["gh pr view", "gh pr ready-check", "echo already", "gh pr checks", timeline, "gh pr view 1 --json isDraft"]) assert.ok(!mentionsReady(c), c);
 });
 
+test("readCommand (Codex P2): gh's inherited flags between `pr` and `ready` still read as ready; other gh pr subcommands do not", () => {
+  const cwd = "/tmp";
+  // gh accepts -R/--repo (and --repo=) on `pr` itself; an unknown flag, or a flag whose value is
+  // the word ready, is ambiguous and reads as ready (fail closed).
+  for (const c of ["gh pr --repo owner/repo ready 42", "gh pr -R owner/repo ready 42", "gh pr --repo=owner/repo ready 42", "gh pr -R owner/repo --hostname x ready", "gh pr --repo 'owner/repo' \"ready\" 42", "gh pr\t-R\towner/repo\tready", "gh pr --unknown-flag ready", "gh pr -R ready ready", "cd x && gh pr --repo o/r ready 1"]) {
+    assert.deepEqual(readCommand(c, cwd), { kind: "ready" }, c);
+    assert.ok(mentionsReady(c), c);
+  }
+  for (const c of ["gh pr view 1 --json isDraft", "gh pr list", "gh pr --repo owner/repo view 42", "gh pr -R owner/repo list --label ready", "gh pr list --search ready", "gh pr --repo owner/repo ready-check", "gh pr -R o/r checks 42", "gh pr view 1; echo ready"]) {
+    assert.deepEqual(readCommand(c, cwd), { kind: "other" }, c);
+    assert.ok(!mentionsReady(c), c);
+  }
+});
+
 // ---- Codex Wave 3 review -------------------------------------------------------------------
 
 test("guard (Codex rounds 1–2): every bypass spelling from both reviews blocks under the allowlist, before any state is read", async () => {

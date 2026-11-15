@@ -148,6 +148,44 @@ test("pr files: every path under extensions/<name>/ passes; a stray path (includ
   assert.equal(empty.by["pr-files"].verdict, "FAIL");
 });
 
+test("pr files (Codex P2): a malformed row is ERROR github, never a silent skip that lets pr-files or pr-local-only pass", async () => {
+  await withTempDir(async (dir) => {
+    const preset = join(dir, "preset.json");
+    writeFileSync(preset, JSON.stringify({ schema: 1, owner: "octo-author", rules: [], holdout: { localOnly: ["AGENTS.md"] } }));
+    const good = { filename: "extensions/sample-ext/src/index.ts", status: "modified" };
+    const rows = [
+      { status: "added" },
+      { filename: 42, status: "added" },
+      null,
+      "extensions/sample-ext/AGENTS.md",
+      { filename: "extensions/sample-ext/src/b.tsx", previous_filename: 7, status: "renamed" },
+      { filename: "extensions/sample-ext/src/b.tsx", previous_filename: null, status: "renamed" },
+      { filename: "extensions/sample-ext/src/b.tsx", status: "renamed" },
+    ];
+    for (const row of rows) {
+      for (const extra of [[], ["--preset", preset]]) {
+        const r = await withFake(fakeGitHub({ files: [[good, row]] }).t, ["pr", "files", PR, "--extension", "sample-ext", ...extra]);
+        const label = `${JSON.stringify(row)} ${extra.join(" ")}`;
+        assert.equal(r.code, 2, `${label}: ${r.stdout}`);
+        assert.deepEqual(r.json.results.map((/** @type {any} */ x) => [x.verdict, x.id]), [["ERROR", "github"]], label);
+        assert.match(r.json.results[0].message, /pulls\/12345\/files row 2 /, label);
+      }
+    }
+  });
+});
+
+test("pr files --preset (Codex P3): a preset the schema rejects is ERROR input, not a pass under the default list", async () => {
+  await withTempDir(async (dir) => {
+    const preset = join(dir, "preset.json");
+    writeFileSync(preset, JSON.stringify({ schema: 1, owner: "octo-author", rules: [], holdout: { localonly: ["AGENTS.md"] } }));
+    const files = [[{ filename: "extensions/sample-ext/AGENTS.md", status: "added" }]];
+    const r = await withFake(fakeGitHub({ files }).t, ["pr", "files", PR, "--extension", "sample-ext", "--preset", preset]);
+    assert.equal(r.code, 2, r.stdout);
+    assert.deepEqual(r.json.results.map((/** @type {any} */ x) => [x.verdict, x.id]), [["ERROR", "input"]]);
+    assert.match(r.json.results[0].message, /is invalid/);
+  });
+});
+
 test("pr files: every page is fetched; a stray path only on page 2 FAILs", async () => {
   const pages = [fixture("files.json"), fixture("files-page2.json")];
   const r = await withFake(fakeGitHub({ files: pages }).t, ["pr", "files", PR, "--extension", "sample-ext"]);
@@ -492,7 +530,7 @@ test("pr files: data.files and the details carry each file's GitHub status, with
 test("pr files --preset: pr-local-only FAILs when AGENTS.md, CONCEPTS.md, CLAUDE.md or HANDOFF.md is added, changed or renamed in; a removal passes", async () => {
   await withTempDir(async (dir) => {
     const preset = join(dir, "preset.json");
-    writeFileSync(preset, JSON.stringify({ holdout: { localOnly: [".env", "AGENTS.md", "CONCEPTS.md", "CLAUDE.md", "HANDOFF.md"] } }));
+    writeFileSync(preset, JSON.stringify({ schema: 1, owner: "octo-author", rules: [], holdout: { localOnly: [".env", "AGENTS.md", "CONCEPTS.md", "CLAUDE.md", "HANDOFF.md"] } }));
     const run = (/** @type {any[]} */ list) => withFake(fakeGitHub({ files: [list] }).t, ["pr", "files", PR, "--extension", "sample-ext", "--preset", preset]);
     const removed = await run([
       { filename: "extensions/sample-ext/src/index.tsx", status: "modified" },

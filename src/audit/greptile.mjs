@@ -14,6 +14,13 @@
 // its uncovered part still needs an audit entry. `unclassifiedGreptileRules()` names the ones that are neither, and the test suite fails on
 // any, so a rule Raycast adds upstream cannot pass an audit unread.
 //
+// A preflight-only exemption is bound to the rule it was reviewed against, not just its id:
+// `GREPTILE_MECHANICAL_RULES` stores the digest of that rule's text and scope
+// (ruleContentDigest(), src/greptile/rules.mjs). When the rules in use carry a different digest for
+// the id (an `rx greptile update` copy whose rule was broadened), the rule is a required judgment
+// entry again, with a `why` saying the mechanical mapping needs re-review, until this release
+// re-reads the rule and records the new digest.
+//
 // The entry id in an `--entries` file is `greptile/<rule id>`; the result id is
 // `audit-greptile-<rule id>`.
 //
@@ -30,7 +37,7 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { RxError } from "../errors.mjs";
-import { loadGreptileRules, rulesDigest } from "../greptile/rules.mjs";
+import { loadGreptileRules, ruleContentDigest, rulesDigest } from "../greptile/rules.mjs";
 
 /**
  * A rule set's identity, as a receipt and an audit store it in `greptileRules`.
@@ -132,6 +139,21 @@ export const GREPTILE_PREFLIGHT_RULES = Object.freeze({
   "backward-compatible-updates": ["command-renamed"],
   "manifest-basics": ["icon-size"],
 });
+
+/**
+ * The fully mechanical rules (in GREPTILE_PREFLIGHT_RULES, not in GREPTILE_JUDGMENT_RULES), each
+ * with the ruleContentDigest() of the rule text and scope its preflight mapping was reviewed
+ * against. Re-read the rule and update the digest only after confirming the checks still cover
+ * all of it.
+ */
+export const GREPTILE_MECHANICAL_RULES = Object.freeze({
+  "native-fetch": "fc256b5b13ba836ec56bf2aa14083cab4e962fcf64aca14817f6127d7f7ca896",
+  "no-nested-review-config": "e63de3c543780cff9cd0daaf859bc2318c6ecd5a195128aeac948fae34b00a23",
+  "platforms-field": "e8d2d483fcfa3087e6c027bf8ff52c65e0f30f3f13834e5104de184196f2b826",
+});
+
+/** The `why` a mechanical rule carries when its text or scope differs from what was reviewed. */
+export const MECHANICAL_REREVIEW = "Greptile rule changed since its mechanical mapping to rx preflight was reviewed; the mapping needs re-review, so judge the rule in the audit";
 
 export const GREPTILE_PREFIX = "greptile/";
 
@@ -273,10 +295,10 @@ export function greptileRulesAgreementProblem(receiptRules, auditRules, current)
  * The rule set at `configPath` (tests and shipped-copy checks), else the Greptile rules in use
  * (`loadGreptileRules()`: an `rx greptile update` cache copy or the shipped one).
  * @param {string} [configPath]
- * @returns {Map<string, { id: string, rule?: string }>}
+ * @returns {Map<string, { id: string, rule?: string, scope?: string[] }>}
  */
 function snapshotRules(configPath) {
-  /** @type {{ rules?: { id: string, rule?: string }[] }} */
+  /** @type {{ rules?: { id: string, rule?: string, scope?: string[] }[] }} */
   let config;
   try {
     config = configPath ? JSON.parse(readFileSync(configPath, "utf8")) : rulesInUse().rules.config;
@@ -287,25 +309,32 @@ function snapshotRules(configPath) {
 }
 
 /**
- * The judgment rules, each verified to exist in the core snapshot.
+ * The judgment rules, each verified to exist in the core snapshot, then every preflight-only rule
+ * whose text or scope differs from what its mechanical mapping was reviewed against (with `why`),
+ * then every rule this release has not classified.
  * @param {string} [configPath] a rule file to read instead of the rules in use
- * @returns {{ id: string, entryId: string, severity: "block", title: string }[]}
+ * @returns {{ id: string, entryId: string, severity: "block", title: string, why?: string }[]}
  */
 export function greptileJudgmentRules(configPath) {
   const byId = snapshotRules(configPath);
   const missing = GREPTILE_JUDGMENT_RULES.filter((id) => !byId.has(id));
   if (missing.length) throw new RxError(`Greptile judgment rule(s) absent from the snapshot ${configPath ?? "the Greptile rules in use"}: ${missing.join(", ")}; run rx greptile outdated`, { id: "input" });
+  const judgment = new Set(GREPTILE_JUDGMENT_RULES);
+  // A preflight-only rule is exempt only while it reads as reviewed; a missing digest fails closed.
+  const reviewed = /** @type {Record<string, string>} */ (GREPTILE_MECHANICAL_RULES);
+  const changed = Object.keys(GREPTILE_PREFLIGHT_RULES).filter((id) => !judgment.has(id) && byId.has(id) && ruleContentDigest(/** @type {any} */ (byId.get(id))) !== reviewed[id]);
   // A rule in the rules in use that this release has not classified (an `rx greptile update` copy
   // can be ahead of rx) is a required judgment entry too, so a new upstream rule never passes an
   // audit silently.
   const classified = new Set([...GREPTILE_JUDGMENT_RULES, ...Object.keys(GREPTILE_PREFLIGHT_RULES)]);
   const unclassified = [...byId.keys()].filter((id) => !classified.has(id));
-  return [...GREPTILE_JUDGMENT_RULES, ...unclassified].map((id) => ({
+  const row = (/** @type {string} */ id) => ({
     id,
     entryId: `${GREPTILE_PREFIX}${id}`,
-    severity: "block",
+    severity: /** @type {const} */ ("block"),
     title: (byId.get(id)?.rule ?? id).split("\n")[0].trim() || id,
-  }));
+  });
+  return [...GREPTILE_JUDGMENT_RULES.map(row), ...changed.map((id) => ({ ...row(id), why: MECHANICAL_REREVIEW })), ...unclassified.map(row)];
 }
 
 /**

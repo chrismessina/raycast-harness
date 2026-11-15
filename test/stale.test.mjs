@@ -252,7 +252,7 @@ test("stale --preset: a published file the preset's holdout.localOnly lists and 
     const local = await initRepo(join(dir, "gamma"));
     await commit(local, files, "the four mirror files are not in this tree");
     const preset = join(dir, "preset.json");
-    writeFileSync(preset, JSON.stringify({ holdout: { localOnly: [".claude", "AGENTS.md", "CONCEPTS.md", "CLAUDE.md", "HANDOFF.md"] } }));
+    writeFileSync(preset, JSON.stringify({ schema: 1, owner: "octo-author", rules: [], holdout: { localOnly: [".claude", "AGENTS.md", "CONCEPTS.md", "CLAUDE.md", "HANDOFF.md"] } }));
     // A holdout in progress names AGENTS.md (the inventory is all stale reads).
     const state = (await g(local, ["rev-parse", "--path-format=absolute", "--git-path", "rx"])).stdout;
     mkdirSync(join(state, "holdout"), { recursive: true });

@@ -13,7 +13,8 @@
 //   in    restores every inventory entry, refusing to overwrite a destination that reappeared
 //         with different content, and verifies each hash after the move.
 //
-// The preset is read for exactly two fields and otherwise treated as opaque:
+// The preset is validated whole against the preset schema (as loadPreset() does), then read for
+// exactly two fields:
 //   holdout.localOnly: string[]           ship.keep: [{ path, extensions: string[], reason }]
 // A keep entry applies only when its `extensions` names this extension's package.json `name`.
 // Keep protection is ancestor/descendant aware: a kept file inside a local-only directory stays
@@ -26,6 +27,7 @@ import { cpSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, re
 import { dirname, join, resolve } from "node:path";
 import { RxError } from "../errors.mjs";
 import { git, isWorkTree } from "../git.mjs";
+import { loadPreset } from "../preset/load.mjs";
 import { repoStatePath } from "../state.mjs";
 
 export const DEFAULT_LOCAL_ONLY = Object.freeze([".env", ".claude", ".superpowers"]);
@@ -45,11 +47,11 @@ export const spec = {
       summary: "move the preset's untracked local-only entries out of the root, recording an inventory",
       flags: {
         "--root": rootFlag,
-        "--preset": { type: "string", value: "<file>", required: true, help: "preset JSON; reads holdout.localOnly and ship.keep" },
+        "--preset": { type: "string", value: "<file>", required: true, help: "preset JSON, validated against the preset schema; reads holdout.localOnly and ship.keep" },
       },
       checks: {
         "holdout-out": { description: "untracked local-only entries moved (PASS with one detail per path; N/A when nothing matches)", levels: ["PASS", "N/A"] },
-        "holdout-tracked": "no local-only path is tracked in this checkout's index (FAIL names each one with its fix: git rm --cached <path>, the file stays on disk, and list it in the extension's .gitignore)",
+        "holdout-tracked": "no local-only path is tracked in this checkout's index (FAIL names each one with its fix: git rm --cached <path>, the file stays on disk, and list it in the extension's .gitignore; ERROR, before anything moves or an inventory is written, when git cannot read the index)",
         "holdout-inventory": { description: "inventory written and non-empty whenever a movable local-only path exists (ERROR otherwise, or when a holdout is already in progress)", levels: ["PASS", "ERROR"] },
       },
       data: { moved: "[{ source, destination, type, hash }]", restored: "[] (always empty for out)", skipped: "[{ path, reason }]" },
@@ -77,35 +79,18 @@ export const spec = {
  */
 
 /**
- * Read the two preset fields this command uses. `keep` carries every entry with its
- * `extensions`; use keepPathsFor() to select the ones that apply to one extension.
- * @param {string} file
+ * Read the two preset fields this command uses, after validating the WHOLE preset against the
+ * schema loadPreset() uses: a typo such as `holdout.localonly` or `ship.keeps` is ERROR input
+ * before anything is planned, never a silent fallback to the default list or to no keeps. Paths
+ * are normalized after validation. `keep` carries every entry with its `extensions`; use
+ * keepPathsFor() to select the ones that apply to one extension.
+ * @param {string} file absolute
  * @returns {{ localOnly: string[], keep: KeepEntry[] }}
  */
 export function readPresetFields(file) {
-  /** @type {any} */
-  let preset;
-  try {
-    preset = JSON.parse(readFileSync(file, "utf8"));
-  } catch (e) {
-    throw new RxError(`--preset ${file}: ${/** @type {Error} */ (e).message}`, { id: "input" });
-  }
-  if (!preset || typeof preset !== "object") throw new RxError(`--preset ${file}: not a JSON object`, { id: "input" });
-  const lo = preset.holdout?.localOnly;
-  /** @type {string[]} */
-  let localOnly;
-  if (lo === undefined) localOnly = [...DEFAULT_LOCAL_ONLY];
-  else if (Array.isArray(lo) && lo.every((x) => typeof x === "string")) localOnly = lo;
-  else throw new RxError(`--preset ${file}: holdout.localOnly must be an array of strings`, { id: "input" });
-  const keepRaw = preset.ship?.keep;
-  /** @type {KeepEntry[]} */
-  let keep = [];
-  if (keepRaw !== undefined) {
-    const ok = (/** @type {any} */ k) => k && typeof k === "object" && typeof k.path === "string" && Array.isArray(k.extensions) && k.extensions.every((/** @type {unknown} */ x) => typeof x === "string");
-    if (!Array.isArray(keepRaw) || !keepRaw.every(ok))
-      throw new RxError(`--preset ${file}: ship.keep must be an array of { path, extensions: string[], reason }`, { id: "input" });
-    keep = keepRaw.map((k) => ({ path: normalizeRel(k.path, file, "ship.keep[].path"), extensions: [...k.extensions] }));
-  }
+  const { preset } = loadPreset(file);
+  const localOnly = preset.holdout?.localOnly ?? DEFAULT_LOCAL_ONLY;
+  const keep = (preset.ship?.keep ?? []).map((k) => ({ path: normalizeRel(k.path, file, "ship.keep[].path"), extensions: [...k.extensions] }));
   return { localOnly: localOnly.map((p) => normalizeRel(p, file, "holdout.localOnly")), keep };
 }
 
@@ -176,7 +161,6 @@ export function fingerprint(abs) {
 }
 
 /**
- * Move across a filesystem boundary when rename cannot. `ops` is a test seam.
  * @param {string} from @param {string} to
  * @param {{ renameSync: Function, cpSync: Function, rmSync: Function }} [ops]
  */
@@ -189,23 +173,18 @@ export function move(from, to, ops = { renameSync, cpSync, rmSync }) {
     try {
       ops.cpSync(from, to, { recursive: true, verbatimSymlinks: true, preserveTimestamps: true });
     } catch (copyError) {
-      // A partial copy left behind would make every later `out` refuse the occupied destination.
       ops.rmSync(to, { recursive: true, force: true });
       throw copyError;
     }
     try {
       ops.rmSync(from, { recursive: true, force: true });
     } catch (removeError) {
-      // The complete copy is held: the caller records it, so `in` still knows about it (and keeps
-      // both copies, FAILing, when what is left of the source differs) instead of losing track of it.
       throw Object.assign(/** @type {Error} */ (removeError), { held: true });
     }
   }
 }
 
 /**
- * Run the planned moves. `moved` lists completed moves only; `held` lists complete copies whose
- * source could not be removed, which the inventory records but which are not out of the root.
  * @param {InventoryEntry[]} planned @param {string} root
  * @param {(from: string, to: string) => void} mover @param {(s: string) => void} log
  */
@@ -234,7 +213,7 @@ export function performMoves(planned, root, mover, log) {
   return { moved, held, failures, skipped };
 }
 
-/** Quote one word for a POSIX shell when it needs it. @param {string} word */
+/** @param {string} word */
 function shellWord(word) {
   return /^[\w@%+=:,./-]+$/.test(word) ? word : `'${word.replace(/'/g, "'\\''")}'`;
 }
@@ -299,6 +278,8 @@ async function out({ args, cwd, results, log }, root, inventoryPath, filesDir) {
   const present = localOnly.filter((p) => existsSync(join(root, p)) || isSymlink(join(root, p)));
   /** @type {import("../verdict.mjs").Detail[]} */
   const tracked = [];
+  /** @type {import("../verdict.mjs").Detail[]} paths git could not classify */
+  const unreadable = [];
   /** @type {InventoryEntry[]} what may move: untracked, not kept */
   const planned = [];
   for (const p of present) {
@@ -306,6 +287,12 @@ async function out({ args, cwd, results, log }, root, inventoryPath, filesDir) {
     for (const k of kept) skipped.push({ path: k, reason: `ship.keep: the preset ships it for ${name}` });
     for (const c of candidates) {
       const ls = await git(["ls-files", "--error-unmatch", "--", c], { cwd: root, allowFail: true });
+      // Only exit 1 means "not in the index". Any other failure (128: a corrupt or unreadable
+      // index) says nothing about tracking, so the path must not be treated as untracked.
+      if (ls.code !== 0 && ls.code !== 1) {
+        unreadable.push({ file: c, text: `git ls-files exit ${ls.code}: ${(ls.stderr ?? "").trim() || "no output"}` });
+        continue;
+      }
       if (ls.code === 0) {
         const dir = lstatSync(join(root, c)).isDirectory();
         tracked.push({ file: c, text: `tracked in this checkout's index, so it cannot be held out: run \`git -C ${shellWord(root)} rm ${dir ? "-r " : ""}--cached -- ${shellWord(c)}\` (the file stays on disk), list ${c}${dir ? "/" : ""} in that checkout's .gitignore, then run \`rx holdout in --root ${shellWord(root)}\` to restore anything this run moved, and run \`rx holdout out\` again with the same arguments` });
@@ -322,6 +309,12 @@ async function out({ args, cwd, results, log }, root, inventoryPath, filesDir) {
     }
   }
 
+  if (unreadable.length) {
+    skipped.push(...unreadable.map((d) => ({ path: /** @type {string} */ (d.file), reason: "index unreadable" })));
+    results.error("holdout-tracked", `could not read this checkout's index, so tracked paths cannot be told from untracked ones; nothing was moved and no inventory was written. Repair the index (for example, \`git -C ${shellWord(root)} status\` shows the error), then run \`rx holdout out\` again`, unreadable);
+    return { data };
+  }
+
   // Inventory first, then the moves: a crash between the two leaves a record of what was meant to
   // move, and `in` verifies by hash so an entry that never moved is reported, not invented.
   /** @type {Inventory} */
@@ -330,7 +323,6 @@ async function out({ args, cwd, results, log }, root, inventoryPath, filesDir) {
   const { moved: done, held, failures: moveFailures, skipped: failedMoves } = performMoves(planned, root, move, log);
   moved.push(...done);
   skipped.push(...failedMoves);
-  // Held copies stay in the inventory so `in` finds them; they are not reported as moved.
   const recorded = [...moved, ...held];
   if (recorded.length !== planned.length) writeInventory(inventoryPath, { ...inv, entries: recorded });
 
@@ -348,7 +340,7 @@ async function out({ args, cwd, results, log }, root, inventoryPath, filesDir) {
   } else if (moveFailures.length) {
     results.error("holdout-inventory", `${moveFailures.length} planned move(s) failed; ${recorded.length} recorded in ${inventoryPath}`, moveFailures);
   } else {
-    results.pass("holdout-inventory", `${moved.length} entr${moved.length === 1 ? "y" : "ies"} recorded in ${inventoryPath}`);
+    results.pass("holdout-inventory", `${recorded.length} entr${recorded.length === 1 ? "y" : "ies"} recorded in ${inventoryPath}`);
   }
   return { data };
 }

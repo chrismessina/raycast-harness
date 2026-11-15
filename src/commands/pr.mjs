@@ -60,7 +60,7 @@ export const spec = {
       positionals: [{ name: "N", required: true, help: "pull request number in raycast/extensions" }],
       flags: {
         "--extension": { type: "string", required: true, value: "<name>", help: "extension folder name" },
-        "--preset": { type: "string", value: "<file>", help: "preset JSON; reads holdout.localOnly for the pr-local-only check" },
+        "--preset": { type: "string", value: "<file>", help: "preset JSON, validated against the preset schema; reads holdout.localOnly for the pr-local-only check" },
       },
       checks: {
         "pr-files": "every changed path is under extensions/<extension>/ (details: each file with its GitHub status)",
@@ -143,9 +143,14 @@ async function files({ args, results, cwd }) {
   const paths = [];
   /** @type {{ path: string, status: string, previous: string | null }[]} */
   const changed = [];
-  for (const f of list) {
-    if (typeof f?.filename !== "string") continue;
-    const previous = typeof f.previous_filename === "string" ? f.previous_filename : null;
+  for (const [i, f] of list.entries()) {
+    // A row rx cannot read means the file set is unknown, which is not the same as a safe one.
+    if (typeof f?.filename !== "string" || !f.filename)
+      throw new RxError(`pulls/${n}/files row ${i + 1} has no filename string, so the PR's file set cannot be established: ${JSON.stringify(f)}`, { id: "github" });
+    if ((f.previous_filename !== undefined || f.status === "renamed") && (typeof f.previous_filename !== "string" || !f.previous_filename))
+      throw new RxError(`pulls/${n}/files row ${i + 1} (${f.filename}) has a rename source that is not a filename string, so the PR's file set cannot be established: ${JSON.stringify(f.previous_filename)}`, { id: "github" });
+    /** @type {string | null} */
+    const previous = f.previous_filename ?? null;
     changed.push({ path: f.filename, status: typeof f.status === "string" ? f.status : "unknown", previous });
     paths.push(f.filename);
     if (previous !== null) paths.push(previous);

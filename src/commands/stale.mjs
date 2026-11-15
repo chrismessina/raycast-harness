@@ -36,7 +36,7 @@ export const spec = {
   root: "required",
   flags: {
     "--root": { type: "string", value: "<dir>", help: "extension root" },
-    "--preset": { type: "string", value: "<file>", help: "preset JSON; reads holdout.localOnly so a listed path the published copy has and local lacks is REMOVE (a deliberate deletion), not ONLY-PUB" },
+    "--preset": { type: "string", value: "<file>", help: "preset JSON, validated against the preset schema; reads holdout.localOnly so a listed path the published copy has and local lacks is REMOVE (a deliberate deletion), not ONLY-PUB" },
   },
   network: "GitHub API (publication lookup) and `git fetch` of raycast/extensions into the cross-repo cache",
   state: "reads/writes cache/upstream/ (sparse checkout); writes repo/stale/baseline.json { name, published, baseline, at } (no cache path)",

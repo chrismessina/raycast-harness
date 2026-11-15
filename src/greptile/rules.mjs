@@ -110,6 +110,17 @@ export function rulesDigest(set) {
 }
 
 /**
+ * SHA-256 (hex) of the canonical JSON of what one rule asks for: its text and its scope (severity
+ * is left out: it changes how loud a finding is, not what the rule covers). `src/audit/greptile.mjs`
+ * binds each fully mechanical exemption to this digest, so a rule whose text or scope changes
+ * upstream needs a judgment entry again until its mapping is reviewed.
+ * @param {{ rule?: unknown, scope?: unknown }} rule
+ */
+export function ruleContentDigest(rule) {
+  return createHash("sha256").update(canonicalJson({ rule: rule.rule, scope: rule.scope })).digest("hex");
+}
+
+/**
  * One line naming a copy: `raycast/extensions main @ abc1234 (2026-11-07, updated copy)`.
  * @param {RulesSource} s
  */

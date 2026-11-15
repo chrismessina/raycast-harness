@@ -4,7 +4,7 @@ import { execFileSync } from "node:child_process";
 import { cpSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { DEFAULT_LOCAL_ONLY, expandForKeep, fingerprint, keepPathsFor, move, performMoves, readPresetFields } from "../src/commands/holdout.mjs";
-import { REPO, fakeExtension, rx, withTempDir } from "./helpers.mjs";
+import { REPO, fakeExtension, rx, rxProcess, withTempDir } from "./helpers.mjs";
 import { computeFingerprints } from "../src/fingerprint.mjs";
 import { listPayload } from "../src/payload.mjs";
 
@@ -26,6 +26,8 @@ function gitCommit(dir, msg) {
 function gitStatus(dir) {
   return execFileSync("git", ["status", "--porcelain", "--untracked-files=all"], { cwd: dir, encoding: "utf8" });
 }
+/** A preset the schema accepts, with `extra` merged in. @param {Record<string, unknown>} [extra] */
+const presetJson = (extra = {}) => JSON.stringify({ schema: 1, owner: "octo-author", rules: [], ...extra });
 /** @param {any} json */
 const by = (json) => Object.fromEntries(json.results.map((/** @type {any} */ x) => [x.id, x]));
 
@@ -39,25 +41,54 @@ function plantLocalOnly(ext) {
   symlinkSync("deep/state", join(ext, ".superpowers", "link"));
 }
 
-test("readPresetFields: defaults when holdout.localOnly is absent, reads ship.keep paths, rejects bad shapes and escaping paths", async () => {
+test("readPresetFields: defaults when holdout.localOnly is absent, reads ship.keep paths, rejects what the schema rejects and escaping paths", async () => {
   await withTempDir((dir) => {
     const p = join(dir, "p.json");
-    writeFileSync(p, JSON.stringify({ anything: 1 }));
+    writeFileSync(p, presetJson());
     assert.deepEqual(readPresetFields(p), { localOnly: [...DEFAULT_LOCAL_ONLY], keep: [] });
-    writeFileSync(p, JSON.stringify({ holdout: { localOnly: [".claude/", "./x"] }, ship: { keep: [{ path: "TODO.md", extensions: ["brew"], reason: "r" }] }, other: {} }));
+    writeFileSync(p, presetJson({ holdout: { localOnly: [".claude/", "./x"] }, ship: { keep: [{ path: "TODO.md", extensions: ["brew"], reason: "r" }] } }));
     assert.deepEqual(readPresetFields(p), { localOnly: [".claude", "x"], keep: [{ path: "TODO.md", extensions: ["brew"] }] });
     assert.deepEqual(keepPathsFor(readPresetFields(p).keep, "brew"), ["TODO.md"]);
     assert.deepEqual(keepPathsFor(readPresetFields(p).keep, "other"), [], "a keep for another extension never applies here");
     assert.deepEqual(keepPathsFor(readPresetFields(p).keep, null), []);
-    writeFileSync(p, JSON.stringify({ ship: { keep: [{ path: "TODO.md", reason: "no extensions list" }] } }));
-    assert.throws(() => readPresetFields(p), /ship\.keep must be an array of \{ path, extensions: string\[\]/);
-    writeFileSync(p, JSON.stringify({ holdout: { localOnly: "nope" } }));
-    assert.throws(() => readPresetFields(p), /holdout\.localOnly must be an array/);
-    writeFileSync(p, JSON.stringify({ holdout: { localOnly: ["../escape"] } }));
-    assert.throws(() => readPresetFields(p), /inside the root/);
+    writeFileSync(p, presetJson({ other: {} }));
+    assert.throws(() => readPresetFields(p), /is invalid/, "an unknown top-level key is no longer ignored");
+    writeFileSync(p, presetJson({ ship: { keep: [{ path: "TODO.md", reason: "no extensions list" }] } }));
+    assert.throws(() => readPresetFields(p), /is invalid:\n.*ship\.keep/);
+    writeFileSync(p, presetJson({ holdout: { localOnly: "nope" } }));
+    assert.throws(() => readPresetFields(p), /is invalid:\n.*holdout\.localOnly/);
+    writeFileSync(p, presetJson({ holdout: { localOnly: ["../escape"] } }));
+    assert.throws(() => readPresetFields(p), /is invalid/);
+    writeFileSync(p, presetJson({ holdout: { localOnly: ["a//b"] } }));
+    assert.throws(() => readPresetFields(p), /inside the root/, "normalization still runs after validation");
     writeFileSync(p, "{ not json");
-    assert.throws(() => readPresetFields(p), /--preset/);
-    assert.throws(() => readPresetFields(join(dir, "missing.json")), /ENOENT/);
+    assert.throws(() => readPresetFields(p), /not valid JSON/);
+    assert.throws(() => readPresetFields(join(dir, "missing.json")), /does not exist/);
+  });
+});
+
+test("holdout out (Codex P3): a preset the schema rejects (holdout.localonly, ship.keeps) is ERROR input before anything moves", async () => {
+  await withTempDir(async (dir) => {
+    const ext = fakeExtension(dir, "ext");
+    gitInit(ext);
+    gitCommit(ext, "init");
+    writeFileSync(join(ext, ".env"), "x\n");
+    writeFileSync(join(ext, "TODO.md"), "kept\n");
+    const preset = join(dir, "preset.json");
+    const base = { schema: 1, owner: "octo-author", rules: [] };
+    for (const bad of [
+      { ...base, holdout: { localonly: ["TODO.md"] } },
+      { ...base, holdout: { localOnly: [".env", "TODO.md"] }, ship: { keeps: [{ path: "TODO.md", extensions: ["ext"], reason: "ships" }] } },
+      { holdout: { localOnly: [".env"] } },
+    ]) {
+      writeFileSync(preset, JSON.stringify(bad));
+      assert.throws(() => readPresetFields(preset), /is invalid/, JSON.stringify(bad));
+      const r = await rx(["holdout", "out", "--root", ext, "--preset", preset, "--json"], { cwd: dir });
+      assert.equal(r.code, 2, r.stdout);
+      assert.deepEqual(r.json.results.map((/** @type {any} */ x) => [x.verdict, x.id]), [["ERROR", "input"]], JSON.stringify(bad));
+      assert.ok(existsSync(join(ext, ".env")) && existsSync(join(ext, "TODO.md")), "nothing moved");
+      assert.ok(!existsSync(join(ext, ".git", "rx", "holdout", "inventory.json")), "no inventory written");
+    }
   });
 });
 
@@ -153,7 +184,7 @@ test("out never moves a tracked local-only path: FAIL holdout-tracked, the file 
     execFileSync("git", ["commit", "-q", "-m", "init"], { cwd: ext });
     writeFileSync(join(ext, ".env"), "x\n");
     const preset = join(dir, "preset.json");
-    writeFileSync(preset, "{}");
+    writeFileSync(preset, presetJson());
     const r = await rx(["holdout", "out", "--root", ext, "--preset", preset, "--json"], { cwd: dir });
     assert.equal(r.code, 1, r.stdout);
     const b = by(r.json);
@@ -170,6 +201,32 @@ test("out never moves a tracked local-only path: FAIL holdout-tracked, the file 
   });
 });
 
+test("out stops with ERROR holdout-tracked, carrying git's stderr, when the index cannot be read; nothing is written or moved", async () => {
+  await withTempDir(async (dir) => {
+    const ext = fakeExtension(dir, "ext");
+    gitInit(ext);
+    writeFileSync(join(ext, "AGENTS.md"), "# Agents\n");
+    gitCommit(ext, "init: AGENTS.md committed in the mirror");
+    writeFileSync(join(ext, ".env"), "x\n");
+    const preset = join(dir, "preset.json");
+    writeFileSync(preset, presetJson({ holdout: { localOnly: [".env", "AGENTS.md"] } }));
+    const broken = join(dir, "broken-index");
+    writeFileSync(broken, "not an index\n");
+    // A real child process: GIT_INDEX_FILE must reach the git that rx spawns.
+    const proc = await rxProcess(["holdout", "out", "--root", ext, "--preset", preset, "--json"], { cwd: dir, env: { ...process.env, GIT_INDEX_FILE: broken } });
+    const r = { ...proc, json: JSON.parse(proc.stdout) };
+    assert.equal(r.code, 2, r.stdout);
+    const t = by(r.json)["holdout-tracked"];
+    assert.equal(t?.verdict, "ERROR", JSON.stringify(r.json));
+    assert.match(t.message, /could not read this checkout's index/);
+    assert.ok(t.details.length >= 1 && t.details.every((/** @type {any} */ d) => /exit 128/.test(d.text) && /index/i.test(d.text)), JSON.stringify(t.details));
+    assert.ok(!by(r.json)["holdout-out"] || by(r.json)["holdout-out"].verdict !== "PASS", "nothing reported moved");
+    assert.ok(!existsSync(join(ext, ".git", "rx", "holdout", "inventory.json")), "no inventory written");
+    assert.ok(existsSync(join(ext, "AGENTS.md")) && existsSync(join(ext, ".env")), "nothing moved");
+    assert.deepEqual(r.json.data.moved, []);
+  });
+});
+
 test("following the holdout-tracked remedy as written ends in a clean holdout", async () => {
   await withTempDir(async (dir) => {
     const ext = fakeExtension(dir, "ext");
@@ -178,12 +235,11 @@ test("following the holdout-tracked remedy as written ends in a clean holdout", 
     gitCommit(ext, "init: AGENTS.md committed in the mirror");
     writeFileSync(join(ext, ".env"), "x\n");
     const preset = join(dir, "preset.json");
-    writeFileSync(preset, JSON.stringify({ holdout: { localOnly: [".env", "AGENTS.md"] } }));
+    writeFileSync(preset, presetJson({ holdout: { localOnly: [".env", "AGENTS.md"] } }));
     const args = ["holdout", "out", "--root", ext, "--preset", preset, "--json"];
     let r = await rx(args, { cwd: dir });
     assert.equal(r.code, 1, r.stdout);
     assert.equal(by(r.json)["holdout-out"].verdict, "PASS", "the untracked .env moved");
-    // The remedy, step by step: untrack, ignore, commit, restore, hold out again.
     execFileSync("git", ["rm", "-q", "--cached", "AGENTS.md"], { cwd: ext });
     writeFileSync(join(ext, ".gitignore"), "AGENTS.md\n");
     execFileSync("git", ["add", ".gitignore"], { cwd: ext });
@@ -205,7 +261,7 @@ test("out with nothing to move: N/A holdout-out and a PASS inventory when no lis
     gitInit(ext);
     gitCommit(ext, "init");
     const preset = join(dir, "preset.json");
-    writeFileSync(preset, "{}");
+    writeFileSync(preset, presetJson());
     let r = await rx(["holdout", "out", "--root", ext, "--preset", preset, "--json"], { cwd: dir });
     assert.equal(r.code, 0, r.stdout);
     let b = by(r.json);
@@ -250,7 +306,7 @@ test("ship.keep is ancestor/descendant aware and per extension: the kept file st
     writeFileSync(join(ext, ".claude", "commands", "scratch.md"), "moves");
     const preset = join(dir, "preset.json");
     const keep = (/** @type {string[]} */ extensions) =>
-      writeFileSync(preset, JSON.stringify({ holdout: { localOnly: [".claude"] }, ship: { keep: [{ path: ".claude/commands/release.md", extensions, reason: "shipped command" }] } }));
+      writeFileSync(preset, presetJson({ holdout: { localOnly: [".claude"] }, ship: { keep: [{ path: ".claude/commands/release.md", extensions, reason: "shipped command" }] } }));
     keep(["ext"]);
     let r = await rx(["holdout", "out", "--root", ext, "--preset", preset, "--json"], { cwd: dir });
     assert.equal(r.code, 0, r.stdout);
@@ -285,7 +341,7 @@ test("monorepo: in refuses to restore into a different extension root than the i
     gitCommit(repo, "init");
     writeFileSync(join(a, ".env"), "a-secret\n");
     const preset = join(dir, "preset.json");
-    writeFileSync(preset, "{}");
+    writeFileSync(preset, presetJson());
     let r = await rx(["holdout", "out", "--root", a, "--preset", preset, "--json"], { cwd: dir });
     assert.equal(r.code, 0, r.stdout);
     r = await rx(["holdout", "in", "--root", b, "--json"], { cwd: dir });
@@ -308,7 +364,7 @@ test("in refuses to overwrite a destination that changed, keeps the held-out cop
     mkdirSync(join(ext, ".claude"));
     writeFileSync(join(ext, ".claude", "s.json"), "{}");
     const preset = join(dir, "preset.json");
-    writeFileSync(preset, "{}");
+    writeFileSync(preset, presetJson());
     let r = await rx(["holdout", "out", "--root", ext, "--preset", preset, "--json"], { cwd: dir });
     assert.equal(r.code, 0, r.stdout);
     // ray left a placeholder with other content at .env; .claude reappeared byte-identical.
@@ -354,7 +410,7 @@ test("in never destroys an edited held-out copy: it is verified against the inve
     mkdirSync(join(ext, ".claude"));
     writeFileSync(join(ext, ".claude", "s.json"), "{}");
     const preset = join(dir, "preset.json");
-    writeFileSync(preset, "{}");
+    writeFileSync(preset, presetJson());
     let r = await rx(["holdout", "out", "--root", ext, "--preset", preset, "--json"], { cwd: dir });
     assert.equal(r.code, 0, r.stdout);
     const inventory = join(ext, ".git", "rx", "holdout", "inventory.json");
@@ -401,7 +457,7 @@ test("in without an inventory is ERROR holdout-inventory; a missing held-out cop
 
     writeFileSync(join(ext, ".env"), "x\n");
     const preset = join(dir, "preset.json");
-    writeFileSync(preset, "{}");
+    writeFileSync(preset, presetJson());
     r = await rx(["holdout", "out", "--root", ext, "--preset", preset, "--json"], { cwd: dir });
     assert.equal(r.code, 0);
     execFileSync("rm", ["-r", join(ext, ".git", "rx", "holdout", "files")]);
@@ -444,7 +500,7 @@ test("the four ruled files: out moves each one out of the payload (and out of th
     gitCommit(ext, "init");
     for (const f of RULED) writeFileSync(join(ext, f), `# ${f}\n`);
     const preset = join(dir, "preset.json");
-    writeFileSync(preset, JSON.stringify({ holdout: { localOnly: [".env", ...RULED] } }));
+    writeFileSync(preset, presetJson({ holdout: { localOnly: [".env", ...RULED] } }));
     const forbidden = join(dir, "forbidden.txt");
     writeFileSync(forbidden, "nothing-forbidden-here\n");
     const before = await computeFingerprints({ root: ext, version: "0.0.0", presetPath: preset, forbiddenPath: forbidden });
@@ -474,7 +530,7 @@ test("holdout-tracked names the fix for a tracked AGENTS.md: git rm --cached it 
     writeFileSync(join(ext, ".claude", "settings.json"), "{}");
     gitCommit(ext, "init: AGENTS.md and .claude committed in the mirror");
     const preset = join(dir, "preset.json");
-    writeFileSync(preset, JSON.stringify({ holdout: { localOnly: [".claude", "AGENTS.md"] } }));
+    writeFileSync(preset, presetJson({ holdout: { localOnly: [".claude", "AGENTS.md"] } }));
     const r = await rx(["holdout", "out", "--root", ext, "--preset", preset, "--json"], { cwd: dir });
     assert.equal(r.code, 1, r.stdout);
     const t = by(r.json)["holdout-tracked"];
