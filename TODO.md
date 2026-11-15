@@ -1,6 +1,6 @@
 # TODO
 
-Work deferred past 0.1.0, and known issues accepted for it. This file is not part of the npm
+Work deferred past 0.1.0, and known issues accepted for it. 0.1.1 is the first published version (npm refused to reuse 0.1.0 after its staged upload was rejected). This file is not part of the npm
 package.
 
 ## Deferred refactors

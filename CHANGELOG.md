@@ -1,6 +1,9 @@
 # Changelog
 
-## Unreleased
+## 0.1.1
+
+The first published version. 0.1.0 was staged on npm and rejected before release, and npm does
+not reuse a version number, so it was never published.
 
 - The package is macOS-only (`"os": ["darwin"]`): rx reads Raycast.app with `plutil`. CI runs on
   `macos-latest` with `actions/checkout@v5` and `actions/setup-node@v5`.

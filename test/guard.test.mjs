@@ -11,6 +11,7 @@ import { homedir } from "node:os";
 import { denyDocument, run as guardRun } from "../src/commands/guard.mjs";
 import { mentionsPublish, mentionsReady, readCommand } from "../src/audit/publish-command.mjs";
 import { Results } from "../src/verdict.mjs";
+import { VERSION } from "../src/cli.mjs";
 import { commit, g as gitIn } from "./upstream-fixtures.mjs";
 import { FORBIDDEN, PRESET, auditRecord, bashPayload, buildGated, byId, fullEntries, gates, guard, readJson as readJsonFile, stateDir, withGatedEnv, writeAttested, writeEntries } from "./gates-helpers.mjs";
 import { rx } from "./helpers.mjs";
@@ -146,7 +147,7 @@ test("guard payload 7: everything valid → allow, for every publish spelling; t
 
     // Hook transport (no --json): allow prints nothing, exit 0.
     const results = new Results();
-    const out = /** @type {any} */ (await guardRun({ args: { subcommand: null, positionals: {}, flags: {}, json: false, help: false }, root: null, cwd: root, env: process.env, results, stdin: async () => bashPayload(PUBLISH, root), log: () => {}, version: "0.1.0" }));
+    const out = /** @type {any} */ (await guardRun({ args: { subcommand: null, positionals: {}, flags: {}, json: false, help: false }, root: null, cwd: root, env: process.env, results, stdin: async () => bashPayload(PUBLISH, root), log: () => {}, version: VERSION }));
     assert.deepEqual(out.transport, { stdout: "", exit: 0 });
     assert.equal(results.items[0].verdict, "PASS");
   });
@@ -165,7 +166,7 @@ test("guard payload 8: `gh pr ready` in any form → block, whatever the receipt
     // Hook transport: one JSON deny document on stdout, exit 0.
     const results = new Results();
     let logged = "";
-    const out = /** @type {any} */ (await guardRun({ args: { subcommand: null, positionals: {}, flags: {}, json: false, help: false }, root: null, cwd: root, env: process.env, results, stdin: async () => bashPayload("gh pr ready", root), log: (s) => (logged += s), version: "0.1.0" }));
+    const out = /** @type {any} */ (await guardRun({ args: { subcommand: null, positionals: {}, flags: {}, json: false, help: false }, root: null, cwd: root, env: process.env, results, stdin: async () => bashPayload("gh pr ready", root), log: (s) => (logged += s), version: VERSION }));
     assert.equal(out.transport.exit, 0);
     const doc = JSON.parse(out.transport.stdout);
     assert.equal(doc.hookSpecificOutput.hookEventName, "PreToolUse");
@@ -556,7 +557,7 @@ test("guard write protection: Write / Edit / MultiEdit / NotebookEdit into .git/
     }
     // The hook transport for a blocked write: one deny document, exit 0.
     const results = new Results();
-    const out = /** @type {any} */ (await guardRun({ args: { subcommand: null, positionals: {}, flags: {}, json: false, help: false }, root: null, cwd: root, env: process.env, results, stdin: async () => tp("Write", { file_path: receiptPath, content: "{}" }), log: () => {}, version: "0.1.0" }));
+    const out = /** @type {any} */ (await guardRun({ args: { subcommand: null, positionals: {}, flags: {}, json: false, help: false }, root: null, cwd: root, env: process.env, results, stdin: async () => tp("Write", { file_path: receiptPath, content: "{}" }), log: () => {}, version: VERSION }));
     assert.equal(out.transport.exit, 0);
     assert.match(JSON.parse(out.transport.stdout).hookSpecificOutput.permissionDecisionReason, /^rx state is written only by rx/);
   });
