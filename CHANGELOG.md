@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- The package is macOS-only (`"os": ["darwin"]`): rx reads Raycast.app with `plutil`. CI runs on
+  `macos-latest` with `actions/checkout@v5` and `actions/setup-node@v5`.
 - Preflight reads every `.gitignore` the extension ships, nested ones included, each relative to
   its own directory, as the fork-side `git add` does. A nested `!greptile.json` can no longer let
   a review config pass `nested-review-config`, and a file a nested `.gitignore` drops is no longer

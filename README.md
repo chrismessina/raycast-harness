@@ -14,7 +14,7 @@ npx raycast-harness preflight         # from an extension root
 npx raycast-harness doctor
 ```
 
-Requires Node 22.12 or newer. The executable is available as both `rx` and `raycast-harness`.
+Requires macOS and Node 22.12 or newer. The package declares `"os": ["darwin"]`, because rx reads Raycast.app and its `Info.plist` with `plutil`, which only macOS has. The executable is available as both `rx` and `raycast-harness`.
 
 ## Verdict protocol
 

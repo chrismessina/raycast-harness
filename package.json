@@ -15,6 +15,9 @@
     "rx": "bin/rx.mjs",
     "raycast-harness": "bin/rx.mjs"
   },
+  "os": [
+    "darwin"
+  ],
   "engines": {
     "node": ">=22.12"
   },
