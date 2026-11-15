@@ -15,6 +15,9 @@
     "rx": "bin/rx.mjs",
     "raycast-harness": "bin/rx.mjs"
   },
+  "publishConfig": {
+    "access": "public"
+  },
   "os": [
     "darwin"
   ],
