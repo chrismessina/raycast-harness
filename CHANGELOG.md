@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.2
+
+- The package is now `@chrismessina/raycast-harness`, scoped like the author's other packages.
+  Run it with `npx @chrismessina/raycast-harness <command>`; the `rx` and `raycast-harness`
+  executables keep their names. The ESLint rules import from
+  `@chrismessina/raycast-harness/eslint-plugin`; the rule namespace in a flat config stays
+  `raycast-harness/`. The unscoped `raycast-harness` package is deprecated and points here.
+
 ## 0.1.1
 
 The first published version. 0.1.0 was staged on npm and rejected before release, and npm does

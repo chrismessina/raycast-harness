@@ -18,8 +18,8 @@ const tester = new RuleTester({
   languageOptions: { ecmaVersion: 2024, sourceType: "module", parserOptions: { ecmaFeatures: { jsx: true } } },
 });
 
-test("the package exports the plugin at raycast-harness/eslint-plugin with four rules and a recommended config", async () => {
-  const mod = await import("raycast-harness/eslint-plugin");
+test("the package exports the plugin at @chrismessina/raycast-harness/eslint-plugin with four rules and a recommended config", async () => {
+  const mod = await import("@chrismessina/raycast-harness/eslint-plugin");
   assert.equal(mod.default, plugin);
   assert.deepEqual(Object.keys(plugin.rules).sort(), ["copy-error-pairing", "no-ambiguous-shortcut", "no-multiline-emptyview-description", "no-toast-hide-in-cleanup"]);
   assert.equal(plugin.meta.name, "eslint-plugin-raycast-harness");

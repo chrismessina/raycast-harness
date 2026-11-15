@@ -1,7 +1,7 @@
 // eslint-plugin-raycast-harness: the ESLint half of raycast-harness, for extensions that run lint
 // with a TypeScript parser (the `rx shortcuts check` text scan is the parser-free path).
 //
-//   import raycastHarness from "raycast-harness/eslint-plugin";
+//   import raycastHarness from "@chrismessina/raycast-harness/eslint-plugin";
 //   export default [raycastHarness.configs.recommended];
 //
 // or pick rules: `plugins: { "raycast-harness": raycastHarness }` and

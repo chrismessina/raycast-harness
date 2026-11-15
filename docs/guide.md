@@ -4,7 +4,7 @@ This guide explains what `rx` is, how to run it, the ideas it is built on, and t
 
 ## 1. What rx is
 
-`rx` (the npm package `raycast-harness`) is a command-line tool that runs the deterministic part of building and shipping a Raycast extension: is the published copy older than mine, does every README link resolve, does the CHANGELOG carry exactly one `{PR_MERGE_DATE}`, is this screenshot pixel-identical to the published one, may this publish go ahead. Each command prints one verdict line per check and exits by the worst verdict, so an agent or a person branches on the exit code instead of reading prose.
+`rx` (the npm package `@chrismessina/raycast-harness`) is a command-line tool that runs the deterministic part of building and shipping a Raycast extension: is the published copy older than mine, does every README link resolve, does the CHANGELOG carry exactly one `{PR_MERGE_DATE}`, is this screenshot pixel-identical to the published one, may this publish go ahead. Each command prints one verdict line per check and exits by the worst verdict, so an agent or a person branches on the exit code instead of reading prose.
 
 The `raycast-extensions` Claude Code plugin is the other half. Its skills (`develop`, `ship`, `raycast-pr-loop`, `api-changelog`, and others) decide *when* to run a check and what to do with the result; they never re-implement a check in shell. Every skill calls rx through one runner script, `scripts/rx.mjs` in the plugin, and the plugin's `PreToolUse` hook is `rx guard`, which blocks a publish that is not backed by a current receipt and audit.
 
@@ -31,14 +31,14 @@ rx needs Node 22.12 or newer. The executable is available as both `rx` and `rayc
 From npm, without installing anything globally:
 
 ```sh
-npx raycast-harness commands
-npx raycast-harness preflight          # from an extension root
+npx @chrismessina/raycast-harness commands
+npx @chrismessina/raycast-harness preflight          # from an extension root
 ```
 
 From a local tarball (a candidate build before it is published), install it into a directory of its own and call its binary:
 
 ```sh
-npm install --prefix ~/rx-try ./raycast-harness-0.1.1.tgz
+npm install --prefix ~/rx-try ./chrismessina-raycast-harness-0.1.2.tgz
 ~/rx-try/node_modules/.bin/rx --version
 ```
 
@@ -56,7 +56,7 @@ Skills never type a bare `rx`. They run `node "<plugin>/scripts/rx.mjs" <command
 |---|---|
 | `RX_DEV=<rx checkout>` | `node <checkout>/bin/rx.mjs`, for validating an unreleased checkout |
 | `RX_TARBALL=<raycast-harness-*.tgz>` | an isolated `npm install` of that tarball under `~/.cache/raycast-harness/runner/tarball/<hash>/`, keyed by the tarball's bytes; test-only, never set in shipped config |
-| neither | `npx -y raycast-harness@<version>`, where the version is pinned in the plugin's `rx-version.json` |
+| neither | `npx -y @chrismessina/raycast-harness@<version>`, where the version is pinned in the plugin's `rx-version.json` |
 
 The runner appends `--preset <plugin>/presets/chrismessina.json` whenever the addressed command or subcommand accepts `--preset` (it learns this from `rx commands --json`); a `--preset` you pass yourself wins. It also has one mode of its own: `--runner-version` prints the pinned version. After a successful publish, the ship skill runs `rx publication record <owner/name> <pr> <remoteSha>` through the runner, which writes `.git/rx/publication.json` after a successful publish so that `rx greptile can-reply --claims-fix` can check it. The record is per git repository, so it works from an extension or from the root of a checkout that holds several. Recording never reaches the network. For `publication` the runner reads no registry, fetches nothing, and runs only an rx whose bytes are already on this machine: `RX_DEV`, an `RX_TARBALL` install already in the cache, or the pinned package already in npm's cache. It runs the pinned package with `npx --offline`, which may unpack it from that cache onto local disk. When none is there, it exits 2 saying the record was not written; run any rx command through the runner once, then retry. A runner failure prints one line starting `rx runner:` and exits 2.
 

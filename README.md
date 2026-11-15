@@ -9,9 +9,9 @@ Most of the procedure around a Store submission is deterministic: is the publish
 ## Install and run
 
 ```sh
-npx raycast-harness commands          # list commands
-npx raycast-harness preflight         # from an extension root
-npx raycast-harness doctor
+npx @chrismessina/raycast-harness commands          # list commands
+npx @chrismessina/raycast-harness preflight         # from an extension root
+npx @chrismessina/raycast-harness doctor
 ```
 
 Requires macOS and Node 22.12 or newer. The package declares `"os": ["darwin"]`, because rx reads Raycast.app and its `Info.plist` with `plutil`, which only macOS has. The executable is available as both `rx` and `raycast-harness`.
@@ -64,7 +64,7 @@ Silence is never a pass. Unknown arguments are an `ERROR`. `--json` (an alias of
 
 **Judge providers.** `rx judge` uses Jev (TypeSafe's decision model, implemented against its public API reference at `https://docs.typesafe.ai/api`, fetched 2026-11-04) when `TYPESAFE_API_KEY` is set. Otherwise it uses Claude Haiku (`claude-haiku-5-5`) when `ANTHROPIC_API_KEY` is set, and otherwise agent mode, which prints the question, its answers and the inputs for the agent to decide. `--provider` overrides the order. Jev's probabilities are what its API returns; Haiku's are what the model writes into a forced tool call. Neither is calibrated, and `rx judge` never presents them as such. A provider answer counts only at a top probability of 0.7 or more, and a provider error falls back to agent mode. No `judge` result is part of the gates, the audit or the publish guard.
 
-The ESLint rules ship with the package and are importable at `raycast-harness/eslint-plugin` (flat config; `recommended` included).
+The ESLint rules ship with the package and are importable at `@chrismessina/raycast-harness/eslint-plugin` (flat config; `recommended` included).
 
 ## Core versus preset
 
