@@ -66,15 +66,13 @@ Each should land as its own change, with the existing tests as proof and an adve
 - The `review-pr` skill does not call `rx pr files` for a contributor's PR. (`rx pr verify` checks
   Chris's own PRs and does not fit.)
 - When a provider's top answer is below 0.7, `rx judge ask` text output does not name the provider that returned the probabilities; `--json` does. (A PASS and a provider-error fallback already name it.)
-- **Swift extensions failed `gates-tree-changed` on every run.** `ray build` writes its PID into
-  `swift/.build/.lock`, which ray's `copyDir` copies. Fixed in `src/fingerprint.mjs`
-  (`ignoredSwiftPMScratch`, 2026-11-15, not yet released): the payload fingerprint leaves out an
-  entry inside a `.build` beside a `Package.swift` only when the shipped .gitignore files exclude
-  it and the repo does not track it (git decides; nothing is left out when git cannot answer).
-  Until a release carries it and the plugin pin moves, do what the XDR Boost session did: run
-  `rx gates` through the runner with `RX_DEV=<this checkout>`, then delete `swift/.build` just
-  before `npm run publish`, so the pinned guard, which still counts `.build`, sees the same
-  payload. Pinned gates alone cannot write a receipt for a Swift extension.
+- The payload fingerprint leaves out an entry inside a `.build` beside a `Package.swift` when the
+  shipped .gitignore files exclude it and the extension's repo does not track it (0.1.3; `ray
+  build` rewrites `swift/.build/.lock` on every run). "Tracked" is read from the extension's repo,
+  not from the `raycast/extensions` fork, so a scratch file only the fork tracks could change after
+  gates without failing `gates-tree-changed`. Codex's design round (2026-11-16) recommended
+  accepting it: the mirrors sync from upstream and track the same files. Closing it needs an input
+  naming ray's fork checkout.
 - **Preflight trusts the pure-JS .gitignore fallback to say a file ships** (Codex, 2026-11-16).
   When git cannot answer, `notShippedReason` uses `gitignoreTreeMatcher`, whose `globToRegex`
   lets an embedded `**` (`!docs/**x.md`) cross `/`, which git does not. A README link to an
@@ -83,12 +81,8 @@ Each should land as its own change, with the existing tests as proof and an adve
 - Gates reports the `agents-md-*` checks N/A because `AGENTS.md` is held out before it runs. The
   ship skill requires checking freshness in pre-flight, before `rx holdout out`, and the audit's
   `agents-md-claims` entry must cite that earlier output; nothing enforces the order mechanically.
-- **`greptile can-reply` refused a real fix claim as "no new revision".** Greptile's footer changed
-  (seen 2026-11-16 on raycast/extensions#33570) to `Last reviewed commit: ["<commit title>"](…/commit/<sha>)`,
-  so `parseSummary` read no SHA. `reply-publication` then fell back to the round's fetched `head`,
-  which equals the published SHA when the round is fetched after the push and the head has not
-  moved since. Fixed in `src/greptile/rounds.mjs`, not yet released: only the last footer line is
-  read, its `/commit/<sha>` link first, then a SHA right after the label; hex in a title is never
-  read as the SHA (tests in `test/greptile.test.mjs`). Still open: falling back to the fetched head
-  is wrong when the fetch postdates the push; an unknown reviewed commit should be its own FAIL,
-  not compared to the head.
+- When `parseSummary` reads no reviewed commit, `reply-publication` falls back to the round's
+  fetched `head`, which equals the published SHA when the round is fetched after the push. That is
+  how `greptile can-reply` refused a real fix claim as "no new revision" when Greptile's footer
+  changed to a linked commit title (raycast/extensions#33570; the footer is parsed since 0.1.3). An
+  unknown reviewed commit should be its own FAIL, not compared to the head.
