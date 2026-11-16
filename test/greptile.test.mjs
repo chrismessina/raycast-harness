@@ -141,6 +141,26 @@ test("parseSummary reads the N/5 score and the last reviewed commit; absent → 
   assert.deepEqual(parseSummary("**Confidence score: 4/5**\n<sub>Last reviewed commit: 0123456789abcdef0123456789abcdef01234567</sub>"), { score: 4, reviewedCommit: HEAD });
   assert.deepEqual(parseSummary("Score: 5 / 5"), { score: 5, reviewedCommit: null });
   assert.deepEqual(parseSummary("no score here"), { score: null, reviewedCommit: null });
+  // Greptile's 2026-11 footer: the link text is the commit title, the SHA appears only in the URL.
+  assert.deepEqual(
+    parseSummary('<h2>Confidence Score: 4/5</h2>\n<sub>Reviews (2) · Last reviewed commit: ["Update xdr-boost extension"](https://github.com/raycast/extensions/commit/45e3546262545ecf6a501952ef6eb2609330edab) · [Reviewed by Greptile](https://www.greptile.com/)</sub>'),
+    { score: 4, reviewedCommit: "45e3546262545ecf6a501952ef6eb2609330edab" },
+  );
+  // A hex-looking word in the title must not be taken for the SHA.
+  assert.equal(parseSummary('Last reviewed commit: ["Bump cafe1234 deps"](https://github.com/o/r/commit/0123456789abcdef0123456789abcdef01234567)').reviewedCommit, HEAD);
+  // Only the last footer counts: an example quoted earlier in the body is not the graded commit (Codex F1).
+  assert.equal(
+    parseSummary('Example of the footer:\nLast reviewed commit: ["example"](https://github.com/o/r/commit/89abcdef0123456789abcdef0123456789abcdef)\n\n<sub>Last reviewed commit: 0123456789abcdef0123456789abcdef01234567</sub>').reviewedCommit,
+    HEAD,
+  );
+  // Brackets in the title neither defeat the link nor leak title hex (Codex F2).
+  assert.equal(parseSummary('Last reviewed commit: ["cafe1234 [parser] handling"](https://github.com/o/r/commit/0123456789abcdef0123456789abcdef01234567)').reviewedCommit, HEAD);
+  assert.equal(parseSummary('Last reviewed commit: ["Fix \\] escape"](https://github.com/o/r/commit/0123456789abcdef0123456789abcdef01234567)').reviewedCommit, HEAD);
+  // A link without /commit/ yields no SHA rather than hex from its title.
+  assert.equal(parseSummary('Last reviewed commit: ["cafe1234 fix"](https://github.com/o/r/pull/1)').reviewedCommit, null);
+  assert.equal(parseSummary('Last reviewed commit: [cafe1234 fix](https://example.com/)').reviewedCommit, null);
+  // A short SHA as the link text still reads.
+  assert.equal(parseSummary('Last reviewed commit: [0123456](https://example.com/x)').reviewedCommit, "0123456");
 });
 
 test("buildRound keys on the summary updated_at and keeps original_commit_id per finding; humans in finding threads are not findings", () => {

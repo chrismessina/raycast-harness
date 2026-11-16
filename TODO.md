@@ -83,3 +83,12 @@ Each should land as its own change, with the existing tests as proof and an adve
 - Gates reports the `agents-md-*` checks N/A because `AGENTS.md` is held out before it runs. The
   ship skill requires checking freshness in pre-flight, before `rx holdout out`, and the audit's
   `agents-md-claims` entry must cite that earlier output; nothing enforces the order mechanically.
+- **`greptile can-reply` refused a real fix claim as "no new revision".** Greptile's footer changed
+  (seen 2026-11-16 on raycast/extensions#33570) to `Last reviewed commit: ["<commit title>"](…/commit/<sha>)`,
+  so `parseSummary` read no SHA. `reply-publication` then fell back to the round's fetched `head`,
+  which equals the published SHA when the round is fetched after the push and the head has not
+  moved since. Fixed in `src/greptile/rounds.mjs`, not yet released: only the last footer line is
+  read, its `/commit/<sha>` link first, then a SHA right after the label; hex in a title is never
+  read as the SHA (tests in `test/greptile.test.mjs`). Still open: falling back to the fetched head
+  is wrong when the fetch postdates the push; an unknown reviewed commit should be its own FAIL,
+  not compared to the head.

@@ -31,8 +31,25 @@ export function summaryComment(issueComments) {
 export function parseSummary(body) {
   const text = String(body ?? "");
   const score = text.match(/(?:score|confidence)[^\n]{0,40}?\b([0-5])\s*\/\s*5\b/i)?.[1] ?? text.match(/\b([0-5])\s*\/\s*5\b/)?.[1] ?? null;
-  const reviewed = text.match(/last\s+reviewed\s+commit\D{0,12}([0-9a-f]{7,40})/i)?.[1] ?? null;
-  return { score: score === null ? null : Number(score), reviewedCommit: reviewed };
+  return { score: score === null ? null : Number(score), reviewedCommit: reviewedCommit(text) };
+}
+
+/**
+ * The SHA on the summary's footer line, or null. Only the LAST "Last reviewed commit" line is read: the footer
+ * ends the body, and an earlier one is an example or a quote. Two shapes: (2026-11) a Markdown link whose text is
+ * the commit title and whose URL ends in /commit/<sha>, or a SHA (bare, backticked, or as link text) right after
+ * the label. Hex inside a title is never read as the SHA.
+ * @param {string} text
+ */
+function reviewedCommit(text) {
+  const labels = [...text.matchAll(/last\s+reviewed\s+commit/gi)];
+  if (!labels.length) return null;
+  const last = /** @type {RegExpMatchArray} */ (labels.at(-1));
+  const line = text.slice(/** @type {number} */ (last.index) + last[0].length).split("\n")[0];
+  const linked = line.match(/\]\(https?:\/\/[^)\s]*\/commit\/([0-9a-f]{7,40})\)/i)?.[1];
+  if (linked) return linked.toLowerCase();
+  const bare = line.match(/^:?\s*(?:\[([0-9a-f]{7,40})\]|`?([0-9a-f]{7,40})`?(?![\w-]))/i);
+  return (bare?.[1] ?? bare?.[2])?.toLowerCase() ?? null;
 }
 
 /**
