@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.1.3
+
+- Swift extensions no longer fail `gates-tree-changed` on every run. `ray build` writes its PID
+  into `swift/.build/.lock`, and that file was counted in the payload fingerprint. The fingerprint
+  now leaves out an entry inside a `.build` beside a `Package.swift` only when git says the
+  extension's shipped `.gitignore` files exclude it and the extension's repo does not track it.
+  When git cannot answer, nothing is left out.
+- `rx greptile` reads the reviewed commit from Greptile's current summary footer, where the link
+  text is the commit title and the SHA appears only in the URL. Before, it read no SHA, and
+  `greptile can-reply` refused a real fix claim as "no new revision".
+
 ## 0.1.2
 
 - The package is now `@chrismessina/raycast-harness`, scoped like the author's other packages.
