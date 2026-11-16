@@ -66,6 +66,20 @@ Each should land as its own change, with the existing tests as proof and an adve
 - The `review-pr` skill does not call `rx pr files` for a contributor's PR. (`rx pr verify` checks
   Chris's own PRs and does not fit.)
 - When a provider's top answer is below 0.7, `rx judge ask` text output does not name the provider that returned the probabilities; `--json` does. (A PASS and a provider-error fallback already name it.)
+- **Swift extensions failed `gates-tree-changed` on every run.** `ray build` writes its PID into
+  `swift/.build/.lock`, which ray's `copyDir` copies. Fixed in `src/fingerprint.mjs`
+  (`ignoredSwiftPMScratch`, 2026-11-15, not yet released): the payload fingerprint leaves out an
+  entry inside a `.build` beside a `Package.swift` only when the shipped .gitignore files exclude
+  it and the repo does not track it (git decides; nothing is left out when git cannot answer).
+  Until a release carries it and the plugin pin moves, do what the XDR Boost session did: run
+  `rx gates` through the runner with `RX_DEV=<this checkout>`, then delete `swift/.build` just
+  before `npm run publish`, so the pinned guard, which still counts `.build`, sees the same
+  payload. Pinned gates alone cannot write a receipt for a Swift extension.
+- **Preflight trusts the pure-JS .gitignore fallback to say a file ships** (Codex, 2026-11-16).
+  When git cannot answer, `notShippedReason` uses `gitignoreTreeMatcher`, whose `globToRegex`
+  lets an embedded `**` (`!docs/**x.md`) cross `/`, which git does not. A README link to an
+  ignored target can then pass. Fix the `**` semantics, or treat an unknown answer as "may not
+  ship". The fingerprint no longer uses the fallback.
 - Gates reports the `agents-md-*` checks N/A because `AGENTS.md` is held out before it runs. The
   ship skill requires checking freshness in pre-flight, before `rx holdout out`, and the audit's
   `agents-md-claims` entry must cite that earlier output; nothing enforces the order mechanically.

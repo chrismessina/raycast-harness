@@ -5,7 +5,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { chmodSync, mkdirSync, readFileSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { combine, computeFingerprints, diffFingerprints, fileFingerprint, payloadFingerprint, readBaseline } from "../src/fingerprint.mjs";
+import { combine, computeFingerprints, diffFingerprints, fileFingerprint, ignoredSwiftPMScratch, payloadFingerprint, readBaseline } from "../src/fingerprint.mjs";
 import { fakeExtension, withTempDir } from "./helpers.mjs";
 import { makeExt } from "./preflight-helpers.mjs";
 import { commit, extensionFiles, g, initRepo } from "./upstream-fixtures.mjs";
@@ -190,5 +190,72 @@ test("fingerprint (Codex P2 #11): a symlink's target executable bit is part of t
     assert.notEqual(b.payload, a.payload, "flipping the target's exec bit changes the fingerprint even though the link and its bytes did not");
     chmodSync(join(root, "node_modules", "tool.sh"), 0o644);
     assert.equal((await fp()).payload, a.payload);
+  });
+});
+
+test("fingerprint: an ignored SwiftPM scratch .build (beside Package.swift) is left out; any other .build is not", async () => {
+  await withTempDir(async (dir) => {
+    const { root, fp } = await repo(dir);
+    writeFileSync(join(root, ".gitignore"), "*.local\n.build/\n");
+    mkdirSync(join(root, "swift/.build/debug"), { recursive: true });
+    writeFileSync(join(root, "swift/Package.swift"), "// swift-tools-version:5.9\n");
+    writeFileSync(join(root, "swift/.build/.lock"), "111");
+    const a = await fp();
+    writeFileSync(join(root, "swift/.build/.lock"), "222"); // ray build writes its PID here every run
+    mkdirSync(join(root, "swift/.build/release")); // and creates directories
+    assert.equal((await fp()).payload, a.payload, "SwiftPM's scratch files do not change the payload");
+    writeFileSync(join(root, "swift/Package.swift"), "// changed\n");
+    assert.notEqual((await fp()).payload, a.payload, "Package.swift itself is still covered");
+    mkdirSync(join(root, "other/.build"), { recursive: true });
+    const b = await fp();
+    writeFileSync(join(root, "other/.build/x"), "1");
+    assert.notEqual((await fp()).payload, b.payload, "a .build with no Package.swift beside it is still covered");
+  });
+});
+
+test("fingerprint (fail closed): a SwiftPM .build that no shipped .gitignore excludes stays in the payload", async () => {
+  await withTempDir(async (dir) => {
+    // The fork-side `git add` would commit it, so a post-gates change to it is a change to the PR.
+    const { root, fp } = await repo(dir);
+    mkdirSync(join(root, "swift/.build"), { recursive: true });
+    writeFileSync(join(root, "swift/Package.swift"), "// swift-tools-version:5.9\n");
+    writeFileSync(join(root, "swift/.build/.lock"), "111");
+    const a = await fp();
+    writeFileSync(join(root, "swift/.build/.lock"), "222");
+    assert.notEqual((await fp()).payload, a.payload);
+  });
+});
+
+test("fingerprint (fail closed): an ignored .build file the repo tracks stays in, since git stages a tracked file anyway", async () => {
+  await withTempDir(async (dir) => {
+    const { root, fp } = await repo(dir);
+    writeFileSync(join(root, ".gitignore"), "*.local\n.build/\n");
+    mkdirSync(join(root, "swift/.build"), { recursive: true });
+    writeFileSync(join(root, "swift/Package.swift"), "// swift-tools-version:5.9\n");
+    writeFileSync(join(root, "swift/.build/tracked.txt"), "1");
+    writeFileSync(join(root, "swift/.build/.lock"), "111");
+    await g(root, ["add", "-f", "swift/.build/tracked.txt"]);
+    await g(root, ["commit", "-qm", "track one scratch file"]);
+    const left = await ignoredSwiftPMScratch(root);
+    assert.ok(left.has("swift/.build/.lock") && !left.has("swift/.build/tracked.txt"), [...left].join(", "));
+    const a = await fp();
+    writeFileSync(join(root, "swift/.build/tracked.txt"), "2");
+    assert.notEqual((await fp()).payload, a.payload);
+  });
+});
+
+test("fingerprint: a .gitignore that excludes only the contents (`swift/.build/*`) leaves the contents out, and nothing outside .build", async () => {
+  await withTempDir(async (dir) => {
+    const { root, fp } = await repo(dir);
+    writeFileSync(join(root, ".gitignore"), "*.local\nswift/.build/*\n");
+    mkdirSync(join(root, "swift/.build"), { recursive: true });
+    writeFileSync(join(root, "swift/Package.swift"), "// swift-tools-version:5.9\n");
+    writeFileSync(join(root, "swift/.build/.lock"), "111");
+    const a = await fp();
+    writeFileSync(join(root, "swift/.build/.lock"), "222");
+    assert.equal((await fp()).payload, a.payload);
+    writeFileSync(join(root, "swift/keep.txt"), "x");
+    const left = await ignoredSwiftPMScratch(root);
+    assert.ok(left.has("swift/.build/.lock") && !left.has("swift/keep.txt") && !left.has("swift/Package.swift"), [...left].join(", "));
   });
 });

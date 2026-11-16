@@ -5,6 +5,18 @@
 //   payload       SHA-256 over a sorted, length-delimited manifest of the publisher copy set
 //                 (`src/payload.mjs`: the root minus ray's fixed skip list, ignored and untracked
 //                 files included): path, entry type, executable bit, symlink target, file bytes.
+//                 One exception: an entry inside a SwiftPM scratch directory (`.build` beside a
+//                 `Package.swift`) that the .gitignore files the extension ships exclude and the
+//                 extension's repo does not track. `ray build` rewrites `.build/.lock` with its PID
+//                 on every run, so counting it made every Swift extension fail
+//                 `gates-tree-changed`. ray still copies it and `rx scan` still reads it, but the
+//                 fork-side `git add` does not stage an untracked ignored path. git check-ignore
+//                 decides, over the shipped .gitignore files (src/preflight/gitignore.mjs). It
+//                 fails closed: when git cannot answer, or anything here throws, nothing is left
+//                 out (the pure-JS matcher is not trusted to authorize an omission). An entry
+//                 that is not ignored, or that the repo tracks (git stages a tracked file even when
+//                 it is ignored), stays in. Residual: "tracked" is read from the extension's repo,
+//                 not from the fork, which normally tracks the same files.
 //                 A symlink to a file hashes the TARGET's bytes and the target's executable bit,
 //                 because that is what ray copies; a dangling or directory link hashes the
 //                 failure text instead (ray's copy fails there too, and the fingerprint still
@@ -24,10 +36,11 @@
 // takes no flags, can re-read the same files. A file that has since vanished hashes as `missing`.
 
 import { createHash } from "node:crypto";
-import { readFileSync, statSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { resolvePublishTag } from "./publish-tag.mjs";
 import { git, isWorkTree } from "./git.mjs";
+import { gitIgnoredSet, shippedGitignores } from "./preflight/gitignore.mjs";
 import { listPayload, readPayloadBytes } from "./payload.mjs";
 import { readStaleBaseline } from "./published-copy.mjs";
 
@@ -65,12 +78,13 @@ function frame(hash, field) {
 }
 
 /**
- * The payload fingerprint: every entry `ray publish` would copy, sorted by path.
+ * The payload fingerprint: every entry `ray publish` would copy, sorted by path, minus `leaveOut`.
  * @param {string} root absolute extension root
+ * @param {ReadonlySet<string>} [leaveOut] entry paths to leave out (computeFingerprints passes ignoredSwiftPMScratch)
  * @returns {{ hash: string, entries: number }}
  */
-export function payloadFingerprint(root) {
-  const entries = listPayload(root);
+export function payloadFingerprint(root, leaveOut = new Set()) {
+  const entries = listPayload(root).filter((e) => !leaveOut.has(e.path));
   const hash = createHash("sha256");
   for (const e of entries) {
     frame(hash, e.path);
@@ -97,6 +111,48 @@ export function payloadFingerprint(root) {
     }
   }
   return { hash: hash.digest("hex"), entries: entries.length };
+}
+
+/**
+ * True for a SwiftPM scratch directory or a path inside one: a `.build` segment whose parent holds
+ * a `Package.swift`. @param {string} root @param {string} relPath `/`-joined, relative to root
+ */
+export function isSwiftPMScratch(root, relPath) {
+  const segments = relPath.split("/");
+  const i = segments.indexOf(".build");
+  return i >= 0 && existsSync(join(root, ...segments.slice(0, i), "Package.swift"));
+}
+
+/**
+ * The payload entries inside SwiftPM scratch directories that the shipped .gitignore files exclude
+ * and the extension's repo does not track: what payloadFingerprint leaves out. git check-ignore
+ * decides (a directory is asked with a trailing `/`, which git needs to apply a directory-only
+ * pattern to a path its scratch repo cannot see). Fails closed: an empty set whenever git cannot
+ * answer or anything throws.
+ * @param {string} root absolute extension root
+ * @returns {Promise<Set<string>>}
+ */
+export async function ignoredSwiftPMScratch(root) {
+  try {
+    const scratch = listPayload(root).filter((e) => isSwiftPMScratch(root, e.path));
+    if (!scratch.length) return new Set();
+    const key = (/** @type {{ path: string, type: string }} */ e) => (e.type === "dir" ? `${e.path}/` : e.path);
+    const ignored = await gitIgnoredSet(shippedGitignores(root), scratch.map(key));
+    if (!ignored) return new Set();
+    /** @type {Set<string>} */
+    let tracked = new Set();
+    if (await isWorkTree(root)) {
+      const r = await git(["ls-files", "-z", "--full-name", "--", "."], { cwd: root, allowFail: true });
+      if (r.code !== 0) return new Set();
+      const top = await git(["rev-parse", "--show-prefix"], { cwd: root, allowFail: true });
+      if (top.code !== 0) return new Set();
+      const prefix = top.stdout.trim();
+      tracked = new Set(r.stdout.split("\0").filter(Boolean).map((f) => (prefix && f.startsWith(prefix) ? f.slice(prefix.length) : f)));
+    }
+    return new Set(scratch.filter((e) => ignored.has(key(e)) && !tracked.has(e.path)).map((e) => e.path));
+  } catch {
+    return new Set();
+  }
 }
 
 /** SHA-256 of a file's bytes, or `missing` when it cannot be read. @param {string | null} file */
@@ -161,7 +217,7 @@ export async function computeFingerprints({ root, version, presetPath, forbidden
   const { head, publishRange } = await gitFingerprints(root);
   /** @type {Omit<Fingerprints, "combined">} */
   const parts = {
-    payload: payloadFingerprint(root).hash,
+    payload: payloadFingerprint(root, await ignoredSwiftPMScratch(root)).hash,
     head,
     publishRange,
     preset: fileFingerprint(presetPath),
