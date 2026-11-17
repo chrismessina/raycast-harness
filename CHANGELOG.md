@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.1.4
+
+- `shortcut-platform-case` parses `src/` with the extension's own `typescript` and FAILs only on a
+  miscased `windows` or `macos` key whose object value has both `modifiers` and `key`. A lowercase
+  `macos` key in other data, such as Homebrew's cask schema, no longer FAILs. A file that does not
+  parse, or an extension without a loadable `typescript`, is a WARN, never a PASS.
+- `rx shortcuts check` reads source through the same parser, so text inside strings, regex literals,
+  templates and JSX can no longer count as a shortcut or end an object early. The text scan is the
+  fallback for a file that does not parse, and `data.textScanned` lists those files.
+- `changelog-order` is a WARN, not a FAIL, for an out-of-order pair the published CHANGELOG already
+  has: every published dated heading is kept byte for byte, in the published order and count, and
+  the pair is adjacent in both. `changelog-history` forbids editing those entries, so no branch
+  could pass both checks.
+- `changelog-history` compares headings as written: trailing spaces or a changed line ending on a
+  published heading is an edit.
+
 ## 0.1.3
 
 - Swift extensions no longer fail `gates-tree-changed` on every run. `ray build` writes its PID
