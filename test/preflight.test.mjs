@@ -466,18 +466,20 @@ const TS_DIR = join(REPO, "node_modules", "typescript");
 const withTs = (root) => { mkdirSync(join(root, "node_modules"), { recursive: true }); symlinkSync(TS_DIR, join(root, "node_modules", "typescript"), "dir"); return root; };
 /** @param {string} dir @param {string} name @param {Record<string, string>} files */
 const tsExt = (dir, name, files) => withTs(makeExt(join(dir, name), { files }));
+/** Preflight allowed to load the extension's typescript, as `rx gates` runs it. @param {string} root */
+const pf = (root) => preflight(root, { extensionTypescript: true });
 const SC = 'export const shortcut = { macOS: { modifiers: ["cmd"], key: "h" }, Windows: { modifiers: ["ctrl"], key: "h" } };\n';
 
 test("shortcut-platform-case (parsed): lowercase or quoted lowercase keys fail; proper keys pass; no shortcuts → N/A", async () => {
   await withTempDir(async (dir) => {
-    const a = await preflight(tsExt(dir, "a", { "src/a.tsx": 'export const shortcut = { windows: { modifiers: ["ctrl"], key: "h" }, macos: { modifiers: ["cmd"], key: "h" } };\n' }));
+    const a = await pf(tsExt(dir, "a", { "src/a.tsx": 'export const shortcut = { windows: { modifiers: ["ctrl"], key: "h" }, macos: { modifiers: ["cmd"], key: "h" } };\n' }));
     assert.equal(a.verdict("shortcut-platform-case"), "FAIL");
     assert.deepEqual(a.by["shortcut-platform-case"].details.map((/** @type {any} */ d) => d.text), ["src/a.tsx:1", "src/a.tsx:1"]);
-    assert.equal((await preflight(tsExt(dir, "b", { "src/a.tsx": 'export const shortcut = { "windows": { "modifiers": ["ctrl"], "key": "h" } };\n' }))).verdict("shortcut-platform-case"), "FAIL");
-    const c = await preflight(tsExt(dir, "c", { "src/a.tsx": SC }));
+    assert.equal((await pf(tsExt(dir, "b", { "src/a.tsx": 'export const shortcut = { "windows": { "modifiers": ["ctrl"], "key": "h" } };\n' }))).verdict("shortcut-platform-case"), "FAIL");
+    const c = await pf(tsExt(dir, "c", { "src/a.tsx": SC }));
     assert.equal(c.verdict("shortcut-platform-case"), "PASS");
     assert.match(c.by["shortcut-platform-case"].message, /parsed with typescript/);
-    assert.equal((await preflight(withTs(makeExt(join(dir, "d"))))).verdict("shortcut-platform-case"), "N/A");
+    assert.equal((await pf(withTs(makeExt(join(dir, "d"))))).verdict("shortcut-platform-case"), "N/A");
   });
 });
 
@@ -498,12 +500,12 @@ test("shortcut-platform-case (parsed): shapes a text scan misreads (Codex R1, R2
       ["in-template", 'const x = 1;\nexport const r = { macos: { modifiers: [], other: `outer ${`inner, key: ${x}`} tail` } };\n' + SC, "PASS"],
     ];
     for (const [name, src, want] of cases) {
-      const r = await preflight(tsExt(dir, name, { "src/a.ts": src }));
+      const r = await pf(tsExt(dir, name, { "src/a.ts": src }));
       assert.equal(r.verdict("shortcut-platform-case"), want, `${name}: ${r.by["shortcut-platform-case"]?.message}`);
     }
     const jsx = 'import { Detail } from "@raycast/api";\nexport default function C() {\n  return <Detail markdown="Example { macos: { modifiers: [], key: x } }" />;\n}\n' + SC;
-    assert.equal((await preflight(tsExt(dir, "jsx", { "src/a.tsx": jsx }))).verdict("shortcut-platform-case"), "PASS");
-    const lines = await preflight(tsExt(dir, "lines", { "src/a.ts": 'export const s = {\n\n  macos: {\n    modifiers: ["cmd"],\n    key: "r",\n  },\n};\n' }));
+    assert.equal((await pf(tsExt(dir, "jsx", { "src/a.tsx": jsx }))).verdict("shortcut-platform-case"), "PASS");
+    const lines = await pf(tsExt(dir, "lines", { "src/a.ts": 'export const s = {\n\n  macos: {\n    modifiers: ["cmd"],\n    key: "r",\n  },\n};\n' }));
     assert.deepEqual(lines.by["shortcut-platform-case"].details.map((/** @type {any} */ d) => d.text), ["src/a.ts:3"]);
   });
 });
@@ -511,11 +513,11 @@ test("shortcut-platform-case (parsed): shapes a text scan misreads (Codex R1, R2
 test("shortcut-platform-case (parsed): a file with syntax errors is a WARN naming it; a clean file's FAIL still wins", async () => {
   await withTempDir(async (dir) => {
     const broken = 'export const shortcut = { macos: { modifiers: ["cmd"], key: "h" } ;\nconst = ;\n';
-    const w = await preflight(tsExt(dir, "w", { "src/a.ts": broken, "src/b.ts": SC }));
+    const w = await pf(tsExt(dir, "w", { "src/a.ts": broken, "src/b.ts": SC }));
     assert.equal(w.verdict("shortcut-platform-case"), "WARN");
     assert.match(w.by["shortcut-platform-case"].message, /did not parse cleanly/);
     assert.match(JSON.stringify(w.by["shortcut-platform-case"].details), /src\/a\.ts:/);
-    const f = await preflight(tsExt(dir, "f", { "src/a.ts": broken, "src/b.ts": 'export const shortcut = { macos: { modifiers: ["cmd"], key: "h" } };\n' }));
+    const f = await pf(tsExt(dir, "f", { "src/a.ts": broken, "src/b.ts": 'export const shortcut = { macos: { modifiers: ["cmd"], key: "h" } };\n' }));
     assert.equal(f.verdict("shortcut-platform-case"), "FAIL");
   });
 });
@@ -523,20 +525,40 @@ test("shortcut-platform-case (parsed): a file with syntax errors is a WARN namin
 test("shortcut-platform-case: typescript resolved from a parent directory (hoisted) is used", async () => {
   await withTempDir(async (dir) => {
     withTs(dir);
-    const r = await preflight(makeExt(join(dir, "ws", "ext"), { files: { "src/a.ts": 'export const shortcut = { macos: { modifiers: ["cmd"], key: "h" } };\n' } }));
+    const r = await pf(makeExt(join(dir, "ws", "ext"), { files: { "src/a.ts": 'export const shortcut = { macos: { modifiers: ["cmd"], key: "h" } };\n' } }));
     assert.equal(r.verdict("shortcut-platform-case"), "FAIL");
   });
 });
 
 test("shortcut-platform-case without the extension's typescript: the text scan WARNs, never FAILs; no hits is a WARN, never a PASS", async () => {
   await withTempDir(async (dir) => {
-    const hit = await preflight(makeExt(join(dir, "hit"), { files: { "src/a.ts": 'export const shortcut = { macos: { modifiers: ["cmd"], key: "h" } };\n' } }));
+    const hit = await pf(makeExt(join(dir, "hit"), { files: { "src/a.ts": 'export const shortcut = { macos: { modifiers: ["cmd"], key: "h" } };\n' } }));
     assert.equal(hit.verdict("shortcut-platform-case"), "WARN");
     assert.match(hit.by["shortcut-platform-case"].message, /could not be loaded/);
-    const clean = await preflight(makeExt(join(dir, "clean"), { files: { "src/a.ts": SC } }));
+    const clean = await pf(makeExt(join(dir, "clean"), { files: { "src/a.ts": SC } }));
     assert.equal(clean.verdict("shortcut-platform-case"), "WARN");
     assert.match(clean.by["shortcut-platform-case"].message, /not checked/);
-    assert.equal((await preflight(makeExt(join(dir, "none")))).verdict("shortcut-platform-case"), "N/A");
+    assert.equal((await pf(makeExt(join(dir, "none")))).verdict("shortcut-platform-case"), "N/A");
+  });
+});
+
+test("shortcut-platform-case runs no extension code unless --extension-typescript is given (rx gates passes it)", async () => {
+  await withTempDir(async (dir) => {
+    // A typescript package that leaves a marker when it is loaded.
+    const root = makeExt(join(dir, "ext"), { files: { "src/a.ts": SC } });
+    const pkg = join(root, "node_modules", "typescript");
+    mkdirSync(pkg, { recursive: true });
+    const marker = join(dir, "loaded");
+    writeFileSync(join(pkg, "package.json"), JSON.stringify({ name: "typescript", version: "0.0.0", main: "index.js" }));
+    writeFileSync(join(pkg, "index.js"), `require("node:fs").writeFileSync(${JSON.stringify(marker)}, "1"); module.exports = {};\n`);
+    const off = await preflight(root);
+    assert.equal(existsSync(marker), false, "the extension's typescript must not be loaded");
+    assert.equal(off.verdict("shortcut-platform-case"), "WARN");
+    assert.match(off.by["shortcut-platform-case"].message, /--extension-typescript was not given/);
+    const on = await preflight(root, { extensionTypescript: true });
+    assert.equal(existsSync(marker), true, "with the flag it is loaded");
+    assert.equal(on.verdict("shortcut-platform-case"), "WARN", "a module without the compiler API is not trusted");
+    assert.match(on.by["shortcut-platform-case"].message, /could not be loaded/);
   });
 });
 

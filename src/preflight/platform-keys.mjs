@@ -9,13 +9,14 @@
 // Fail-safe, never fail-blind:
 // - a file the parser reports syntax errors in is not trusted to be fully inspected: WARN with the
 //   first error's line (its clean siblings still FAIL definitively);
-// - when the extension's typescript cannot be loaded, or lacks an API used here, the pre-parser
+// - the caller passes no compiler (it may not run the extension's code: only `rx gates` does), or
+//   the extension's typescript cannot be loaded or lacks an API used here: the pre-parser
 //   per-line text scan runs and its hits are WARN, never FAIL; no hits is a WARN that the keys were
 //   not checked, never a PASS.
 
 import { readFileSync } from "node:fs";
 import { grepSources } from "./context.mjs";
-import { lineOf, loadTypeScript, parse, propertyName, unwrap } from "../typescript.mjs";
+import { lineOf, parse, propertyName, unwrap } from "../typescript.mjs";
 
 const MISCASED = new Set(["windows", "macos", "MacOS", "Macos", "MacOs"]);
 const HEURISTIC = /[{,]\s*["']?(windows|macos|MacOS|Macos|MacOs)["']?\s*:\s*\{/;
@@ -52,9 +53,10 @@ function miscasedKeys(ts, sf) {
  * @param {string} root
  * @param {{ file: string, rel: string, code: string }[]} sources
  * @param {{ fail: Function, warn: Function, na: Function, pass: Function }} c
- * @param {any} [ts] the compiler to use; defaults to the extension's own
+ * @param {any} ts the extension's compiler, or null to use the text scan
+ * @param {string} [why] why there is no compiler (worded for the WARN)
  */
-export function shortcutPlatformCase(root, sources, c, ts = loadTypeScript(root)) {
+export function shortcutPlatformCase(root, sources, c, ts, why = "the extension's typescript could not be loaded") {
   const ID = "shortcut-platform-case";
   const declared = grepSources(sources, /\bshortcut\s*[=:]/).length > 0;
   /** @param {{ file: string, line: number }[]} hits */
@@ -63,8 +65,8 @@ export function shortcutPlatformCase(root, sources, c, ts = loadTypeScript(root)
   if (!ts) {
     const hits = grepSources(sources, HEURISTIC);
     if (!declared && !hits.length) return c.na(ID, "no shortcuts declared in src/");
-    if (hits.length) return c.warn(ID, "possibly miscased platform keys (a text scan: the extension's typescript could not be loaded, so nothing was parsed); shortcut platform keys are macOS and Windows", details(hits));
-    return c.warn(ID, "shortcut keys not checked: the extension's typescript could not be loaded");
+    if (hits.length) return c.warn(ID, `possibly miscased platform keys (a text scan, nothing was parsed: ${why}); shortcut platform keys are macOS and Windows`, details(hits));
+    return c.warn(ID, `shortcut keys not checked by the parser: ${why}`);
   }
 
   /** @type {{ file: string, line: number }[]} */

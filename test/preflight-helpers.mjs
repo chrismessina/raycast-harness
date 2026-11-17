@@ -90,13 +90,14 @@ export function makeExt(dir, overrides = {}) {
 
 /**
  * Run preflight and index results by id.
- * @param {string} root @param {{ preset?: string | null, published?: string }} [opts]
+ * @param {string} root @param {{ preset?: string | null, published?: string, extensionTypescript?: boolean }} [opts]
  */
 export async function preflight(root, opts = {}) {
   const argv = ["preflight", "--root", root, "--json"];
   const preset = opts.preset === undefined ? LEGACY_PRESET : opts.preset;
   if (preset) argv.push("--preset", preset);
   if (opts.published) argv.push("--published", opts.published);
+  if (opts.extensionTypescript) argv.push("--extension-typescript");
   const r = await rx(argv);
   if (!r.json) throw new Error(`preflight printed no JSON:\n${r.stdout}\n${r.stderr}`);
   /** @type {Record<string, { id: string, verdict: string, message: string, details: { file?: string, line?: number, text: string }[] }>} */

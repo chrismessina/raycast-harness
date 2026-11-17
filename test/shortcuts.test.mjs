@@ -585,3 +585,22 @@ test("literal edge cases: a __proto__ member makes the shortcut unresolved, neve
   assert.equal(p.bindings.macOS?.key, ",}");
   assert.deepEqual(t.bindings, p.bindings);
 });
+
+test("shortcuts check runs no extension code unless --extension-typescript is given", async () => {
+  await withTempDir(async (dir) => {
+    const ext = fakeExtension(dir, "ext");
+    mkdirSync(join(ext, "src"), { recursive: true });
+    writeFileSync(join(ext, "src", "a.tsx"), 'export const a = <Action title="A" shortcut={Keyboard.Shortcut.Common.Copy} />;\n');
+    const pkg = join(ext, "node_modules", "typescript");
+    mkdirSync(pkg, { recursive: true });
+    const marker = join(dir, "loaded");
+    writeFileSync(join(pkg, "package.json"), JSON.stringify({ name: "typescript", version: "0.0.0", main: "index.js" }));
+    writeFileSync(join(pkg, "index.js"), `require("node:fs").writeFileSync(${JSON.stringify(marker)}, "1"); module.exports = {};\n`);
+    const off = await rx(["shortcuts", "check", "--root", ext, "--table", TABLE, "--json"]);
+    assert.equal(existsSync(marker), false, "the extension's typescript must not be loaded");
+    assert.equal(off.json.data.parser, null);
+    assert.match(byId(off.json.results)["shortcut-ambiguous"].message, /--extension-typescript was not given/);
+    await rx(["shortcuts", "check", "--root", ext, "--table", TABLE, "--extension-typescript", "--json"]);
+    assert.equal(existsSync(marker), true, "with the flag it is loaded");
+  });
+});

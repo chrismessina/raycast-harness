@@ -1,7 +1,9 @@
 // The extension's own TypeScript compiler API, for checks that must read source structure
 // (src/preflight/platform-keys.mjs, src/shortcuts/ast-scan.mjs). rx ships no parser of its own (its
 // one runtime dependency is pngjs); every Raycast extension carries `typescript` as a
-// devDependency, and the gates that need it run build and lint in the same tree.
+// devDependency. Loading it runs that package's code, so a command calls loadTypeScript only under
+// an explicit `--extension-typescript`; `rx gates`, which runs the extension's build and lint
+// anyway, is the one caller that passes it.
 
 import { createRequire } from "node:module";
 import { join } from "node:path";

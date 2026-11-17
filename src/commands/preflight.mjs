@@ -19,9 +19,10 @@ export const spec = {
     "--root": { type: "string", value: "<dir>", help: "extension root" },
     "--published": { type: "string", value: "<dir>", help: "the extension as published in raycast/extensions (enables the comparison checks)" },
     "--preset": { type: "string", value: "<file>", help: "preset JSON (schema/preset.schema.json); without it preset-class checks are N/A" },
+    "--extension-typescript": { type: "boolean", help: "parse src/ with the extension's installed typescript, which loads and runs that package's code (as a build would); `rx gates` passes it. Without it the source is only read, by a text scan (shortcut-platform-case is then a WARN at most)" },
   },
   network: "none",
-  state: "none (read-only); reads repo/stale/baseline.json for the `published` applicability value when present",
+  state: "none (read-only, and runs no code from the extension unless --extension-typescript is given); reads repo/stale/baseline.json for the `published` applicability value when present",
   data: {
     root: "string",
     published: "boolean — whether --published was given",
@@ -46,9 +47,10 @@ export async function run({ args, root, cwd, results }) {
   // The published-copy service reads a copy inside the shared upstream cache under its lock, so a
   // concurrent `rx stale` for another extension cannot swap the tree mid-run; a directory anywhere
   // else is neither locked nor refreshed.
+  const extensionTypescript = args.flags["--extension-typescript"] === true;
   const { outcomes, data } = publishedDir === null
-    ? await runPreflight({ root, publishedDir, preset })
-    : await withPublishedCopy({ directory: publishedDir }, (copy) => runPreflight({ root, publishedDir: copy.directory, preset }));
+    ? await runPreflight({ root, publishedDir, preset, extensionTypescript })
+    : await withPublishedCopy({ directory: publishedDir }, (copy) => runPreflight({ root, publishedDir: copy.directory, preset, extensionTypescript }));
   for (const o of outcomes) results.add(o.verdict, o.id, o.message, o.details);
   return { data };
 }

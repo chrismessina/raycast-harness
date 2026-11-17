@@ -17,6 +17,7 @@ import { run as exec } from "../exec.mjs";
 import { RxError } from "../errors.mjs";
 import { cachePath } from "../state.mjs";
 import { declaredPlatforms, exclusive, scanExtension } from "../shortcuts/scan.mjs";
+import { loadTypeScript } from "../typescript.mjs";
 import {
   APP_CANDIDATES,
   discoverApp,
@@ -65,10 +66,11 @@ export const spec = {
       summary: "compare the extension's resolved panels and toast actions with the runtime table",
       root: "required",
       network: "none",
-      state: "reads shortcuts/<shimFingerprint>.json from the cache (the fingerprint of the installed app's shim) unless --table is given; writes nothing",
+      state: "reads shortcuts/<shimFingerprint>.json from the cache (the fingerprint of the installed app's shim) unless --table is given; writes nothing; runs no code from the extension unless --extension-typescript is given",
       flags: {
         "--table": { type: "string", value: "<file>", help: "a table written by `rx shortcuts runtime` (or a recorded fixture) instead of the one matching the installed app" },
         "--root": { type: "string", value: "<dir>", help: "extension root" },
+        "--extension-typescript": { type: "boolean", help: "read source with the extension's installed typescript, which loads and runs that package's code (as a build would); without it the source is only read, by the text scan" },
       },
       checks: CHECK_IDS,
       data: {
@@ -80,7 +82,7 @@ export const spec = {
         unresolved: "[{ file, line, title, source }] — declared shortcuts whose binding could not be read statically (a variable, a spread, a composed component; see src/shortcuts/scan.mjs)",
         groups: "{ panels, toasts, loose }",
         files: "number of source files scanned",
-        parser: "string | null — the extension's TypeScript the scan read source with (\"typescript <version>\"); null when none could be loaded",
+        parser: "string | null — the extension's TypeScript the scan read source with (\"typescript <version>\"); null without --extension-typescript or when none could be loaded",
         textScanned: "string[] — files read by the fallback text scan instead (every file without a parser, else those that did not parse cleanly)",
       },
       examples: ["rx shortcuts check", "rx shortcuts check --root ../raycast-brew --table test/fixtures/shortcuts/table-2.10.1.0.json"],
@@ -148,7 +150,8 @@ async function readAppVersion(plist, log) {
 /** @param {import("../cli.mjs").CommandContext} ctx */
 async function check({ args, root, results }) {
   const ext = /** @type {string} */ (root);
-  const scan = scanExtension(ext);
+  const useTs = args.flags["--extension-typescript"] === true;
+  const scan = scanExtension(ext, useTs ? loadTypeScript(ext) : null);
   const platforms = declaredPlatforms(ext);
   const groupsSummary = {
     panels: scan.groups.filter((g) => g.kind === "panel").length,
@@ -159,7 +162,7 @@ async function check({ args, root, results }) {
   const unresolved = scan.shortcuts.filter((sc) => sc.kind === "unresolved").map(site);
   /** @type {Record<string, unknown>} */
   const data = { table: null, declared: scan.shortcuts.length, conflicts: [], reserved: [], platforms, unresolved, groups: groupsSummary, files: scan.files, parser: scan.parser, textScanned: scan.textScanned };
-  const reader = scan.parser === null ? "; text scan: the extension's typescript could not be loaded" : scan.textScanned.length ? `; ${scan.parser}, text scan for ${scan.textScanned.length} file${scan.textScanned.length === 1 ? "" : "s"} that did not parse` : `; ${scan.parser}`;
+  const reader = scan.parser === null ? `; text scan: ${useTs ? "the extension's typescript could not be loaded" : "--extension-typescript was not given, so no extension code was run"}` : scan.textScanned.length ? `; ${scan.parser}, text scan for ${scan.textScanned.length} file${scan.textScanned.length === 1 ? "" : "s"} that did not parse` : `; ${scan.parser}`;
 
   if (scan.shortcuts.length === 0) {
     const why = `extension declares no shortcuts (${scan.files} source files scanned${reader})`;

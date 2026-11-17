@@ -1,7 +1,8 @@
 // Shortcut scan for `rx shortcuts check`: finds every declared shortcut in an extension's source
 // and groups it with the actions it can collide with.
 //
-// PARSER FIRST. Each file is read from the extension's own TypeScript syntax tree
+// PARSER FIRST, WHEN ALLOWED. With a compiler (`rx shortcuts check --extension-typescript`), each
+// file is read from the extension's own TypeScript syntax tree
 // (src/shortcuts/ast-scan.mjs, compiler loaded by src/typescript.mjs): strings, regex literals,
 // templates and JSX text can never pose as a shortcut or end an object early. rx itself ships no
 // parser (its one runtime dependency is pngjs).
@@ -47,7 +48,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import { join, relative } from "node:path";
 import { PLATFORMS, readBinding } from "./table.mjs";
 import { scanTree } from "./ast-scan.mjs";
-import { loadTypeScript, parse } from "../typescript.mjs";
+import { parse } from "../typescript.mjs";
 import { isDirectory as isDir } from "../util.mjs";
 
 /**
@@ -515,12 +516,13 @@ function readTitle(text, re) {
 }
 
 /**
- * Scan every source file of an extension, with its own TypeScript when it can be loaded.
+ * Scan every source file of an extension: with `ts` (the extension's own compiler, which the caller
+ * loaded because it may run that code) when given, else with the text scan.
  * @param {string} root
- * @param {any} [ts] the compiler to use; defaults to the extension's own
+ * @param {any} ts a compiler from loadTypeScript, or null
  * @returns {Scan}
  */
-export function scanExtension(root, ts = loadTypeScript(root)) {
+export function scanExtension(root, ts) {
   /** @type {Group[]} */
   const groups = [];
   /** @type {Shortcut[]} */

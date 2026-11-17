@@ -22,7 +22,7 @@ A binding to a **core** check never changes that check's severity: `rx preset ch
 | `categories` | core | Greptile `extension-categories`: at least one category from Raycast's closed list; `Other` only as a last resort. | — |
 | `platforms` | core | Raycast's schema allows only `macOS` and `Windows` (Greptile `supported-platforms`); Greptile `platforms-field` asks for the field to be declared, so a missing one FAILs, or WARNs when the published copy lacks it too (a pre-existing note). | — |
 | `preference-type` | core | Raycast's schema defines the preference types; there is no `number`. | — |
-| `shortcut-platform-case` | core | Greptile `shortcut-platform-keys`: the keys are spelled `macOS` and `Windows`. Parsed with the extension's own `typescript`; a file that does not parse, or no loadable `typescript`, is a WARN. | — |
+| `shortcut-platform-case` | core | Greptile `shortcut-platform-keys`: the keys are spelled `macOS` and `Windows`. Parsed with the extension's own `typescript` under `--extension-typescript` (`rx gates` passes it); without it, or when a file does not parse or no `typescript` loads, a WARN at most. | — |
 | `changelog-exists` | core | Raycast's CI changelog check requires `CHANGELOG.md`. | — |
 | `changelog-order` | core | Greptile `changelog-entries`: dated headings descend, dates are `YYYY-MM-DD`, no `Unreleased` section. An inversion the published CHANGELOG already has, with every published dated heading kept byte for byte and in order, is a WARN. (The placeholder predicate moved to `changelog-placeholder`.) | — |
 | `changelog-updated` | core | Greptile `changelog-entries`: a PR that changes behavior adds a new top entry. | — |

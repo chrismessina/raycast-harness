@@ -16,6 +16,7 @@ import {
 } from "./context.mjs";
 import { ignoredPredicate } from "./gitignore.mjs";
 import { shortcutPlatformCase } from "./platform-keys.mjs";
+import { loadTypeScript } from "../typescript.mjs";
 import { PUBLISH_SKIPS, isSkipped, listPayload } from "../payload.mjs";
 import { extractEmbeds, isExternal, targetPath } from "./markdown.mjs";
 
@@ -42,7 +43,8 @@ function placeholderLines(text) {
  * @typedef {import("../verdict.mjs").Detail} Detail
  * @typedef {{ level: "FAIL" | "WARN", message: string, details: Detail[], cap: "report" | "block" }} Finding
  * @typedef {{ id: string, verdict: import("../verdict.mjs").Verdict, message: string, details: Detail[] }} Outcome
- * @typedef {{ root: string, publishedDir: string | null, preset: import("../preset/load.mjs").LoadedPreset | null }} Options
+ * @typedef {{ root: string, publishedDir: string | null, preset: import("../preset/load.mjs").LoadedPreset | null, extensionTypescript?: boolean }} Options
+ *   `extensionTypescript`: load the extension's own typescript to parse src/ (runs its code; `rx gates` only).
  */
 
 /** Collects findings per check id and turns them into exactly one outcome per id. */
@@ -106,7 +108,7 @@ const where = (hits) => hits.map((h) => ({ file: h.file, line: h.line, text: h.t
  * Run every check. Returns one outcome per catalog id plus the `data` block.
  * @param {Options} opts
  */
-export async function runPreflight({ root, publishedDir, preset }) {
+export async function runPreflight({ root, publishedDir, preset, extensionTypescript = false }) {
   const c = new Collector();
   const owner = preset?.preset.owner ?? null;
   const classes = Object.fromEntries(CHECK_IDS.map((id) => [id, CHECKS[id].class]));
@@ -413,8 +415,9 @@ export async function runPreflight({ root, publishedDir, preset }) {
     c.pass("hand-typed-preferences", "no hand-written Preferences / Arguments types");
   }
 
-  // shortcut-platform-case: parsed with the extension's own TypeScript (src/preflight/platform-keys.mjs).
-  shortcutPlatformCase(root, sources, c);
+  // shortcut-platform-case: parsed with the extension's own TypeScript when the caller allows running
+  // it (src/preflight/platform-keys.mjs); otherwise its text scan, WARN at most.
+  shortcutPlatformCase(root, sources, c, extensionTypescript ? loadTypeScript(root) : null, extensionTypescript ? "the extension's typescript could not be loaded" : "--extension-typescript was not given, so no extension code was run");
 
   // What ships (nested-review-config: core; agent-scaffolding, dev-material, generated-files: preset-class)
   await fileChecks(root, publishedDir, c, enabled, keep);

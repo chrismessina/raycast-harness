@@ -2,13 +2,17 @@
 
 ## 0.1.4
 
-- `shortcut-platform-case` parses `src/` with the extension's own `typescript` and FAILs only on a
-  miscased `windows` or `macos` key whose object value has both `modifiers` and `key`. A lowercase
-  `macos` key in other data, such as Homebrew's cask schema, no longer FAILs. A file that does not
-  parse, or an extension without a loadable `typescript`, is a WARN, never a PASS.
-- `rx shortcuts check` reads source through the same parser, so text inside strings, regex literals,
-  templates and JSX can no longer count as a shortcut or end an object early. The text scan is the
-  fallback for a file that does not parse, and `data.textScanned` lists those files.
+- `shortcut-platform-case` can parse `src/` with the extension's own `typescript` and then FAILs
+  only on a miscased `windows` or `macos` key whose object value has both `modifiers` and `key`. A
+  lowercase `macos` key in other data, such as Homebrew's cask schema, no longer FAILs. Loading that
+  package runs its code, so it happens only under the new `--extension-typescript` flag, which
+  `rx gates` passes (gates runs the extension's build anyway). Without the flag, or with no loadable
+  `typescript`, a text scan reports a WARN at most, never a PASS; a file that does not parse is a
+  WARN that its keys were not fully checked.
+- `rx shortcuts check --extension-typescript` reads source through the same parser, so text inside
+  strings, regex literals, templates and JSX can no longer count as a shortcut or end an object
+  early. Without the flag, and for a file that does not parse, the text scan reads the source as
+  before; `data.parser` and `data.textScanned` say which.
 - `changelog-order` is a WARN, not a FAIL, for an out-of-order pair the published CHANGELOG already
   has: every published dated heading is kept byte for byte, in the published order and count, and
   the pair is adjacent in both. `changelog-history` forbids editing those entries, so no branch

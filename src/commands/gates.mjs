@@ -336,8 +336,9 @@ export async function run(ctx) {
   const scanRun = await runStep(scan, ctx, { root, flags: { "--root": root, "--forbidden": forbiddenPath } });
   record("scan", scanRun.results);
 
-  /** @type {Record<string, string>} */
-  const preflightFlags = { "--root": root, "--preset": presetPath };
+  // gates already runs the extension's build, tsc and lint, so preflight may load its typescript too.
+  /** @type {Record<string, string | boolean>} */
+  const preflightFlags = { "--root": root, "--preset": presetPath, "--extension-typescript": true };
   /** @type {Results} */
   let preflightResults;
   if (published) {
