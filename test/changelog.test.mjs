@@ -41,6 +41,25 @@ test("changelog-placeholder and changelog-bullets across the placeholder fixture
   }
 });
 
+test("changelog-history (Codex R5): trailing spaces or a CR added to a published heading is an edit, not the published heading", async () => {
+  await withTempDir(async (dir) => {
+    const pub = join(dir, "pub");
+    mkdirSync(pub);
+    const base = "# Changelog\n\n## [Fix] - 2026-08-02\n\n- Fixed it\n\n## [Initial Version] - 2026-08-01\n\n- First release\n";
+    writeFileSync(join(pub, "CHANGELOG.md"), base);
+    for (const [name, local] of [["spaces", base.replace("## [Fix] - 2026-08-02\n", "## [Fix] - 2026-08-02  \n")], ["crlf", base.replace("## [Fix] - 2026-08-02\n", "## [Fix] - 2026-08-02\r\n")]]) {
+      const ext = fakeExtension(dir, name);
+      writeFileSync(join(ext, "CHANGELOG.md"), local.replace("# Changelog\n\n", "# Changelog\n\n## [New] - {PR_MERGE_DATE}\n\n- New\n\n"));
+      const got = by(await rx(["changelog", "--published", pub, "--json"], { cwd: ext }));
+      assert.equal(got["changelog-history"].verdict, "FAIL", `${name}: ${JSON.stringify(got["changelog-history"])}`);
+      assert.match(got["changelog-history"].details[0].text, /byte for byte/);
+    }
+    const same = fakeExtension(dir, "same");
+    writeFileSync(join(same, "CHANGELOG.md"), base.replace("# Changelog\n\n", "# Changelog\n\n## [New] - {PR_MERGE_DATE}\n\n- New\n\n"));
+    assert.equal(by(await rx(["changelog", "--published", pub, "--json"], { cwd: same }))["changelog-history"].verdict, "PASS");
+  });
+});
+
 test("changelog-history (F5): an authorized historical redaction passes; an unrelated edit and an unstamped entry fail", async () => {
   const expected = JSON.parse(readFileSync(join(FIX, "redaction", "expected.json"), "utf8"));
   const published = join(FIX, "redaction", "published");

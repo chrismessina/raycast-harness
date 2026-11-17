@@ -95,6 +95,10 @@ export async function run({ results, root, args }) {
         problems.push({ file: "CHANGELOG.md", line: le.line, text: `heading differs from published: ${le.heading} (published: ${pe.heading})${le.date === PLACEHOLDER && pe.date !== PLACEHOLDER ? "; stamp the merged date" : ""}` });
         continue;
       }
+      if (le.rawHeading !== pe.rawHeading) {
+        problems.push({ file: "CHANGELOG.md", line: le.line, text: `heading differs from published byte for byte (whitespace or line ending): ${JSON.stringify(le.rawHeading)} (published: ${JSON.stringify(pe.rawHeading)})` });
+        continue;
+      }
       if (le.body === pe.body) { status.set(le.heading, { changed: false, redacted: false }); continue; }
       const oh = bodyHash(pe.body);
       const rh = bodyHash(le.body);

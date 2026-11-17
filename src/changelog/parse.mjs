@@ -11,8 +11,8 @@ import { createHash } from "node:crypto";
 export const PLACEHOLDER = "{PR_MERGE_DATE}";
 
 /**
- * @typedef {{ heading: string, title: string, date: string | null, line: number, body: string, bullets: string[] }} Entry
- *   `heading` is the heading line, trimmed; `title` the text inside the brackets (or the whole
+ * @typedef {{ heading: string, rawHeading: string, title: string, date: string | null, line: number, body: string, bullets: string[] }} Entry
+ *   `heading` is the heading line, trimmed; `rawHeading` the same line untrimmed (a CR included), for byte comparison; `title` the text inside the brackets (or the whole
  *   heading text when unbracketed); `date` the token after " - " (a date or the placeholder), null
  *   when absent; `line` 1-based; `body` the lines under the heading with leading and trailing
  *   blank lines removed; `bullets` the body lines that start with "- " or "* ".
@@ -58,7 +58,7 @@ export function parseChangelog(text) {
     if (isHeading(line)) {
       flush();
       const { title, date } = parseHeading(line);
-      current = { heading: line.trim(), title, date, line: i + 1, body: "", bullets: [] };
+      current = { heading: line.trim(), rawHeading: line, title, date, line: i + 1, body: "", bullets: [] };
       body = [];
     } else if (current) body.push(line);
     else preamble.push(line);

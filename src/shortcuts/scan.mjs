@@ -1,10 +1,14 @@
 // Shortcut scan for `rx shortcuts check`: finds every declared shortcut in an extension's source
-// and groups it with the actions it can collide with, without a TypeScript parser.
+// and groups it with the actions it can collide with.
 //
-// WHY A TEXT SCAN. `rx` carries one runtime dependency (pngjs). ESLint's bundled parser (espree)
-// cannot read TSX and no TypeScript ESLint parser is installed with it, so the CLI cannot reuse the
-// ESLint rules in eslint-plugin/. This file is a comment-aware, brace-balanced text scan. The ESLint
-// rules are the precise path for a repository that runs lint with a TypeScript parser.
+// PARSER FIRST. Each file is read from the extension's own TypeScript syntax tree
+// (src/shortcuts/ast-scan.mjs, compiler loaded by src/typescript.mjs): strings, regex literals,
+// templates and JSX text can never pose as a shortcut or end an object early. rx itself ships no
+// parser (its one runtime dependency is pngjs).
+//
+// THE TEXT SCAN BELOW is the fallback, per file, when no compiler can be loaded or the file does not
+// parse cleanly; `rx shortcuts check` names those files. It is comment-aware and brace-balanced,
+// with the limits listed here.
 //
 // WHAT IT RESOLVES
 //   shortcut={Keyboard.Shortcut.Common.X}           → the table's X (also `Shortcut.Common.X`, `Common.X`)
@@ -42,6 +46,8 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { join, relative } from "node:path";
 import { PLATFORMS, readBinding } from "./table.mjs";
+import { scanTree } from "./ast-scan.mjs";
+import { loadTypeScript, parse } from "../typescript.mjs";
 import { isDirectory as isDir } from "../util.mjs";
 
 /**
@@ -57,7 +63,9 @@ import { isDirectory as isDir } from "../util.mjs";
  *   against the table; `unresolved` has none. `branches` names each `cond ? (…) : (…)` the site sits
  *   in, as `<ternary index>:a` or `:b`; two sites on different sides of one ternary never render
  *   together, so they are never paired (see `exclusive`).
- * @typedef {{ files: number, shortcuts: Shortcut[], groups: Group[] }} Scan
+ * @typedef {{ files: number, shortcuts: Shortcut[], groups: Group[], parser: string | null, textScanned: string[] }} Scan
+ *   `parser` names the compiler used (null: none could be loaded); `textScanned` lists the files the
+ *   text scan read instead (all of them without a compiler, else those that did not parse cleanly).
  */
 
 const SOURCE_EXT = new Set([".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"]);
@@ -169,10 +177,13 @@ function lineAt(s, index) {
  * @returns {{ kind: "single" | "platform", bindings: Partial<Record<"macOS" | "Windows", Binding>> } | null}
  */
 export function parseShortcutLiteral(literal) {
+  // Each rewrite skips string contents (a `"` string is matched first and kept as is), so a
+  // comma or colon inside a key or title is never edited.
+  const STR = /"(?:[^"\\]|\\.)*"/.source;
   const json = literal
     .replace(/'((?:[^'\\]|\\.)*)'/g, (_, body) => `"${body.replace(/"/g, '\\"')}"`)
-    .replace(/([{,[]\s*)([A-Za-z_$][\w$]*)\s*:/g, '$1"$2":')
-    .replace(/,(\s*[}\]])/g, "$1");
+    .replace(new RegExp(`(${STR})|([{,[]\\s*)([A-Za-z_$][\\w$]*)\\s*:`, "g"), (m, str, pre, key) => str ?? `${pre}"${key}":`)
+    .replace(new RegExp(`(${STR})|,(\\s*[}\\]])`, "g"), (m, str, tail) => str ?? tail);
   /** @type {any} */
   let obj;
   try { obj = JSON.parse(json); } catch { return null; }
@@ -194,12 +205,30 @@ export function parseShortcutLiteral(literal) {
 const COMMON_RE = /^(?:Keyboard\.)?(?:Shortcut\.)?Common\.([A-Z][A-Za-z]*)$/;
 
 /**
+ * Scan one file: from its syntax tree when `ts` is given and the file parses cleanly, else with the
+ * text scan.
+ * @param {string} text file contents
+ * @param {string} file display path
+ * @param {Group[]} groups accumulates groups (ids continue across files)
+ * @param {any} [ts] a compiler from loadTypeScript
+ * @returns {Shortcut[]}
+ */
+export function scanSource(text, file, groups, ts = null) {
+  if (ts) {
+    const { sf, ok } = parse(ts, file, text);
+    if (ok) return scanTree(ts, sf, file, groups);
+  }
+  return scanText(text, file, groups);
+}
+
+/**
+ * The text scan (the fallback; see the limits above).
  * @param {string} text file contents
  * @param {string} file display path
  * @param {Group[]} groups accumulates groups (ids continue across files)
  * @returns {Shortcut[]}
  */
-export function scanSource(text, file, groups) {
+export function scanText(text, file, groups) {
   const s = blankComments(text);
   /** @type {{ start: number, end: number, kind: "panel" | "toast", id: number }[]} */
   const ranges = [];
@@ -486,18 +515,30 @@ function readTitle(text, re) {
 }
 
 /**
- * Scan every source file of an extension.
+ * Scan every source file of an extension, with its own TypeScript when it can be loaded.
  * @param {string} root
+ * @param {any} [ts] the compiler to use; defaults to the extension's own
  * @returns {Scan}
  */
-export function scanExtension(root) {
+export function scanExtension(root, ts = loadTypeScript(root)) {
   /** @type {Group[]} */
   const groups = [];
   /** @type {Shortcut[]} */
   const shortcuts = [];
+  /** @type {string[]} */
+  const textScanned = [];
   const files = sourceFiles(root);
-  for (const f of files) shortcuts.push(...scanSource(readFileSync(f, "utf8"), relative(root, f), groups));
-  return { files: files.length, shortcuts, groups };
+  for (const f of files) {
+    const text = readFileSync(f, "utf8");
+    const rel = relative(root, f);
+    const parsed = ts ? parse(ts, rel, text) : null;
+    if (parsed?.ok) shortcuts.push(...scanTree(ts, parsed.sf, rel, groups));
+    else {
+      textScanned.push(rel);
+      shortcuts.push(...scanText(text, rel, groups));
+    }
+  }
+  return { files: files.length, shortcuts, groups, parser: ts ? `typescript ${ts.version}` : null, textScanned };
 }
 
 /**

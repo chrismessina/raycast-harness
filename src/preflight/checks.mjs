@@ -15,6 +15,7 @@ import {
   readLockfile, readPublished,
 } from "./context.mjs";
 import { ignoredPredicate } from "./gitignore.mjs";
+import { shortcutPlatformCase } from "./platform-keys.mjs";
 import { PUBLISH_SKIPS, isSkipped, listPayload } from "../payload.mjs";
 import { extractEmbeds, isExternal, targetPath } from "./markdown.mjs";
 
@@ -251,11 +252,36 @@ export async function runPreflight({ root, publishedDir, preset }) {
     /** @type {string[]} */
     const problems = [];
     if (heads.some((h) => /^\[?\s*unreleased\s*\]?$/i.test(h.title) || /unreleased/i.test(h.date ?? ""))) problems.push('no "Unreleased" section — use ' + P);
-    const dated = heads.map((h) => h.date).filter((d) => d && /^\d{4}-\d{2}-\d{2}$/.test(d));
-    for (let i = 1; i < dated.length; i++) if (/** @type {string} */ (dated[i]) > /** @type {string} */ (dated[i - 1])) problems.push(`dates must descend: ${dated[i - 1]} is above ${dated[i]}`);
+    // An inversion is pre-existing, so a WARN, only when the branch kept every published dated
+    // heading byte for byte (untrimmed lines), in the published order and count, and the inverted
+    // pair is adjacent both here and in the published copy: changelog-history forbids editing a dated
+    // entry, so the branch cannot fix it. A reordered, duplicated or edited published entry, or an
+    // inversion involving a new entry, FAILs.
+    const isDated = (/** @type {{ date: string | null }} */ h) => !!h.date && /^\d{4}-\d{2}-\d{2}$/.test(h.date);
+    const dated = heads.filter(isDated);
+    const pubLog = publishedDir === null ? null : read(join(publishedDir, "CHANGELOG.md"));
+    const pubDated = pubLog === null ? [] : changelogHeadings(pubLog).filter(isDated).map((h) => h.line);
+    const pubLines = new Set(pubDated);
+    // Each local dated heading's index among the local headings the published copy also has.
+    /** @type {(number | null)[]} */
+    const keptAt = [];
+    /** @type {string[]} */
+    const kept = [];
+    for (const h of dated) keptAt.push(pubLines.has(h.line) ? kept.push(h.line) - 1 : null);
+    const sameAsPublished = pubDated.length > 0 && kept.length === pubDated.length && kept.every((l, i) => l === pubDated[i]);
+    /** @type {string[]} */
+    const inherited = [];
+    for (let i = 1; i < dated.length; i++) {
+      const [a, b] = [dated[i - 1], dated[i]];
+      if (/** @type {string} */ (b.date) <= /** @type {string} */ (a.date)) continue;
+      const msg = `dates must descend: ${a.date} is above ${b.date}`;
+      const ka = keptAt[i - 1], kb = keptAt[i];
+      if (sameAsPublished && ka !== null && kb === ka + 1) inherited.push(msg); else problems.push(msg);
+    }
     const malformed = heads.filter((h) => h.date && h.date !== P && !/^\d{4}-\d{2}-\d{2}$/.test(h.date));
     if (malformed.length) problems.push(`dates must be YYYY-MM-DD or ${P}: ${malformed.map((h) => h.raw).join(" | ")}`);
     if (problems.length) c.fail("changelog-order", problems.join("; "));
+    if (inherited.length) c.warn("changelog-order", `${inherited.join("; ")} (as in the published CHANGELOG; dated entries are not edited)`);
     c.pass("changelog-order", `${heads.length} entries, dates descend`);
 
     // changelog-placeholder (Q10): the one predicate shared with `rx changelog` (src/changelog/parse.mjs):
@@ -387,11 +413,8 @@ export async function runPreflight({ root, publishedDir, preset }) {
     c.pass("hand-typed-preferences", "no hand-written Preferences / Arguments types");
   }
 
-  // shortcut-platform-case
-  const caseHits = grepSources(sources, /[{,]\s*["']?(windows|macos|MacOS|Macos|MacOs)["']?\s*:\s*\{/);
-  if (caseHits.length) c.fail("shortcut-platform-case", "platform keys are Windows and macOS", where(caseHits));
-  if (!grepSources(sources, /\bshortcut\s*[=:]/).length && !caseHits.length) c.na("shortcut-platform-case", "no shortcuts declared in src/");
-  else c.pass("shortcut-platform-case", "platform keys are spelled macOS and Windows");
+  // shortcut-platform-case: parsed with the extension's own TypeScript (src/preflight/platform-keys.mjs).
+  shortcutPlatformCase(root, sources, c);
 
   // What ships (nested-review-config: core; agent-scaffolding, dev-material, generated-files: preset-class)
   await fileChecks(root, publishedDir, c, enabled, keep);
@@ -448,7 +471,7 @@ export function changelogHeadings(text) {
   return text.split("\n").filter((l) => /^##\s/.test(l)).map((l) => {
     const body = l.replace(/\s+#+\s*$/, ""); // closing-ATX: "## [Unreleased] ##"
     const m = body.match(/^##\s+\[(.*?)\]\s*(?:-\s*(.+?))?\s*$/);
-    return { raw: l.trim(), title: m?.[1] ?? body.replace(/^##\s+/, "").trim(), date: m?.[2]?.trim() ?? null };
+    return { raw: l.trim(), line: l, title: m?.[1] ?? body.replace(/^##\s+/, "").trim(), date: m?.[2]?.trim() ?? null };
   });
 }
 

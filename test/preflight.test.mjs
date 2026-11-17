@@ -4,7 +4,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { execFileSync } from "node:child_process";
 import { CHECK_IDS } from "../src/preflight/catalog.mjs";
@@ -459,12 +459,116 @@ test("hand-typed-preferences: an inline getPreferenceValues type fails; a scoped
   });
 });
 
-test("shortcut-platform-case: lowercase or quoted lowercase keys fail; proper keys pass; no shortcuts → N/A", async () => {
+// shortcut-platform-case parses with the extension's own typescript. These tests give each extension
+// rx's copy (a devDependency) through node_modules, as an installed extension has it.
+const TS_DIR = join(REPO, "node_modules", "typescript");
+/** @param {string} root */
+const withTs = (root) => { mkdirSync(join(root, "node_modules"), { recursive: true }); symlinkSync(TS_DIR, join(root, "node_modules", "typescript"), "dir"); return root; };
+/** @param {string} dir @param {string} name @param {Record<string, string>} files */
+const tsExt = (dir, name, files) => withTs(makeExt(join(dir, name), { files }));
+const SC = 'export const shortcut = { macOS: { modifiers: ["cmd"], key: "h" }, Windows: { modifiers: ["ctrl"], key: "h" } };\n';
+
+test("shortcut-platform-case (parsed): lowercase or quoted lowercase keys fail; proper keys pass; no shortcuts → N/A", async () => {
   await withTempDir(async (dir) => {
-    assert.ok((await preflight(makeExt(join(dir, "a"), { files: { "src/a.tsx": 'shortcut={{ windows: { modifiers: ["ctrl"], key: "h" }, macos: { modifiers: ["cmd"], key: "h" } }}\n' } }))).fails.includes("shortcut-platform-case"));
-    assert.ok((await preflight(makeExt(join(dir, "b"), { files: { "src/a.tsx": 'shortcut={{ "windows": { modifiers: ["ctrl"], key: "h" } }}\n' } }))).fails.includes("shortcut-platform-case"));
-    assert.equal((await preflight(makeExt(join(dir, "c"), { files: { "src/a.tsx": 'shortcut={{ Windows: { modifiers: ["ctrl"], key: "h" }, macOS: { modifiers: ["cmd"], key: "h" } }}\n' } }))).verdict("shortcut-platform-case"), "PASS");
-    assert.equal((await preflight(makeExt(join(dir, "d")))).verdict("shortcut-platform-case"), "N/A");
+    const a = await preflight(tsExt(dir, "a", { "src/a.tsx": 'export const shortcut = { windows: { modifiers: ["ctrl"], key: "h" }, macos: { modifiers: ["cmd"], key: "h" } };\n' }));
+    assert.equal(a.verdict("shortcut-platform-case"), "FAIL");
+    assert.deepEqual(a.by["shortcut-platform-case"].details.map((/** @type {any} */ d) => d.text), ["src/a.tsx:1", "src/a.tsx:1"]);
+    assert.equal((await preflight(tsExt(dir, "b", { "src/a.tsx": 'export const shortcut = { "windows": { "modifiers": ["ctrl"], "key": "h" } };\n' }))).verdict("shortcut-platform-case"), "FAIL");
+    const c = await preflight(tsExt(dir, "c", { "src/a.tsx": SC }));
+    assert.equal(c.verdict("shortcut-platform-case"), "PASS");
+    assert.match(c.by["shortcut-platform-case"].message, /parsed with typescript/);
+    assert.equal((await preflight(withTs(makeExt(join(dir, "d"))))).verdict("shortcut-platform-case"), "N/A");
+  });
+});
+
+test("shortcut-platform-case (parsed): shapes a text scan misreads (Codex R1, R2, design round)", async () => {
+  await withTempDir(async (dir) => {
+    /** @type {[string, string, string][]} */
+    const cases = [
+      // brew's installability.test.ts: Homebrew's cask schema, not a Keyboard.Shortcut.
+      ["brew", 'export const cask = { depends_on: { macos: { ">=": ["27"] }, arch: [{ type: "arm" }] } };\n' + SC, "PASS"],
+      ["multiline", 'export const s = {\n  macos: {\n    modifiers: ["cmd"],\n    key: "r",\n  },\n};\n', "FAIL"],
+      ["shorthand", 'const modifiers = ["cmd"]; const key = "h";\nexport const shortcut = { macos: { modifiers, key } };\n', "FAIL"],
+      ["spread", 'const base = {};\nexport const shortcut = { macos: { ...base, modifiers: ["cmd"], key: "h" } };\n', "FAIL"],
+      ["regex-brace", 'const label = "x";\nexport const shortcut = { macos: { modifiers: /}/.test(label) ? ["cmd"] : [], key: "k" } };\n', "FAIL"],
+      ["wrapped", 'export const a = { macos: ({ modifiers: ["cmd"], key: "h" }) };\nexport const shortcut = { windows: { modifiers: ["ctrl"], key: "h" } as const };\n', "FAIL"],
+      ["key-only", 'export const credentials = { macos: { key: process.env.MAC_KEY }, windows: { key: process.env.WIN_KEY } };\n' + SC, "PASS"],
+      ["in-string", 'export const c = { macos: { ">=": ["modifiers: x", "key: value"] } };\n' + SC, "PASS"],
+      ["in-regex", 'export const record = { macos: { pattern: /,key:/, modifiers: [] } };\n' + SC, "PASS"],
+      ["in-template", 'const x = 1;\nexport const r = { macos: { modifiers: [], other: `outer ${`inner, key: ${x}`} tail` } };\n' + SC, "PASS"],
+    ];
+    for (const [name, src, want] of cases) {
+      const r = await preflight(tsExt(dir, name, { "src/a.ts": src }));
+      assert.equal(r.verdict("shortcut-platform-case"), want, `${name}: ${r.by["shortcut-platform-case"]?.message}`);
+    }
+    const jsx = 'import { Detail } from "@raycast/api";\nexport default function C() {\n  return <Detail markdown="Example { macos: { modifiers: [], key: x } }" />;\n}\n' + SC;
+    assert.equal((await preflight(tsExt(dir, "jsx", { "src/a.tsx": jsx }))).verdict("shortcut-platform-case"), "PASS");
+    const lines = await preflight(tsExt(dir, "lines", { "src/a.ts": 'export const s = {\n\n  macos: {\n    modifiers: ["cmd"],\n    key: "r",\n  },\n};\n' }));
+    assert.deepEqual(lines.by["shortcut-platform-case"].details.map((/** @type {any} */ d) => d.text), ["src/a.ts:3"]);
+  });
+});
+
+test("shortcut-platform-case (parsed): a file with syntax errors is a WARN naming it; a clean file's FAIL still wins", async () => {
+  await withTempDir(async (dir) => {
+    const broken = 'export const shortcut = { macos: { modifiers: ["cmd"], key: "h" } ;\nconst = ;\n';
+    const w = await preflight(tsExt(dir, "w", { "src/a.ts": broken, "src/b.ts": SC }));
+    assert.equal(w.verdict("shortcut-platform-case"), "WARN");
+    assert.match(w.by["shortcut-platform-case"].message, /did not parse cleanly/);
+    assert.match(JSON.stringify(w.by["shortcut-platform-case"].details), /src\/a\.ts:/);
+    const f = await preflight(tsExt(dir, "f", { "src/a.ts": broken, "src/b.ts": 'export const shortcut = { macos: { modifiers: ["cmd"], key: "h" } };\n' }));
+    assert.equal(f.verdict("shortcut-platform-case"), "FAIL");
+  });
+});
+
+test("shortcut-platform-case: typescript resolved from a parent directory (hoisted) is used", async () => {
+  await withTempDir(async (dir) => {
+    withTs(dir);
+    const r = await preflight(makeExt(join(dir, "ws", "ext"), { files: { "src/a.ts": 'export const shortcut = { macos: { modifiers: ["cmd"], key: "h" } };\n' } }));
+    assert.equal(r.verdict("shortcut-platform-case"), "FAIL");
+  });
+});
+
+test("shortcut-platform-case without the extension's typescript: the text scan WARNs, never FAILs; no hits is a WARN, never a PASS", async () => {
+  await withTempDir(async (dir) => {
+    const hit = await preflight(makeExt(join(dir, "hit"), { files: { "src/a.ts": 'export const shortcut = { macos: { modifiers: ["cmd"], key: "h" } };\n' } }));
+    assert.equal(hit.verdict("shortcut-platform-case"), "WARN");
+    assert.match(hit.by["shortcut-platform-case"].message, /could not be loaded/);
+    const clean = await preflight(makeExt(join(dir, "clean"), { files: { "src/a.ts": SC } }));
+    assert.equal(clean.verdict("shortcut-platform-case"), "WARN");
+    assert.match(clean.by["shortcut-platform-case"].message, /not checked/);
+    assert.equal((await preflight(makeExt(join(dir, "none")))).verdict("shortcut-platform-case"), "N/A");
+  });
+});
+
+test("changelog-order: an out-of-order pair the published CHANGELOG already has is a pre-existing WARN; one the branch introduces still FAILs", async () => {
+  await withTempDir(async (dir) => {
+    // brew's published CHANGELOG has 2024-06-14 above 2024-07-03, and changelog-history forbids editing a dated entry.
+    const old = "## [Fix B] - 2024-07-29\n\n## [Fix A] - 2024-06-14\n\n## [Older] - 2024-07-03\n\n## [Initial Version] - 2024-06-01\n";
+    const pub = makeExt(join(dir, "pub"), { files: { "CHANGELOG.md": `# Changelog\n\n${old}` } });
+    const pre = await preflight(makeExt(join(dir, "pre"), { files: { "CHANGELOG.md": `# Changelog\n\n## [New] - {PR_MERGE_DATE}\n\n${old}` } }), { published: pub });
+    assert.equal(pre.verdict("changelog-order"), "WARN", pre.by["changelog-order"]?.message);
+    assert.match(pre.by["changelog-order"].message, /published/);
+    // Without a published copy there is nothing to call pre-existing.
+    assert.equal((await preflight(makeExt(join(dir, "nopub"), { files: { "CHANGELOG.md": `# Changelog\n\n## [New] - {PR_MERGE_DATE}\n\n${old}` } }))).verdict("changelog-order"), "FAIL");
+    // A new inversion on top of the old one still FAILs.
+    const added = await preflight(makeExt(join(dir, "added"), { files: { "CHANGELOG.md": `# Changelog\n\n## [New] - 2024-01-01\n\n${old}` } }), { published: pub });
+    assert.equal(added.verdict("changelog-order"), "FAIL");
+    // Reordering published entries is not pre-existing either.
+    const moved = "## [Fix B] - 2024-07-29\n\n## [Older] - 2024-07-03\n\n## [Initial Version] - 2024-06-01\n\n## [Fix A] - 2024-06-14\n";
+    assert.equal((await preflight(makeExt(join(dir, "moved"), { files: { "CHANGELOG.md": `# Changelog\n\n## [New] - {PR_MERGE_DATE}\n\n${moved}` } }), { published: pub })).verdict("changelog-order"), "FAIL");
+    // Codex R3: with published A(Jan), B(Feb), C(Mar), a reordering or a duplication borrows nothing.
+    const abc = "## [A] - 2026-01-01\n\n## [B] - 2026-02-01\n\n## [C] - 2026-03-01\n";
+    const pub3 = makeExt(join(dir, "pub3"), { files: { "CHANGELOG.md": `# Changelog\n\n${abc}` } });
+    const top = "## [New] - {PR_MERGE_DATE}\n\n";
+    assert.equal((await preflight(makeExt(join(dir, "same"), { files: { "CHANGELOG.md": `# Changelog\n\n${top}${abc}` } }), { published: pub3 })).verdict("changelog-order"), "WARN");
+    const bca = "## [B] - 2026-02-01\n\n## [C] - 2026-03-01\n\n## [A] - 2026-01-01\n";
+    assert.equal((await preflight(makeExt(join(dir, "bca"), { files: { "CHANGELOG.md": `# Changelog\n\n${top}${bca}` } }), { published: pub3 })).verdict("changelog-order"), "FAIL");
+    assert.equal((await preflight(makeExt(join(dir, "dup"), { files: { "CHANGELOG.md": `# Changelog\n\n${top}${abc}\n${abc}` } }), { published: pub3 })).verdict("changelog-order"), "FAIL");
+    // Codex R4: trailing whitespace or CRLF on a published heading is an edit, not the published line.
+    const ws = abc.replace("## [A] - 2026-01-01\n", "## [A] - 2026-01-01  \n");
+    assert.equal((await preflight(makeExt(join(dir, "ws"), { files: { "CHANGELOG.md": `# Changelog\n\n${top}${ws}` } }), { published: pub3 })).verdict("changelog-order"), "FAIL");
+    const crlf = abc.replace("## [B] - 2026-02-01\n", "## [B] - 2026-02-01\r\n");
+    assert.equal((await preflight(makeExt(join(dir, "crlf"), { files: { "CHANGELOG.md": `# Changelog\n\n${top}${crlf}` } }), { published: pub3 })).verdict("changelog-order"), "FAIL");
   });
 });
 

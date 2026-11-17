@@ -77,9 +77,11 @@ export const spec = {
         conflicts: "[{ platforms, binding, sites: [{ file, line, title, source }] }]",
         reserved: "[{ platforms, binding, why, site }]",
         platforms: "the platforms package.json declares (absent → [\"macOS\"])",
-        unresolved: "[{ file, line, title, source }] — shortcuts the text scan could not read (see src/shortcuts/scan.mjs limits)",
+        unresolved: "[{ file, line, title, source }] — declared shortcuts whose binding could not be read statically (a variable, a spread, a composed component; see src/shortcuts/scan.mjs)",
         groups: "{ panels, toasts, loose }",
         files: "number of source files scanned",
+        parser: "string | null — the extension's TypeScript the scan read source with (\"typescript <version>\"); null when none could be loaded",
+        textScanned: "string[] — files read by the fallback text scan instead (every file without a parser, else those that did not parse cleanly)",
       },
       examples: ["rx shortcuts check", "rx shortcuts check --root ../raycast-brew --table test/fixtures/shortcuts/table-2.10.1.0.json"],
     },
@@ -156,10 +158,11 @@ async function check({ args, root, results }) {
   // Unresolved sites are known before any table lookup, so an early ERROR return still lists them.
   const unresolved = scan.shortcuts.filter((sc) => sc.kind === "unresolved").map(site);
   /** @type {Record<string, unknown>} */
-  const data = { table: null, declared: scan.shortcuts.length, conflicts: [], reserved: [], platforms, unresolved, groups: groupsSummary, files: scan.files };
+  const data = { table: null, declared: scan.shortcuts.length, conflicts: [], reserved: [], platforms, unresolved, groups: groupsSummary, files: scan.files, parser: scan.parser, textScanned: scan.textScanned };
+  const reader = scan.parser === null ? "; text scan: the extension's typescript could not be loaded" : scan.textScanned.length ? `; ${scan.parser}, text scan for ${scan.textScanned.length} file${scan.textScanned.length === 1 ? "" : "s"} that did not parse` : `; ${scan.parser}`;
 
   if (scan.shortcuts.length === 0) {
-    const why = `extension declares no shortcuts (${scan.files} source files scanned)`;
+    const why = `extension declares no shortcuts (${scan.files} source files scanned${reader})`;
     results.na("shortcut-runtime-table", why);
     results.na("shortcut-ambiguous", why);
     results.na("shortcut-reserved", why);
@@ -249,7 +252,7 @@ async function check({ args, root, results }) {
   }
   data.conflicts = conflicts;
   if (conflicts.length === 0) {
-    results.pass("shortcut-ambiguous", `${resolved.length} of ${scan.shortcuts.length} shortcuts resolved across ${groupsSummary.panels} panels and ${groupsSummary.toasts} toasts; no two in one group share a binding on ${platforms.join(" or ")}${unresolved.length ? ` (${unresolved.length} unresolved, listed in data)` : ""}`);
+    results.pass("shortcut-ambiguous", `${resolved.length} of ${scan.shortcuts.length} shortcuts resolved across ${groupsSummary.panels} panels and ${groupsSummary.toasts} toasts; no two in one group share a binding on ${platforms.join(" or ")}${unresolved.length ? ` (${unresolved.length} unresolved, listed in data)` : ""}${reader}`);
   }
 
   // Reserved: a binding the panel assigns itself. Panels and loose actions (rendered into a panel

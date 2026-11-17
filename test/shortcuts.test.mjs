@@ -4,7 +4,8 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 
 import { join } from "node:path";
 import { REPO, fakeExtension, rx, rxProcess, withTempDir } from "./helpers.mjs";
 import { _setRuntimePaths } from "../src/commands/shortcuts.mjs";
-import { blankComments, declaredPlatforms, exclusive, parseShortcutLiteral, scanSource } from "../src/shortcuts/scan.mjs";
+import { blankComments, declaredPlatforms, exclusive, parseShortcutLiteral, scanExtension, scanSource, scanText } from "../src/shortcuts/scan.mjs";
+import { loadTypeScript } from "../src/typescript.mjs";
 import { extractCommonTable, fingerprintShim, formatBinding, loadTable, normalizeBinding, reservedMatch } from "../src/shortcuts/table.mjs";
 
 const FIX = join(REPO, "test", "fixtures", "shortcuts");
@@ -386,4 +387,201 @@ test("declaredPlatforms: absent → macOS only; both → both; unknown names ign
     assert.deepEqual(declaredPlatforms(fakeExtension(dir, "c", { platforms: ["Linux"] })), ["macOS"]);
     assert.deepEqual(declaredPlatforms(fakeExtension(dir, "d", { platforms: ["Windows"] })), ["Windows"]);
   });
+});
+
+// ---- The parser path (src/shortcuts/ast-scan.mjs), with rx's own typescript -------------------
+
+const TS = loadTypeScript(REPO);
+
+test("parser scan: the same literal forms, Common forms, platform objects, unresolved expressions and type annotations as the text scan", () => {
+  assert.ok(TS, "rx's own typescript devDependency loads");
+  const groups = [];
+  const found = scanSource(
+    [
+      "interface P { shortcut: Keyboard.Shortcut; other: number }",
+      "const shortcut = pick();",
+      "export const v = (<ActionPanel>",
+      '  <Action title="A" shortcut={Shortcut.Common.Copy} />',
+      '  <Action title={"B"} shortcut={{ modifiers: ["cmd"], key: "b" }} />',
+      '  <Action title="C" shortcut={cond ? x : y} />',
+      "</ActionPanel>);",
+      'showToast({ primaryAction: { title: "T", shortcut: Keyboard.Shortcut.Common.Open } });',
+      'export const w = { title: "W", shortcut: { macOS: { modifiers: ["cmd"], key: "d" }, windows: { modifiers: ["ctrl"], key: "d" } } };',
+    ].join("\n"),
+    "f.tsx",
+    groups,
+    TS,
+  );
+  assert.deepEqual(found.map((s) => [s.line, s.kind, s.title, s.name ?? null]), [
+    [4, "common", "A", "Copy"],
+    [5, "single", "B", null],
+    [6, "unresolved", "C", null],
+    [8, "common", "T", "Open"],
+    [9, "platform", "W", null],
+  ]);
+  assert.equal(found[4].bindings.Windows?.key, "d");
+  assert.equal(groups[found[0].group].kind, "panel");
+  assert.equal(groups[found[3].group].kind, "toast");
+  assert.equal(groups[found[4].group].kind, "loose");
+  assert.equal(found[0].group, found[2].group);
+});
+
+test("parser scan: props spreads on actions and composed panel children are unresolved declarations; prop-nested elements and panel parts are not", () => {
+  const groups = [];
+  const found = scanSource(
+    [
+      "export const a = (<ActionPanel>",
+      '  <ActionPanel.Section title="S">',
+      '    <Action.Push title="Push" target={<DetailView item={x} />} shortcut={{ modifiers: ["cmd"], key: "p" }} />',
+      "    <Action.CopyToClipboard {...copyProps} />",
+      "    <ItemActions item={x} />",
+      '    <React.Fragment><Action title="Plain" onAction={f} /></React.Fragment>',
+      "  </ActionPanel.Section>",
+      "</ActionPanel>);",
+      "export const b = <Action {...looseProps} />;",
+      "export const c = <Other {...notAnAction} />;",
+    ].join("\n"),
+    "f.tsx",
+    groups,
+    TS,
+  );
+  assert.deepEqual(found.map((s) => [s.line, s.kind]), [[3, "single"], [4, "unresolved"], [5, "unresolved"], [9, "unresolved"]]);
+  assert.equal(found[0].source, '{ modifiers: ["cmd"], key: "p" }');
+  assert.equal(found[1].source, "<Action.CopyToClipboard {...copyProps} />");
+  assert.equal(found[2].source, "<ItemActions item={x} />");
+  assert.equal(found[3].source, "<Action {...looseProps} />");
+  assert.equal(groups[found[1].group].kind, "panel");
+  assert.equal(groups[found[3].group].kind, "loose");
+});
+
+test("parser scan: ternary exclusivity, repeated renders, nested and self-closing panels", () => {
+  const wrap = (/** @type {string[]} */ lines) => ["export const v = (<>", ...lines, "</>);"].join("\n");
+  const g1 = [];
+  const found = scanSource(
+    wrap([
+      "<ActionPanel>",
+      "  {items.map((it) =>",
+      '    it.a ? (<Action title="A" shortcut={Common.Copy} />) : (<Action title="B" shortcut={Common.Copy} />)',
+      "  )}",
+      "</ActionPanel>",
+      "{rows.map((r) => (",
+      "  <ActionPanel>",
+      '    {r.a ? (<Action title="C" shortcut={Common.Copy} />) : (<Action title="D" shortcut={Common.Copy} />)}',
+      "  </ActionPanel>",
+      "))}",
+      "<ActionPanel>",
+      '  {for_ ? (<Action title="E" shortcut={Common.Copy} />) : (<Action title="F" shortcut={Common.Copy} />)}',
+      "</ActionPanel>",
+      "<ActionPanel>",
+      '  {Array.from(items, (it) => it.a ? (<Action title="G" shortcut={Common.Copy} />) : (<Action title="H" shortcut={Common.Copy} />))}',
+      '  {render(function (it) { return it.a ? (<Action title="I" shortcut={Common.Copy} />) : (<Action title="J" shortcut={Common.Copy} />); })}',
+      '  {(() => { for (const it of items) { out.push(it.a ? (<Action title="K" shortcut={Common.Copy} />) : (<Action title="L" shortcut={Common.Copy} />)); } return out; })()}',
+      "</ActionPanel>",
+    ]),
+    "f.tsx",
+    g1,
+    TS,
+  );
+  const by = Object.fromEntries(found.map((s) => [s.title, s]));
+  assert.ok(!exclusive(by.A, by.B), "map inside the panel");
+  assert.ok(exclusive(by.C, by.D), "map outside the panel: one panel per item");
+  assert.ok(exclusive(by.E, by.F));
+  assert.ok(!exclusive(by.G, by.H) && !exclusive(by.I, by.J) && !exclusive(by.K, by.L), "a callback or loop body withholds exclusivity");
+  const g2 = [];
+  const nested = scanSource(
+    wrap([
+      "<ActionPanel />",
+      "<ActionPanel>",
+      "  {a ? (",
+      '    <Action title="X" shortcut={{ modifiers: ["cmd"], key: "x" }} />',
+      "  ) : (",
+      '    <Action title="Y" shortcut={{ modifiers: ["cmd"], key: "x" }} />',
+      "  )}",
+      '  {b && <Action title="Z" shortcut={{ modifiers: ["cmd"], key: "x" }} />}',
+      "</ActionPanel>",
+      '<Action title="Loose" shortcut={{ modifiers: ["cmd"], key: "x" }} />',
+    ]),
+    "f.tsx",
+    g2,
+    TS,
+  );
+  assert.equal(g2.filter((g) => g.kind === "panel").length, 1, "the self-closing panel is not a group");
+  assert.deepEqual(nested.map((s) => s.title), ["X", "Y", "Z", "Loose"]);
+  assert.ok(exclusive(nested[0], nested[1]));
+  assert.ok(!exclusive(nested[0], nested[2]) && !exclusive(nested[1], nested[2]));
+  assert.equal(g2[nested[3].group].kind, "loose");
+});
+
+test("parser scan: text inside strings, JSX attribute text and regex literals is never a shortcut or a bracket (Codex, 2026-11-17)", () => {
+  // A JSX string that shows a shortcut is text: the text scan reads it as a declaration.
+  const jsx = 'export const v = <Detail markdown="Bind it with shortcut={Keyboard.Shortcut.Common.Copy}" />;\n';
+  assert.equal(scanSource(jsx, "f.tsx", [], TS).length, 0);
+  assert.equal(scanText(jsx, "f.tsx", []).length, 1, "the text scan's known misread");
+  // A regex's `)` does not end the toast call: the action stays in the toast group.
+  const toast = 'showToast({ title: "x", message: /\\)/.source, primaryAction: { title: "P", shortcut: Keyboard.Shortcut.Common.Copy } });\n';
+  const g = [];
+  const [p] = scanSource(toast, "f.ts", g, TS);
+  assert.equal(g[p.group].kind, "toast");
+  const gt = [];
+  const [t] = scanText(toast, "f.ts", gt);
+  assert.equal(gt[t.group].kind, "loose", "the text scan's known misread");
+  // `{ shortcut }` shorthand is a declaration the scan cannot read, not an absence.
+  const [s] = scanSource('export const a = { title: "S", shortcut };\n', "f.ts", [], TS);
+  assert.equal(s.kind, "unresolved");
+});
+
+test("parser scan: a file that does not parse falls back to the text scan, and scanExtension names it", async () => {
+  await withTempDir(async (dir) => {
+    const ext = fakeExtension(dir, "ext");
+    mkdirSync(join(ext, "src"), { recursive: true });
+    writeFileSync(join(ext, "src", "ok.tsx"), 'export const a = <Action title="A" shortcut={Keyboard.Shortcut.Common.Copy} />;\n');
+    writeFileSync(join(ext, "src", "broken.tsx"), 'export const b = <Action title="B" shortcut={Keyboard.Shortcut.Common.Open} /\n');
+    const scan = scanExtension(ext, TS);
+    assert.match(scan.parser ?? "", /^typescript \d/);
+    assert.deepEqual(scan.textScanned, ["src/broken.tsx"]);
+    assert.deepEqual(scan.shortcuts.map((s) => [s.file, s.name]).sort(), [["src/broken.tsx", "Open"], ["src/ok.tsx", "Copy"]]);
+    const none = scanExtension(ext, null);
+    assert.equal(none.parser, null);
+    assert.deepEqual(none.textScanned, ["src/broken.tsx", "src/ok.tsx"]);
+  });
+});
+
+test("parser scan agrees with the text scan on every recorded fixture", () => {
+  for (const name of readdirSync(FIX)) {
+    const dir = join(FIX, name);
+    if (!existsSync(join(dir, "src"))) continue;
+    const parsed = scanExtension(dir, TS);
+    const text = scanExtension(dir, null);
+    assert.deepEqual(parsed.textScanned, [], `${name}: every fixture file parses`);
+    const shape = (/** @type {any} */ s) => s.shortcuts.map((x) => [x.file, x.line, x.kind, x.name ?? null, x.title, s.groups[x.group].kind, JSON.stringify(x.bindings)]);
+    assert.deepEqual(shape(parsed), shape(text), name);
+    const pairs = (/** @type {any} */ s) => s.shortcuts.flatMap((a, i) => s.shortcuts.slice(i + 1).filter((b) => exclusive(a, b)).map((b) => `${a.line}|${b.line}`));
+    assert.deepEqual(pairs(parsed), pairs(text), `${name}: exclusive pairs`);
+  }
+});
+
+test("parser scan: JSON scalars inside a shortcut literal keep its bindings, as the text scan reads them (Codex S1)", () => {
+  const src = [
+    "export const v = (<ActionPanel>",
+    '  <Action title="A" shortcut={{ macOS: { modifiers: ["cmd"], key: "x" }, Windows: null }} />',
+    '  <Action title="B" shortcut={{ modifiers: ["cmd"], key: "x", extra: true, n: -1, m: 2 }} />',
+    "</ActionPanel>);",
+  ].join("\n");
+  const parsed = scanSource(src, "f.tsx", [], TS);
+  const text = scanText(src, "f.tsx", []);
+  assert.deepEqual(parsed.map((s) => [s.kind, JSON.stringify(s.bindings)]), text.map((s) => [s.kind, JSON.stringify(s.bindings)]));
+  assert.deepEqual(parsed.map((s) => s.kind), ["platform", "single"]);
+});
+
+test("literal edge cases: a __proto__ member makes the shortcut unresolved, never a silent binding (S3, R4-1); commas and colons inside strings survive the text scan's rewrite (S4)", () => {
+  // JavaScript gives this object an inherited Windows binding, which Raycast reads; the scan cannot.
+  const proto = 'export const v = <Action shortcut={{ macOS: { modifiers: ["cmd"], key: "x" }, "__proto__": { Windows: { modifiers: ["ctrl"], key: "x" } } }} />;\n';
+  const [pp] = scanSource(proto, "f.tsx", [], TS);
+  assert.equal(pp.kind, "unresolved");
+  assert.deepEqual(pp.bindings, {});
+  const comma = 'export const v = <Action shortcut={{ modifiers: ["cmd"], key: ",}", note: "a, b: c" }} />;\n';
+  const [p] = scanSource(comma, "f.tsx", [], TS);
+  const [t] = scanText(comma, "f.tsx", []);
+  assert.equal(p.bindings.macOS?.key, ",}");
+  assert.deepEqual(t.bindings, p.bindings);
 });
