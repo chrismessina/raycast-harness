@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { REPO, fakeExtension, rx, rxProcess, withTempDir } from "./helpers.mjs";
 import { _setRuntimePaths } from "../src/commands/shortcuts.mjs";
@@ -240,8 +240,8 @@ test("table: extraction does not pin the minified identifier, normalizes opt/alt
   assert.notEqual(normalizeBinding({ modifiers: ["cmd"], key: "c" }), normalizeBinding({ modifiers: ["ctrl"], key: "c" }));
   assert.equal(formatBinding({ modifiers: ["cmd", "shift"], key: "arrowUp" }, "macOS"), "⌘⇧↑");
   assert.equal(formatBinding({ modifiers: ["ctrl", "alt"], key: "d" }, "Windows"), "ctrl+alt+d");
-  assert.equal(reservedMatch({ modifiers: ["shift", "cmd"], key: "enter" })?.why, "the Form secondary action's default");
-  assert.equal(reservedMatch({ modifiers: ["cmd"], key: "k" }), null);
+  assert.deepEqual(reservedMatch({ modifiers: ["shift", "cmd"], key: "enter" }, "Form"), { why: "the secondary action's default in a Form", certain: true });
+  assert.equal(reservedMatch({ modifiers: ["cmd"], key: "k" }, "Form"), null);
   assert.equal(loadTable(TABLE).appVersion, "2.10.1.0");
   assert.throws(() => extractCommonTable('A.Common={Bad:{macOS:{modifiers:["hyper"],key:"s"},Windows:{modifiers:[],key:"s"}}}'), /Common\.Bad\.macOS is not/);
 });
@@ -602,5 +602,106 @@ test("shortcuts check runs no extension code unless --extension-typescript is gi
     assert.match(byId(off.json.results)["shortcut-ambiguous"].message, /--extension-typescript was not given/);
     await rx(["shortcuts", "check", "--root", ext, "--table", TABLE, "--extension-typescript", "--json"]);
     assert.equal(existsSync(marker), true, "with the flag it is loaded");
+  });
+});
+
+// ---- shortcut-reserved knows the view that hosts the panel ----------------------------------
+
+test("reserved table: ↵ is reserved in List, Grid and Detail, ⌘⇧↵ in Form, ⌘↵ in both; an unknown view is a WARN for the first two", () => {
+  const ret = { modifiers: [], key: "return" };
+  const cmd = { modifiers: ["cmd"], key: "return" };
+  const cmdShift = { modifiers: ["cmd", "shift"], key: "enter" };
+  assert.equal(reservedMatch(ret, "Form"), null, "↵ is no Form default");
+  assert.equal(reservedMatch(cmdShift, "Detail"), null, "⌘⇧↵ is no Detail default");
+  for (const host of ["List", "List.Item", "List.EmptyView", "Grid", "Grid.Item", "Grid.EmptyView", "Detail"]) assert.equal(reservedMatch(ret, host)?.certain, true, host);
+  assert.equal(reservedMatch(cmdShift, "Form")?.certain, true);
+  assert.equal(reservedMatch(cmd, "Form")?.certain, true);
+  assert.equal(reservedMatch(cmd, null)?.certain, true, "⌘↵ is a default in every view");
+  assert.equal(reservedMatch(ret, null)?.certain, false);
+  assert.equal(reservedMatch(cmdShift, null)?.certain, false);
+  assert.equal(reservedMatch(ret, "MyWrapper")?.certain, false, "an element rx does not know is an unknown view");
+});
+
+test("parser scan: a panel's group records the element whose actions= holds it, else null", () => {
+  const groups = [];
+  scanSource(
+    [
+      'import { Form, List, ActionPanel, Action } from "@raycast/api";',
+      "export const a = <Form actions={<ActionPanel><Action.SubmitForm title=\"S\" shortcut={{ modifiers: [], key: \"return\" }} /></ActionPanel>} />;",
+      "export const b = <List.Item title=\"x\" actions={ok ? (<ActionPanel><Action title=\"A\" shortcut={{ modifiers: [\"cmd\"], key: \"a\" }} /></ActionPanel>) : null} />;",
+      "export function C() { return (<ActionPanel><Action title=\"C\" shortcut={{ modifiers: [\"cmd\"], key: \"c\" }} /></ActionPanel>); }",
+    ].join("\n"),
+    "f.tsx",
+    groups,
+    TS,
+  );
+  assert.deepEqual(groups.filter((g) => g.kind === "panel").map((g) => g.host), ["Form", "List.Item", null]);
+  const text = [];
+  scanText('export const a = <Form actions={<ActionPanel><Action title="S" shortcut={{ modifiers: [], key: "return" }} /></ActionPanel>} />;\n', "f.tsx", text);
+  assert.equal(text[0].host, null, "the text scan does not read the host");
+});
+
+test("parser scan: a host counts only when its name is imported from @raycast/api unrenamed (Codex H1)", () => {
+  const panel = '<ActionPanel><Action title="O" shortcut={{ modifiers: [], key: "return" }} /></ActionPanel>';
+  const hosts = (src) => {
+    const g = [];
+    scanSource(src, "f.tsx", g, TS);
+    return g.filter((x) => x.kind === "panel").map((x) => x.host);
+  };
+  assert.deepEqual(hosts(`import { List as Form, ActionPanel, Action } from "@raycast/api";\nexport const a = <Form actions={${panel}} />;\n`), [null], "a renamed import is not the view its local name says");
+  assert.deepEqual(hosts(`import { ActionPanel, Action } from "@raycast/api";\nconst Form = (p) => <List {...p} />;\nexport const a = <Form actions={${panel}} />;\n`), [null], "a local component named Form is not a Form");
+  assert.deepEqual(hosts(`import { List, ActionPanel, Action } from "@raycast/api";\nexport const a = <List.Item title="x" actions={${panel}} />;\n`), ["List.Item"]);
+  // Any other binding of the root name anywhere in the file makes the view unknown (Codex r2/r3).
+  const imp = 'import { Form, List, ActionPanel, Action } from "@raycast/api";\n';
+  const shadows = {
+    "inner const": `function V() { const Form = List; return <Form actions={${panel}} />; }`,
+    "destructured param": `function V({ Form }) { return <Form actions={${panel}} />; }`,
+    "destructured alias": `function V() { const { Item: Form } = List; return <Form actions={${panel}} />; }`,
+    "catch param": `function V() { try { return null; } catch (Form) { return <Form actions={${panel}} />; } }`,
+    "for-of": `function V(xs) { for (const Form of xs) return <Form actions={${panel}} />; }`,
+    "named function expression": `const V = function Form() { return <Form actions={${panel}} />; };`,
+    "named class expression": `const V = class Form {}; export const a = <Form actions={${panel}} />;`,
+    "enum member": `enum E { Form = 1 } export const a = <Form actions={${panel}} />;`,
+    "default import": `import Form2, * as Form3 from "x"; import Form from "y"; export const a = <Form actions={${panel}} />;`,
+  };
+  for (const [label, body] of Object.entries(shadows)) assert.deepEqual(hosts(imp + body + "\n"), [null], label);
+  assert.deepEqual(hosts(imp + `function V() { const form = 1; return <Form actions={${panel}} />; }\n`), ["Form"], "an unrelated lowercase name is not a shadow");
+});
+
+test("shortcuts check: reserved FAILs only for the hosting view's defaults, and WARNs when the view is unknown", async () => {
+  await withTempDir(async (dir) => {
+    const ext = fakeExtension(dir, "ext");
+    mkdirSync(join(ext, "src"), { recursive: true });
+    mkdirSync(join(ext, "node_modules"), { recursive: true });
+    symlinkSync(join(REPO, "node_modules", "typescript"), join(ext, "node_modules", "typescript"), "dir");
+    const action = (title, mods, key) => `<Action title="${title}" shortcut={{ modifiers: ${JSON.stringify(mods)}, key: "${key}" }} onAction={() => {}} />`;
+    const imp = 'import { Action, ActionPanel, Detail, Form } from "@raycast/api";\n';
+    writeFileSync(join(ext, "src", "form.tsx"), imp + `export const f = <Form actions={<ActionPanel>${action("Submit", [], "return")}${action("Other", ["cmd", "shift"], "return")}</ActionPanel>} />;\n`);
+    writeFileSync(join(ext, "src", "detail.tsx"), imp + `export const d = <Detail markdown="x" actions={<ActionPanel>${action("Try", ["cmd", "shift"], "enter")}</ActionPanel>} />;\n`);
+    writeFileSync(join(ext, "src", "parts.tsx"), imp + `export function P() { return <ActionPanel>${action("Try", ["cmd", "shift"], "enter")}${action("Next", ["cmd"], "enter")}</ActionPanel>; }\n`);
+    const r = await rx(["shortcuts", "check", "--root", ext, "--table", TABLE, "--extension-typescript", "--json"]);
+    const reserved = r.json.results.filter((x) => x.id === "shortcut-reserved");
+    const at = (verdict) => reserved.filter((x) => x.verdict === verdict).map((x) => x.details[0].file + ":" + x.message.match(/"(\w+)"/)[1]).sort();
+    assert.deepEqual(at("FAIL"), ["src/form.tsx:Other", "src/parts.tsx:Next"]);
+    assert.deepEqual(at("WARN"), ["src/parts.tsx:Try"]);
+    assert.match(reserved.find((x) => x.verdict === "WARN").message, /could not tell which view hosts this panel/);
+    assert.deepEqual(r.json.data.reserved.map((x) => [x.site.file, x.host, x.certain]).sort(), [["src/form.tsx", "Form", true], ["src/parts.tsx", null, false], ["src/parts.tsx", null, true]]);
+    // Without the flag nothing is parsed, so no view is known: ↵ in the Form becomes a WARN, never a PASS.
+    const off = await rx(["shortcuts", "check", "--root", ext, "--table", TABLE, "--json"]);
+    const offWarn = off.json.results.filter((x) => x.id === "shortcut-reserved" && x.verdict === "WARN").map((x) => x.details[0].file).sort();
+    assert.deepEqual(offWarn, ["src/detail.tsx", "src/form.tsx", "src/form.tsx", "src/parts.tsx"].sort());
+  });
+});
+
+test("shortcuts check: a certain match on one platform is not hidden by an uncertain one on another (Codex H2)", async () => {
+  await withTempDir(async (dir) => {
+    const ext = fakeExtension(dir, "ext", { platforms: ["macOS", "Windows"] });
+    mkdirSync(join(ext, "src"), { recursive: true });
+    const sc = (mac, win) => `shortcut={{ macOS: { modifiers: ${JSON.stringify(mac)}, key: "return" }, Windows: { modifiers: ${JSON.stringify(win)}, key: "return" } }}`;
+    writeFileSync(join(ext, "src", "parts.tsx"), `export function P() { return <ActionPanel><Action title="A" ${sc([], ["cmd"])} /><Action title="B" ${sc(["cmd"], [])} /></ActionPanel>; }\n`);
+    const r = await rx(["shortcuts", "check", "--root", ext, "--table", TABLE, "--json"]);
+    const reserved = r.json.results.filter((x) => x.id === "shortcut-reserved").map((x) => `${x.verdict} ${x.message.match(/"(\w)"/)[1]}`).sort();
+    assert.deepEqual(reserved, ["FAIL A", "FAIL B", "WARN A", "WARN B"], "each distinct binding is judged on its own");
+    assert.deepEqual(r.json.data.reserved.map((x) => [x.site.title, x.platforms, x.certain]).sort(), [["A", ["Windows"], true], ["A", ["macOS"], false], ["B", ["Windows"], false], ["B", ["macOS"], true]].sort());
   });
 });

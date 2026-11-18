@@ -4,8 +4,9 @@
 //            table and writes it to the cross-repo cache keyed by the shim's fingerprint.
 //   check    scans an extension's source (src/shortcuts/scan.mjs) and compares every declared
 //            shortcut with that table: two actions in one panel (or one toast) resolving to the same
-//            binding → FAIL shortcut-ambiguous; a binding the panel assigns itself → FAIL
-//            shortcut-reserved. No matching table while the extension declares any shortcut →
+//            binding → FAIL shortcut-ambiguous; a binding the hosting view's panel assigns itself → FAIL
+//            shortcut-reserved (WARN when the scan cannot see the view and the binding is a default
+//            in only some views). No matching table while the extension declares any shortcut →
 //            ERROR shortcut-runtime-table ("runtime evidence unavailable"): the audit cannot be
 //            completed. N/A only when the extension declares no shortcuts (plan-review-2 F4).
 //
@@ -34,7 +35,7 @@ import {
 const CHECK_IDS = {
   "shortcut-runtime-table": "a Keyboard.Shortcut.Common table from the running Raycast app is available (ERROR runtime evidence unavailable when shortcuts are declared and none matches; N/A only when none are declared)",
   "shortcut-ambiguous": "no two actions in one resolved ActionPanel (or one toast) share a binding on a declared platform; one FAIL per conflicting pair",
-  "shortcut-reserved": "no ActionPanel shortcut spells out a binding the panel assigns itself (↵, ⌘↵, ⌘⇧↵); one FAIL per site; toast actions are not panels and are not checked",
+  "shortcut-reserved": "no ActionPanel shortcut spells out a binding its view's panel assigns itself (↵ and ⌘↵ in List, Grid and Detail; ⌘↵ and ⌘⇧↵ in Form); one FAIL per site and distinct binding, or a WARN when rx cannot see the view and the binding is a default in only some views; toast actions are not panels and are not checked",
 };
 
 /** @type {import("../cli.mjs").CommandSpec} */
@@ -77,7 +78,7 @@ export const spec = {
         table: "{ path, appVersion, shimFingerprint } | null",
         declared: "number — shortcuts found (resolved or not)",
         conflicts: "[{ platforms, binding, sites: [{ file, line, title, source }] }]",
-        reserved: "[{ platforms, binding, why, site }]",
+        reserved: "[{ platforms, binding, why, certain, host, site }]",
         platforms: "the platforms package.json declares (absent → [\"macOS\"])",
         unresolved: "[{ file, line, title, source }] — declared shortcuts whose binding could not be read statically (a variable, a spread, a composed component; see src/shortcuts/scan.mjs)",
         groups: "{ panels, toasts, loose }",
@@ -260,27 +261,35 @@ async function check({ args, root, results }) {
 
   // Reserved: a binding the panel assigns itself. Panels and loose actions (rendered into a panel
   // from another component) only: a toast's actions have no primary/secondary default to collide with.
+  // The defaults depend on the view that hosts the panel; when the scan could not see it, a binding
+  // that is a default in only some views is a WARN, never a PASS or a FAIL.
   /** @type {unknown[]} */
   const reserved = [];
   for (const r of resolved) {
-    if (scan.groups[r.sc.group].kind === "toast") continue;
-    /** @type {{ platforms: string[], binding: string, why: string } | null} */
-    let hit = null;
+    const group = scan.groups[r.sc.group];
+    if (group.kind === "toast") continue;
+    // One hit per distinct binding, so a certain match on one platform is never hidden behind an
+    // uncertain one on another (Codex H2).
+    /** @type {Map<string, { platforms: string[], binding: string, why: string, certain: boolean, host: string | null }>} */
+    const hits = new Map();
     for (const platform of platforms) {
       const b = r.bindings[platform];
-      const m = b ? reservedMatch(b) : null;
+      const m = b ? reservedMatch(b, group.host) : null;
       if (!m) continue;
-      if (!hit) hit = { platforms: [], binding: formatBinding(/** @type {any} */ (b), platform), why: m.why };
-      hit.platforms.push(platform);
+      const key = normalizeBinding(/** @type {any} */ (b));
+      if (!hits.has(key)) hits.set(key, { platforms: [], binding: formatBinding(/** @type {any} */ (b), platform), why: m.why, certain: m.certain, host: group.host });
+      hits.get(key)?.platforms.push(platform);
     }
-    if (!hit) continue;
-    results.fail("shortcut-reserved", `${r.sc.file}:${r.sc.line} ${r.sc.title ? JSON.stringify(r.sc.title) : r.sc.source} spells out ${hit.binding}, ${hit.why}; the panel assigns that itself, so this action either is that default (drop the prop) or collides with it`, [
-      { file: r.sc.file, line: r.sc.line, text: r.sc.source },
-    ]);
-    reserved.push({ ...hit, site: site(r.sc) });
+    for (const hit of hits.values()) {
+      const label = `${r.sc.file}:${r.sc.line} ${r.sc.title ? JSON.stringify(r.sc.title) : r.sc.source} spells out ${hit.binding}`;
+      const details = [{ file: r.sc.file, line: r.sc.line, text: r.sc.source }];
+      if (hit.certain) results.fail("shortcut-reserved", `${label}, ${hit.why}${hit.host ? ` (the panel is in a ${hit.host})` : ""}; the panel assigns that itself, so this action either is that default (drop the prop) or collides with it`, details);
+      else results.warn("shortcut-reserved", `${label}, which is ${hit.why} only; rx could not tell which view hosts this panel, so check that it is not that default (drop the prop) or colliding with it`, details);
+      reserved.push({ ...hit, site: site(r.sc) });
+    }
   }
   data.reserved = reserved;
-  if (reserved.length === 0) results.pass("shortcut-reserved", `no ActionPanel shortcut spells out a panel default (↵, ⌘↵, ⌘⇧↵)`);
+  if (reserved.length === 0) results.pass("shortcut-reserved", `no ActionPanel shortcut spells out a default of its view (↵ and ⌘↵ in List, Grid and Detail; ⌘↵ and ⌘⇧↵ in Form)`);
 
   return { data, fingerprint: null };
 }

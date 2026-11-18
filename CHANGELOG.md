@@ -13,6 +13,14 @@
   strings, regex literals, templates and JSX can no longer count as a shortcut or end an object
   early. Without the flag, and for a file that does not parse, the text scan reads the source as
   before; `data.parser` and `data.textScanned` say which.
+- `shortcut-reserved` checks a panel against the defaults of the view that hosts it: `↵` and `⌘↵` in
+  a List, Grid or Detail, `⌘↵` and `⌘⇧↵` in a Form. An explicit `↵` on a Form's submit action no
+  longer FAILs. With `--extension-typescript` the host is the element whose `actions` prop holds the
+  panel, when that name is imported from `@raycast/api` unrenamed and bound nowhere else in the
+  file. When rx cannot see the host (a panel a component returns, or no parser), `↵` and `⌘⇧↵` are a
+  WARN and `⌘↵`, a default in every view, stays a FAIL. `data.reserved` adds `certain` and `host`,
+  with one entry per distinct binding at a site, so a certain match on one platform is no longer
+  hidden by an uncertain one on another.
 - `changelog-order` is a WARN, not a FAIL, for an out-of-order pair the published CHANGELOG already
   has: every published dated heading is kept byte for byte, in the published order and count, and
   the pair is adjacent in both. `changelog-history` forbids editing those entries, so no branch

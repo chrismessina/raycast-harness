@@ -23,7 +23,7 @@
 // a Fragment).
 
 import { PLATFORMS, readBinding } from "./table.mjs";
-import { lineOf, propertyName, unwrap } from "../typescript.mjs";
+import { BINDER_PREDICATES, lineOf, propertyName, unwrap } from "../typescript.mjs";
 
 const COMMON_RE = /^(?:Keyboard\.)?(?:Shortcut\.)?Common\.([A-Z][A-Za-z]*)$/;
 const TOAST_CALLS = new Set(["showToast", "showFailureToast", "Toast"]);
@@ -154,11 +154,50 @@ export function scanTree(ts, sf, file, groups) {
   };
   visit(sf);
 
+  // Names imported from @raycast/api under their own name, and bound nowhere else in the file: only
+  // these identify a view. A renamed import (`List as Form`), a local component called `Form`, or
+  // any other binding of the name in any scope makes the host unknown (Codex H1). A whole-file
+  // census instead of scope resolution: an unrelated binding only costs a WARN.
+  /** @type {Set<string>} */
+  const apiNames = new Set();
+  const apiSpecifiers = new Set();
+  for (const st of sf.statements) {
+    if (!ts.isImportDeclaration(st) || st.moduleSpecifier.text !== "@raycast/api" || st.importClause?.isTypeOnly) continue;
+    const nb = st.importClause?.namedBindings;
+    if (nb && ts.isNamedImports(nb)) for (const el of nb.elements) if (!el.isTypeOnly && (!el.propertyName || el.propertyName.text === el.name.text)) {
+      apiNames.add(el.name.text);
+      apiSpecifiers.add(el);
+    }
+  }
+  const binders = BINDER_PREDICATES.map((f) => ts[f]);
+  const census = (/** @type {any} */ node) => {
+    if (!apiSpecifiers.has(node) && node.name && ts.isIdentifier(node.name) && binders.some((is) => is(node))) apiNames.delete(node.name.text);
+    ts.forEachChild(node, census);
+    return undefined;
+  };
+  if (apiNames.size) census(sf);
+
+  /**
+   * The element whose `actions={…}` holds `panel`, through parentheses, `cond ? … : …` and `a && …`;
+   * null when the panel is anywhere else (returned by a component, assigned to a variable) or the
+   * element's root name is not an unrenamed @raycast/api import.
+   * @param {any} panel
+   */
+  const hostOf = (panel) => {
+    let p = panel.parent;
+    while (p && (ts.isParenthesizedExpression(p) || ts.isConditionalExpression(p) || ts.isBinaryExpression(p))) p = p.parent;
+    if (!p || !ts.isJsxExpression(p) || !p.parent || !ts.isJsxAttribute(p.parent) || propertyName(ts, p.parent.name) !== "actions") return null;
+    const el = p.parent.parent?.parent;
+    if (!el || !(ts.isJsxOpeningElement(el) || ts.isJsxSelfClosingElement(el))) return null;
+    const name = tagName(el);
+    return apiNames.has(name.split(".")[0]) ? name : null;
+  };
+
   // Group ids in the text scan's order: panels, then toasts, then the loose group on demand.
   const ranges = [...panels, ...toasts];
   for (const r of ranges) {
     r.id = groups.length;
-    groups.push({ id: r.id, kind: r.kind, file, line: lineOf(sf, r.node.getStart(sf)) });
+    groups.push({ id: r.id, kind: r.kind, file, line: lineOf(sf, r.node.getStart(sf)), host: r.kind === "panel" ? hostOf(r.node) : null });
   }
   /** @type {number | null} */
   let looseId = null;
@@ -170,7 +209,7 @@ export function scanTree(ts, sf, file, groups) {
     }
     if (looseId === null) {
       looseId = groups.length;
-      groups.push({ id: looseId, kind: "loose", file, line: 1 });
+      groups.push({ id: looseId, kind: "loose", file, line: 1, host: null });
     }
     return { id: looseId, node: null };
   };

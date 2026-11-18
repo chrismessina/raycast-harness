@@ -53,7 +53,10 @@ import { isDirectory as isDir } from "../util.mjs";
 
 /**
  * @typedef {import("./table.mjs").Binding} Binding
- * @typedef {{ id: number, kind: "panel" | "toast" | "loose", file: string, line: number }} Group
+ * @typedef {{ id: number, kind: "panel" | "toast" | "loose", file: string, line: number, host: string | null }} Group
+ *   `host` is the element whose `actions` prop holds a panel (`Form`, `List.Item`, `Detail`, …), as the
+ *   parser reads it, when its root name is an unrenamed `@raycast/api` import bound nowhere else in the file; null for toasts, loose
+ *   groups, a panel a component returns, any other element, and every text-scanned file.
  * @typedef {{
  *   file: string, line: number, group: number, title: string | null, source: string,
  *   kind: "common" | "single" | "platform" | "unresolved",
@@ -250,7 +253,7 @@ export function scanText(text, file, groups) {
     }
     if (end === -1) end = s.length;
     const id = groups.length;
-    groups.push({ id, kind: "panel", file, line: lineAt(s, m.index) });
+    groups.push({ id, kind: "panel", file, line: lineAt(s, m.index), host: null });
     ranges.push({ start: m.index, end, kind: "panel", id });
   }
 
@@ -261,7 +264,7 @@ export function scanText(text, file, groups) {
     const close = matchBracket(s, open);
     if (close === -1) continue;
     const id = groups.length;
-    groups.push({ id, kind: "toast", file, line: lineAt(s, m.index) });
+    groups.push({ id, kind: "toast", file, line: lineAt(s, m.index), host: null });
     ranges.push({ start: m.index, end: close + 1, kind: "toast", id });
   }
 
@@ -346,7 +349,7 @@ export function scanText(text, file, groups) {
     if (best) return { id: best.id, start: best.start };
     if (looseId === null) {
       looseId = groups.length;
-      groups.push({ id: looseId, kind: "loose", file, line: 1 });
+      groups.push({ id: looseId, kind: "loose", file, line: 1, host: null });
     }
     return { id: looseId, start: -1 };
   };

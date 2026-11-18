@@ -8,12 +8,19 @@
 import { createRequire } from "node:module";
 import { join } from "node:path";
 
-const REQUIRED_FUNCTIONS = [
+/** Every node kind that binds a value name (a census of these finds shadows of an import). */
+export const BINDER_PREDICATES = [
+  "isVariableDeclaration", "isParameter", "isBindingElement", "isFunctionDeclaration", "isFunctionExpression",
+  "isClassDeclaration", "isClassExpression", "isEnumDeclaration", "isEnumMember", "isModuleDeclaration",
+  "isImportSpecifier", "isImportClause", "isNamespaceImport", "isImportEqualsDeclaration",
+];
+
+const REQUIRED_FUNCTIONS = [...BINDER_PREDICATES,
   "createSourceFile", "forEachChild", "isPropertyAssignment", "isShorthandPropertyAssignment", "isObjectLiteralExpression",
   "isArrayLiteralExpression", "isIdentifier", "isStringLiteral", "isNoSubstitutionTemplateLiteral", "isParenthesizedExpression",
   "isAsExpression", "isJsxAttribute", "isJsxElement", "isJsxSelfClosingElement", "isJsxOpeningElement", "isJsxExpression",
   "isJsxSpreadAttribute", "isJsxFragment", "isCallExpression", "isNewExpression", "isPropertyAccessExpression",
-  "isConditionalExpression", "isFunctionLike", "isIterationStatement",
+  "isConditionalExpression", "isBinaryExpression", "isImportDeclaration", "isNamedImports", "isFunctionLike", "isIterationStatement",
 ];
 
 /**

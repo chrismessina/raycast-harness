@@ -38,18 +38,25 @@ export const AMBIGUOUS_MODIFIERS = new Set(["cmd", "ctrl", "windows"]);
 export const PLATFORMS = /** @type {const} */ (["macOS", "Windows"]);
 
 /**
- * Bindings the panel assigns itself. developers.raycast.com/api-reference/user-interface/action-panel:
- * the first and second action get `↵` and `⌘↵` (List, Grid, Detail) or `⌘↵` and `⌘⇧↵` (Form). A
- * shortcut prop that spells one of these out collides with the default on the same panel. Raycast
- * lists both `return` and `enter` as key equivalents, so both spellings are reserved.
+ * Bindings the panel assigns itself, by the view that hosts it. developers.raycast.com/api-reference/user-interface/action-panel
+ * (and the `ActionPanel` doc comment in `@raycast/api`'s types): the first and second action get `↵` and
+ * `⌘↵` in a List, Grid or Detail, and `⌘↵` and `⌘⇧↵` in a Form. A shortcut prop that spells out a default
+ * of the panel's own view either is that default or collides with it. Raycast lists both `return` and
+ * `enter` as key equivalents, so both spellings are reserved.
  */
 export const RESERVED = Object.freeze(
   ["return", "enter"].flatMap((key) => [
-    { modifiers: [], key, why: "the primary action's default (List, Grid, Detail)" },
-    { modifiers: ["cmd"], key, why: "the secondary action's default (List, Grid, Detail) and the Form primary" },
-    { modifiers: ["cmd", "shift"], key, why: "the Form secondary action's default" },
+    { modifiers: [], key, why: { list: "the primary action's default in a List, Grid or Detail" } },
+    { modifiers: ["cmd"], key, why: { list: "the secondary action's default in a List, Grid or Detail", form: "the primary action's default in a Form" } },
+    { modifiers: ["cmd", "shift"], key, why: { form: "the secondary action's default in a Form" } },
   ]),
 );
+
+/** Elements whose `actions` prop takes the panel, by the defaults their view assigns. */
+const LIST_HOSTS = new Set(["List", "List.Item", "List.EmptyView", "Grid", "Grid.Item", "Grid.EmptyView", "Detail"]);
+
+/** @param {string | null} host @returns {"list" | "form" | null} */
+const viewOf = (host) => (host === "Form" ? "form" : host && LIST_HOSTS.has(host) ? "list" : null);
 
 /** @param {string} shimPath */
 export function fingerprintShim(shimPath) {
@@ -160,8 +167,20 @@ export function formatBinding(b, platform) {
   return b.modifiers.map((m) => glyph[/** @type {keyof typeof glyph} */ (m)] ?? m).join("") + (keyGlyph[/** @type {keyof typeof keyGlyph} */ (b.key)] ?? b.key.toUpperCase());
 }
 
-/** @param {Binding} b @returns {typeof RESERVED[number] | null} */
-export function reservedMatch(b) {
+/**
+ * The default `b` spells out on a panel hosted by `host` (an element name such as `Form` or
+ * `List.Item`, or null when the scan could not see it). `certain` is false when the binding is a
+ * default only in some views and the host is unknown: the caller WARNs instead of FAILing.
+ * @param {Binding} b @param {string | null} host
+ * @returns {{ why: string, certain: boolean } | null}
+ */
+export function reservedMatch(b, host) {
   const n = normalizeBinding(b);
-  return RESERVED.find((r) => normalizeBinding(r) === n) ?? null;
+  const entry = RESERVED.find((r) => normalizeBinding(r) === n);
+  if (!entry) return null;
+  const why = /** @type {Partial<Record<"list" | "form", string>>} */ (entry.why);
+  const view = viewOf(host);
+  if (view) return why[view] ? { why: why[view], certain: true } : null;
+  const all = /** @type {string[]} */ (Object.values(why));
+  return { why: all.join(" and "), certain: all.length === 2 };
 }
