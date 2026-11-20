@@ -7,17 +7,22 @@
 //   CHECK      published blob == an older commit of this path
 //   NEW?       local file the published tree lacks
 //   UPSTREAM   published blob not in this path's history
-//   ONLY-PUB   published has a file local does not
+//   ONLY-PUB   published has a file local does not, and its published blob was never at this path
+//              in a commit reachable from local HEAD
 //   REMOVE     an ONLY-PUB path the preset's `holdout.localOnly` lists (the path itself or a path
 //              under a listed directory), absent locally because `rx holdout out` holds it out or
 //              because it is simply not there: publishing deletes it upstream, deliberately
 //              (Chris's 2026-11-03 ruling: AGENTS.md, CONCEPTS.md, CLAUDE.md and HANDOFF.md never
-//              ship). Only with --preset; without one every such path stays ONLY-PUB.
+//              ship). Only with --preset; without one every such path is DELETED or ONLY-PUB.
+//   DELETED    a published file local lacks whose published blob sits at this exact path in a commit
+//              reachable from local HEAD: present in this checkout's reachable history and deleted
+//              here (in the working tree or by an unreleased commit). That proves the content was
+//              in this checkout, not who wrote it; the audit disposition is the human decision.
 //   UNHANDLED  symlink, mode change, or an undecidable path
-// CHECK, NEW? and REMOVE are WARN "requiring an audit disposition" keyed by { path, localHash,
-// baseline } (data.files[]), which `rx audit record` matches. A REMOVE row has localHash null
-// (absent locally); its disposition key uses the literal "absent" (src/audit/evaluate.mjs) and its
-// only accepted disposition is `remove-published`.
+// CHECK, NEW?, REMOVE and DELETED are WARN "requiring an audit disposition" keyed by { path,
+// localHash, baseline } (data.files[]), which `rx audit record` matches. REMOVE and DELETED rows
+// have localHash null (absent locally); their disposition key uses the literal "absent"
+// (src/audit/evaluate.mjs) and their only accepted disposition is `remove-published`.
 
 import { lstatSync, readFileSync, readdirSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
@@ -46,8 +51,9 @@ export const spec = {
     "stale-check": { description: "published == an older commit of these paths; WARN requiring an audit disposition", levels: ["WARN"] },
     "stale-new": { description: "local files the published tree lacks; WARN requiring an audit disposition", levels: ["WARN"] },
     "stale-upstream": "published content not in these paths' history (FAIL)",
-    "stale-only-pub": "published files local lacks; publishing deletes them (FAIL)",
+    "stale-only-pub": "published files local lacks and never had at that path in its reachable history; publishing deletes them (FAIL)",
     "stale-remove": { description: "published files the preset's holdout.localOnly lists and local lacks (held out by rx holdout, or absent); publishing deletes them on purpose; WARN requiring an audit disposition remove-published", levels: ["WARN"] },
+    "stale-deleted": { description: "published files local deleted (in the working tree or an unreleased commit) whose published blob is at that path in a commit reachable from local HEAD; publishing deletes them; WARN requiring an audit disposition remove-published", levels: ["WARN"] },
     "stale-unhandled": "symlink, mode change or undecidable path (FAIL)",
   },
   data: {
@@ -55,7 +61,7 @@ export const spec = {
     published: "boolean",
     publishedDir: "string | null — cache path of the published copy (a convenience for this run; never persisted)",
     baseline: "string | null — raycast/extensions main commit the comparison used",
-    files: "[{ path, class, localHash, publishedHash | null, note }] — class ∈ MINE CHECK NEW? UPSTREAM ONLY-PUB REMOVE UNHANDLED; localHash is the git blob id of the on-disk bytes (null when absent locally; a REMOVE disposition keys it as \"absent\")",
+    files: "[{ path, class, localHash, publishedHash | null, note }] — class ∈ MINE CHECK NEW? UPSTREAM ONLY-PUB REMOVE DELETED UNHANDLED; localHash is the git blob id of the on-disk bytes (null when absent locally; a REMOVE or DELETED disposition keys it as \"absent\")",
   },
 };
 
@@ -67,6 +73,7 @@ const CLASSES = /** @type {const} */ ({
   UPSTREAM: { id: "stale-upstream", verdict: "FAIL", summary: "published content is not in this path's history; publishing would revert it" },
   "ONLY-PUB": { id: "stale-only-pub", verdict: "FAIL", summary: "published has files local lacks; publishing would delete them" },
   REMOVE: { id: "stale-remove", verdict: "WARN", summary: "local-only per the preset and absent here; publishing deletes the published copy; audit disposition remove-published required" },
+  DELETED: { id: "stale-deleted", verdict: "WARN", summary: "deleted here, and the published copy is in this checkout's reachable history; publishing deletes it; audit disposition remove-published required" },
   UNHANDLED: { id: "stale-unhandled", verdict: "FAIL", summary: "classify by hand" },
 });
 
@@ -232,8 +239,14 @@ export async function classify(dir, publishedDir, localOnly = { localOnly: [], h
     if ((l && l.kind !== "file") || (p && p.kind !== "file")) { row("UNHANDLED", `${l?.kind ?? p?.kind} (not a regular file)`); continue; }
     if (p && !l) {
       const listed = listedLocalOnly(path, localOnly.localOnly);
-      if (listed === null) row("ONLY-PUB", "published has this file; local does not");
-      else row("REMOVE", `local-only (${listed} in the preset's holdout.localOnly), ${[...localOnly.heldOut].some((h) => isUnder(path, h)) ? "held out by rx holdout" : "absent locally"}; publishing deletes the published copy`);
+      // When publishing would delete published content whose exact blob is absent from this path's
+      // history reachable from HEAD, stale stays FAIL, except for paths the preset's
+      // holdout.localOnly designates: those are REMOVE regardless of history or holdout inventory
+      // and still need an explicit remove-published disposition.
+      if (listed === null) {
+        if (inRepo && pubEntry && (await blobInHistory(dir, path, pubEntry.blob))) row("DELETED", "absent locally; the published copy is present at this path in this checkout's reachable history; publishing deletes the published copy");
+        else row("ONLY-PUB", "published has this file; local does not");
+      } else row("REMOVE", `local-only (${listed} in the preset's holdout.localOnly), ${[...localOnly.heldOut].some((h) => isUnder(path, h)) ? "held out by rx holdout" : "absent locally"}; publishing deletes the published copy`);
       continue;
     }
     if (l && !p) { row("NEW?", "not published: your new file, or deleted upstream"); continue; }
@@ -251,7 +264,7 @@ export async function classify(dir, publishedDir, localOnly = { localOnly: [], h
     const identical = localHash === publishedHash || (localHash !== null && readFileSync(join(dir, path)).equals(readFileSync(join(publishedDir, path))));
     if (identical) { row("MINE", "identical"); continue; }
     if (headId && headId === pubEntry.blob) { row("MINE", "published == your HEAD; the delta is uncommitted"); continue; }
-    if (inRepo && (await blobInHistory(dir, path, pubEntry.blob))) { row("CHECK", "published == an older commit of yours; read the diff"); continue; }
+    if (inRepo && (await blobInHistory(dir, path, pubEntry.blob))) { row("CHECK", "published == an older commit at this path; read the diff"); continue; }
     row("UPSTREAM", "published blob not found in this path's history");
   }
   return rows;
@@ -263,17 +276,30 @@ function gitMode(mode) {
 }
 
 /**
- * Did any commit of `path` (from HEAD) ever hold blob `id`? `--full-history --diff-merges=separate`
- * so a blob that only ever arrived through a merge is still found.
+ * Does a commit reachable from HEAD hold blob `id` at exactly `path` (relative to `cwd`)? CHECK and
+ * DELETED both rest on this witness. Plumbing only, so the user's git config cannot change the
+ * answer: `git log` reads log.follow, log.showRoot, log.showSignature and diff.renames, and each of
+ * those once produced a wrong class. `rev-list --full-history` lists the commits that changed the
+ * path relative to a parent (a root or shallow-boundary commit counts against the empty tree); a
+ * blob any reachable commit holds there was introduced by one of them, so checking those suffices.
+ * Each is then looked up exactly with `ls-tree -z`: the path travels as an argument and the reply is
+ * NUL-terminated, so any filename works, and only a `blob` record with that very name and id
+ * witnesses (an earlier filename, a former directory, a gitlink never do).
  * @param {string} cwd @param {string} path @param {string} id
  */
-async function blobInHistory(cwd, path, id) {
-  const r = await git(["--literal-pathspecs", "log", "--full-history", "--diff-merges=separate", "--raw", "--no-abbrev", "--format=", "HEAD", "--", path], { cwd, allowFail: true });
-  if (r.code !== 0) return false;
-  for (const line of r.stdout.split("\n")) {
-    // :100644 100644 <old> <new> M\tpath
-    const m = line.match(/^:\d{6} \d{6} [0-9a-f]{40} ([0-9a-f]{40}) /);
-    if (m && m[1] === id) return true;
+export async function blobInHistory(cwd, path, id) {
+  const list = await git(["--literal-pathspecs", "rev-list", "--full-history", "HEAD", "--", path], { cwd, allowFail: true });
+  if (list.code !== 0) return false;
+  for (const commit of list.stdout.split("\n")) {
+    if (!commit) continue;
+    const r = await git(["--literal-pathspecs", "ls-tree", "-z", commit, "--", path], { cwd, allowFail: true });
+    if (r.code !== 0) continue;
+    for (const rec of r.stdout.split("\0")) {
+      const tab = rec.indexOf("\t");
+      if (tab < 0) continue;
+      const [, type, blob] = rec.slice(0, tab).split(" ");
+      if (type === "blob" && blob === id && rec.slice(tab + 1) === path) return true;
+    }
   }
   return false;
 }

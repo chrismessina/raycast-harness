@@ -52,18 +52,22 @@ export function effectsOf(applyCtx) {
 /** The localHash a REMOVE row's disposition carries: the file is absent locally. */
 export const ABSENT = "absent";
 
+/** Stale row kinds whose release deletes the published copy: `remove-published` answers them. @param {unknown} kind */
+export const deletesPublished = (kind) => kind === "REMOVE" || kind === "DELETED";
+
 /**
- * Does disposition `d` answer requirement `n`'s kind? A stale REMOVE row takes
- * `remove-published` and nothing else; every other row takes anything but `remove-published`.
+ * Does disposition `d` answer requirement `n`'s kind? A stale REMOVE or DELETED row (the release
+ * deletes the published copy) takes `remove-published` and nothing else; every other row takes
+ * anything but `remove-published`.
  * @param {{ disposition: string }} d @param {{ kind: string }} n
  */
 export function dispositionFits(d, n) {
-  return (n.kind === "REMOVE") === (d.disposition === "remove-published");
+  return deletesPublished(n.kind) === (d.disposition === "remove-published");
 }
 
 /**
- * The stale CHECK / NEW? / REMOVE rows of a receipt's recorded stale data, as required
- * dispositions. A REMOVE row is absent locally, so its key carries localHash ABSENT.
+ * The stale CHECK / NEW? / REMOVE / DELETED rows of a receipt's recorded stale data, as required
+ * dispositions. REMOVE and DELETED rows are absent locally, so their key carries localHash ABSENT.
  * @param {any} staleData receipt.data.stale
  * @returns {RequiredDisposition[]}
  */
@@ -73,7 +77,7 @@ export function staleDispositions(staleData) {
   if (!staleData || typeof staleData.baseline !== "string") return out;
   for (const f of Array.isArray(staleData.files) ? staleData.files : []) {
     if ((f?.class === "CHECK" || f?.class === "NEW?") && typeof f.path === "string" && typeof f.localHash === "string") out.push({ path: f.path, localHash: f.localHash, baseline: staleData.baseline, kind: f.class });
-    else if (f?.class === "REMOVE" && typeof f.path === "string" && f.localHash === null) out.push({ path: f.path, localHash: ABSENT, baseline: staleData.baseline, kind: "REMOVE" });
+    else if (deletesPublished(f?.class) && typeof f.path === "string" && f.localHash === null) out.push({ path: f.path, localHash: ABSENT, baseline: staleData.baseline, kind: f.class });
   }
   return out;
 }

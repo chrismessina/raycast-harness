@@ -326,7 +326,8 @@ export async function run(ctx) {
 
   // 3. The rx steps.
   // The preset goes to stale too: its holdout.localOnly turns a held-out published file into the
-  // deliberate deletion REMOVE (an audit disposition) instead of the ONLY-PUB FAIL.
+  // deliberate deletion REMOVE (an audit disposition) instead of the ONLY-PUB FAIL. A published file
+  // deleted here whose blob is in this checkout's reachable history is DELETED with or without it.
   const staleRun = await runStep(stale, ctx, { root, flags: { "--root": root, "--preset": presetPath } });
   record("stale", staleRun.results);
   const staleName = typeof staleRun.data.name === "string" ? staleRun.data.name : null;

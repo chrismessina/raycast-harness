@@ -632,3 +632,26 @@ test("remove-published answers a stale REMOVE row (keyed localHash \"absent\") a
   assert.deepEqual([removeCheck.unresolved.map((u) => u.path), removeCheck.unmatched.map((u) => u.path)], [["CHANGELOG.md"], ["CHANGELOG.md"]]);
   assert.equal(parseEntries([remove]).dispositions.length, 1, "the entries parser accepts the new disposition");
 });
+
+test("remove-published answers a stale DELETED row (keyed localHash \"absent\", kind DELETED) as it does REMOVE; keep-local never does; remove-published still answers no CHECK", () => {
+  const stale = { baseline: "b".repeat(40), files: [
+    { path: ".eslintrc.json", class: "DELETED", localHash: null },
+    { path: "CHANGELOG.md", class: "CHECK", localHash: "c".repeat(40) },
+  ] };
+  const required = staleDispositions(stale);
+  assert.deepEqual(required.map((r) => [r.path, r.localHash, r.baseline, r.kind]), [[".eslintrc.json", "absent", stale.baseline, "DELETED"], ["CHANGELOG.md", "c".repeat(40), stale.baseline, "CHECK"]]);
+  /** @type {import("../src/verdict.mjs").Result[]} */
+  const shortcuts = [{ id: "shortcuts", verdict: "PASS", message: "ok", details: [] }];
+  /** @type {import("../src/verdict.mjs").Result[]} */
+  const png = [{ id: "png", verdict: "PASS", message: "ok", details: [] }];
+  const base = { applicable: [], entries: [], verifications: [], required, effects: [], evidence: { shortcuts, png } };
+  const remove = { path: ".eslintrc.json", localHash: "absent", baseline: stale.baseline, disposition: /** @type {const} */ ("remove-published"), reason: "moved to eslint.config.js" };
+  const keep = { path: "CHANGELOG.md", localHash: "c".repeat(40), baseline: stale.baseline, disposition: /** @type {const} */ ("keep-local"), reason: "release" };
+  assert.deepEqual(decide({ ...base, dispositions: [remove, keep] }).blocking, []);
+  const none = decide({ ...base, dispositions: [keep] });
+  assert.deepEqual([none.unresolved.map((u) => u.path), none.unmatched.map((u) => u.path)], [[".eslintrc.json"], []]);
+  const keepDeleted = decide({ ...base, dispositions: [{ ...remove, disposition: /** @type {const} */ ("keep-local") }, keep] });
+  assert.deepEqual([keepDeleted.unresolved.map((u) => u.path), keepDeleted.unmatched.map((u) => u.path)], [[".eslintrc.json"], [".eslintrc.json"]]);
+  const removeCheck = decide({ ...base, dispositions: [remove, { ...keep, disposition: /** @type {const} */ ("remove-published") }] });
+  assert.deepEqual([removeCheck.unresolved.map((u) => u.path), removeCheck.unmatched.map((u) => u.path)], [["CHANGELOG.md"], ["CHANGELOG.md"]]);
+});

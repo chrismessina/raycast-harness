@@ -6,7 +6,8 @@
 //   disposition    { path, localHash, baseline, disposition: "keep-local" | "adopt-published" | "remove-published", reason }
 //                  for a stale CHECK / NEW? path or a png OLDER-SHOT image:
 //                  keep-local or adopt-published; for a stale REMOVE path (a local-only file the
-//                  published copy still has): remove-published, with localHash "absent"
+//                  published copy still has) or DELETED path (a published file deleted here):
+//                  remove-published, with localHash "absent"
 //   verification   { verification: "writes-files" | "web-requests" | "calls-ai", result, evidence }
 //                  destination / runtime proof for an external effect the extension has
 //

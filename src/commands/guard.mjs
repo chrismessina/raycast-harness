@@ -272,7 +272,7 @@ export async function checkRoot(root, version) {
   const stale = staleDispositions(receipt.data.stale);
   const storedStale = audit.required.filter((/** @type {any} */ r) => r.kind !== "OLDER-SHOT");
   const staleKeys = new Set(stale.map(dispositionKey));
-  if (storedStale.length !== stale.length || storedStale.some((/** @type {any} */ r) => !staleKeys.has(dispositionKey(r)))) return fail("the audit's required dispositions do not match the receipt's stale CHECK / NEW? / REMOVE rows; run rx audit record again");
+  if (storedStale.length !== stale.length || storedStale.some((/** @type {any} */ r) => !staleKeys.has(dispositionKey(r)))) return fail("the audit's required dispositions do not match the receipt's stale CHECK / NEW? / REMOVE / DELETED rows; run rx audit record again");
   const olderShots = audit.required.filter((/** @type {any} */ r) => r.kind === "OLDER-SHOT");
   const pngOlder = new Set(audit.evidence.png.filter((/** @type {any} */ r) => r.verdict === "WARN" && /OLDER-SHOT/.test(r.message)).map((/** @type {any} */ r) => r.details[0]?.file ?? ""));
   if (olderShots.length !== pngOlder.size || olderShots.some((/** @type {any} */ r) => !pngOlder.has(r.path))) return fail("the audit's png OLDER-SHOT dispositions do not match its png evidence; run rx audit record again");

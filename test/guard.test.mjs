@@ -641,6 +641,44 @@ test("guard (W9 finding 1): changed rule text under the same ids blocks a record
   });
 });
 
+test("guard: a published file the author deleted (DELETED) blocks the release until a remove-published disposition answers it", async () => {
+  await withGatedEnv(async (dir) => {
+    const { root, up } = await buildGated(dir, { published: true, files: { ".eslintrc.json": "{ \"extends\": \"@raycast\" }\n" } });
+    rmSync(join(root, ".eslintrc.json")); // deleted in the working tree, as in an ESLint 9 migration
+    const g = await rx(["gates", "--root", root, "--preset", PRESET, "--forbidden", FORBIDDEN, "--json"]);
+    assert.equal(g.code, 0, g.stdout);
+    assert.ok(g.json.data.receipt, "a receipt is written: DELETED is a WARN, not the ONLY-PUB FAIL");
+    assert.equal(byId(g)["stale-deleted"].verdict, "WARN");
+    const baseline = String(up?.sha);
+    const record = (/** @type {unknown[]} */ extra) => rx(["audit", "record", "--root", root, "--preset", PRESET, "--entries", writeEntries(dir, fullEntries({ extra })), "--json"]);
+    const remove = { path: ".eslintrc.json", localHash: "absent", baseline, disposition: "remove-published", reason: "replaced by eslint.config.js" };
+    // The fixture's release commit edits CHANGELOG.md after the published copy: a CHECK row.
+    const changelogHash = readJsonFile(join(await stateDir(root), "receipt.json")).data.stale.files.find((/** @type {any} */ f) => f.path === "CHANGELOG.md").localHash;
+    const changelog = { path: "CHANGELOG.md", localHash: changelogHash, baseline, disposition: "keep-local", reason: "the local entry is this release" };
+
+    const none = await record([changelog]);
+    assert.equal(none.code, 1, none.stdout);
+    assert.deepEqual(readJsonFile(join(await stateDir(root), "audit.json")).required, [
+      { path: ".eslintrc.json", localHash: "absent", baseline, kind: "DELETED" },
+      { path: "CHANGELOG.md", localHash: changelogHash, baseline, kind: "CHECK" },
+    ]);
+    assert.match(byId(none)["audit-dispositions"].details[0].text, /^DELETED needs a disposition remove-published/);
+    assert.equal((await guard(bashPayload(PUBLISH, root))).json.data.decision, "block");
+
+    const keep = await record([changelog, { ...remove, disposition: "keep-local" }]);
+    assert.equal(keep.code, 1, keep.stdout);
+    assert.ok(byId(keep)["audit-dispositions"].details.some((/** @type {any} */ d) => d.file === ".eslintrc.json" && d.text.startsWith("keep-local does not answer")));
+    assert.equal((await guard(bashPayload(PUBLISH, root))).json.data.decision, "block");
+
+    const ok = await record([changelog, remove]);
+    assert.equal(ok.code, 0, ok.stdout);
+    assert.match(byId(ok)["audit-dispositions"].details.find((/** @type {any} */ d) => d.file === ".eslintrc.json").text, /^DELETED: remove-published/);
+    const allowed = await guard(bashPayload(PUBLISH, root));
+    assert.equal(guardResult(allowed).verdict, "PASS", guardResult(allowed).message);
+    assert.equal(allowed.json.data.decision, "allow");
+  });
+});
+
 test("guard (2026-11-03 ruling): a publish that deletes a published AGENTS.md, held out of the mirror, is allowed end to end through gates, a remove-published disposition and the guard", async () => {
   await withGatedEnv(async (dir) => {
     // Published copy: the first commit, AGENTS.md included. The mirror then untracks it and lists it

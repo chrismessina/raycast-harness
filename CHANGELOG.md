@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased
+
+- `rx stale` classifies a published file you deleted as `DELETED` (`stale-deleted`, WARN) instead
+  of the `ONLY-PUB` FAIL, when its published version sits at that exact path in a commit reachable
+  from HEAD (an uncommitted deletion, or one in an unreleased commit). `rx audit record` answers it
+  with `remove-published` keyed `{ path, localHash: "absent", baseline }`, as for `REMOVE`. A file
+  upstream added or edited that local history never held stays `ONLY-PUB`.
+- The history lookup behind `CHECK` and `DELETED` no longer depends on git config: it uses
+  `rev-list` and an exact `ls-tree` lookup instead of `git log`, which `log.showRoot=false`,
+  `log.follow`, `log.showSignature` and `diff.renames` could mislead. It also stops counting a
+  blob from a file's earlier name or from a former directory's contents, so such a path is now
+  `UPSTREAM` instead of `CHECK`.
+
 ## 0.1.4
 
 - `shortcut-platform-case` can parse `src/` with the extension's own `typescript` and then FAILs

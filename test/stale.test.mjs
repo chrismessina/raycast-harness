@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { fakeExtension, rx, withTempDir } from "./helpers.mjs";
 import { _setUpstreamForTests, lockHeld, upstreamDir } from "../src/upstream.mjs";
 import { FIXTURES, applyTree, commit, extensionFiles, fakeUpstream, g, initRepo } from "./upstream-fixtures.mjs";
+import { staleDispositions } from "../src/audit/evaluate.mjs";
 
 // `rx stale` end to end against a fake raycast/extensions (a local bare repo fetched over file://)
 // with the GitHub publication lookup replaced by a probe. No network.
@@ -280,5 +281,27 @@ test("stale --preset: a published file the preset's holdout.localOnly lists and 
     assert.equal(bare.code, 1);
     assert.ok(bare.json.data.files.filter((/** @type {any} */ f) => f.path !== "src/index.tsx" && f.class !== "MINE").every((/** @type {any} */ f) => f.class === "ONLY-PUB"), "no preset, no REMOVE");
     assert.ok(!bare.json.results.some((/** @type {any} */ x) => x.id === "stale-remove"));
+  });
+});
+
+test("stale: a published file the author deleted is DELETED (WARN) with or without --preset, and its required disposition is { path, \"absent\", baseline, DELETED } either way", async () => {
+  await withTempDir(async (dir) => {
+    process.env.XDG_CACHE_HOME = join(dir, "cache");
+    const files = { ...extensionFiles("gamma"), ".eslintrc.json": "{ \"extends\": \"@raycast\" }\n" };
+    const up = await fakeUpstream(dir, { gamma: files });
+    _setUpstreamForTests({ url: up.url, probe: async () => true });
+    const local = await initRepo(join(dir, "gamma"));
+    await commit(local, files, "Initial fork commit");
+    rmSync(join(local, ".eslintrc.json")); // the ESLint 9 migration, not committed yet
+    const preset = join(dir, "preset.json");
+    writeFileSync(preset, JSON.stringify({ schema: 1, owner: "octo-author", rules: [], holdout: { localOnly: ["AGENTS.md"] } }));
+    for (const argv of [["stale", "--json"], ["stale", "--preset", preset, "--json"]]) {
+      const r = await rx(argv, { cwd: local });
+      assert.equal(r.code, 0, `${argv.join(" ")}: ${r.stdout}`);
+      const by = Object.fromEntries(r.json.results.map((/** @type {any} */ x) => [x.id, x]));
+      assert.equal(by["stale-deleted"].verdict, "WARN");
+      assert.ok(!by["stale-only-pub"], "no FAIL");
+      assert.deepEqual(staleDispositions(r.json.data).map((n) => ({ ...n })), [{ path: ".eslintrc.json", localHash: "absent", baseline: r.json.data.baseline, kind: "DELETED" }], argv.join(" "));
+    }
   });
 });
