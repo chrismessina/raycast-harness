@@ -13,7 +13,7 @@ import { _setUpstreamForTests } from "../src/upstream.mjs";
 import { setTransport } from "../src/pr/transport.mjs";
 import { SHIPPED_DIR } from "../src/greptile/rules.mjs";
 import { GREPTILE_JUDGMENT_RULES, GREPTILE_PREFIX } from "../src/audit/greptile.mjs";
-import { REPO, rx, withTempDir } from "./helpers.mjs";
+import { afterShipped, REPO, rx, withTempDir } from "./helpers.mjs";
 import { makeExt } from "./preflight-helpers.mjs";
 import { commit, fakeUpstream, g, initRepo } from "./upstream-fixtures.mjs";
 
@@ -60,7 +60,7 @@ export function greptileFake(o = {}) {
     async getJson(/** @type {string} */ path) {
       if (!o.sha) return offline(path);
       calls.push(path);
-      if (/\/commits\?path=\.greptile&sha=main&per_page=1$/.test(path)) return [{ sha: o.sha, commit: { committer: { date: o.committed ?? "2026-11-05T00:00:00Z" } } }];
+      if (/\/commits\?path=\.greptile&sha=main&per_page=1$/.test(path)) return [{ sha: o.sha, commit: { committer: { date: o.committed ?? afterShipped(2) } } }];
       throw new Error(`unexpected GET ${path}`);
     },
     async getRaw(/** @type {string} */ path) {

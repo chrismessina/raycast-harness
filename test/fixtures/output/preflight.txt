@@ -24,11 +24,14 @@ N/A    hand-typed-preferences   no preset (core enforces only Store facts)
 N/A    title-case               no preset (core enforces only Store facts)
 N/A    agent-scaffolding        no preset (core enforces only Store facts)
 N/A    dev-material             no preset (core enforces only Store facts)
+N/A    contributing-mirror      no preset (core enforces only Store facts)
 N/A    generated-files          no preset (core enforces only Store facts)
 PASS   screenshot-count         1 of at most 6 screenshots
 PASS   screenshot-format        every file under metadata/ is a .png
 PASS   screenshot-size          every screenshot is 2000×1250
 PASS   icon-size                1 icon 512×512
+WARN   store-description        no description in package.json; the Store, the web page and search results show it (no published copy given, so judged as new)
+PASS   readme-dev-sections      no contributor section (Development, build, clone-and-run, project structure) in README
 FAIL   readme-links             3 relative links do not resolve
        README.md:3  docs/missing.md
        README.md:3  LICENSE

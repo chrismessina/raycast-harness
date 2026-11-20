@@ -4,7 +4,7 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { _setGreptileFetcherForTests } from "../src/commands/doctor.mjs";
 import { SHIPPED_DIR } from "../src/greptile/rules.mjs";
-import { fakeExtension, rx, withConfig } from "./helpers.mjs";
+import { afterShipped, fakeExtension, rx, withConfig } from "./helpers.mjs";
 
 // doctor is report-only: it may WARN or say N/A, it never FAILs. The gh probe is stubbed (no
 // network in tests); these tests only assert its verdict is PASS or WARN, never its content. Every
@@ -120,7 +120,7 @@ async function doctorWith(sha, fetcher) {
 
 const MOVED_HEAD = "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee";
 /** After the shipped copy's commit, so the cache copy is the one in use; never in the future. */
-const COPY_COMMITTED = "2026-11-05T00:00:00Z";
+const COPY_COMMITTED = afterShipped(2);
 
 /**
  * A fetcher whose latest commit touching .greptile/ on main is `lastTouch`, serving the given

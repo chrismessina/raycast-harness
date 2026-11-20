@@ -14,7 +14,7 @@ import { Results } from "../src/verdict.mjs";
 import { VERSION } from "../src/cli.mjs";
 import { commit, g as gitIn } from "./upstream-fixtures.mjs";
 import { FORBIDDEN, PRESET, auditRecord, bashPayload, buildGated, byId, fullEntries, gates, guard, readJson as readJsonFile, stateDir, withGatedEnv, writeAttested, writeEntries } from "./gates-helpers.mjs";
-import { rx } from "./helpers.mjs";
+import { afterShipped, rx } from "./helpers.mjs";
 import { SHIPPED_DIR } from "../src/greptile/rules.mjs";
 
 const PUBLISH = "npm run publish";
@@ -593,7 +593,7 @@ function cachedRules(dir, sha, change) {
   const config = JSON.parse(readFileSync(join(SHIPPED_DIR, "config.json"), "utf8"));
   change(config);
   writeFileSync(join(copy, "config.json"), JSON.stringify(config));
-  writeFileSync(join(copy, "SOURCE.json"), JSON.stringify({ repo: "raycast/extensions", source: "main", sha, committed: "2026-11-05T00:00:00Z", fetched: "2026-11-05T00:00:01.000Z" }));
+  writeFileSync(join(copy, "SOURCE.json"), JSON.stringify({ repo: "raycast/extensions", source: "main", sha, committed: afterShipped(2), fetched: "2026-11-05T00:00:01.000Z" }));
   return copy;
 }
 

@@ -8,7 +8,7 @@ import { SHIPPED_DIR as SNAPSHOT_DIR, loadGreptileRules, readRuleDir, writeDestC
 import { buildRound, parseForbidden, parseSummary, scanReply, summaryComment } from "../src/greptile/rounds.mjs";
 import { setTransport } from "../src/pr/transport.mjs";
 import { RxError } from "../src/errors.mjs";
-import { REPO, fakeExtension, rx, withTempDir } from "./helpers.mjs";
+import { afterShipped, fakeExtension, REPO, rx, withTempDir } from "./helpers.mjs";
 
 // Nothing here reaches github.com: every command test installs a fake transport serving the
 // recorded, scrubbed payloads under test/fixtures/greptile/.
@@ -19,7 +19,7 @@ const PR = "12345";
 const HEAD = "0123456789abcdef0123456789abcdef01234567";
 const ROUND = "2026-10-02T09:30:00Z";
 /** A commit date after the shipped copy's (2026-11-03): a copy carrying it is the copy in use. */
-const LATER = "2026-11-05T00:00:00Z";
+const LATER = afterShipped(2);
 /** A commit date before the shipped copy's. */
 const EARLIER = "2026-10-01T00:00:00Z";
 
@@ -688,8 +688,8 @@ test("lookup: with no cache copy the shipped rules are in use", async () => {
 test("lookup: the newest valid cache copy is preferred over the shipped one", async () => {
   await withCache((_dir, cache) => {
     // "zz-older" sorts last by name and was fetched last: neither decides, the commit date does.
-    cacheCopy(cache, { name: "zz-older", sha: SHA_D, committed: "2026-11-04T00:00:00Z", fetched: "2026-11-06T00:00:00Z" });
-    const newest = cacheCopy(cache, { name: "newer", sha: SHA_C, committed: LATER, fetched: "2026-11-05T00:00:00Z", config: (c) => c.rules.push({ id: "only-in-cache", severity: "low", scope: [], rule: "C" }) });
+    cacheCopy(cache, { name: "zz-older", sha: SHA_D, committed: afterShipped(1), fetched: afterShipped(3) });
+    const newest = cacheCopy(cache, { name: "newer", sha: SHA_C, committed: LATER, fetched: afterShipped(2), config: (c) => c.rules.push({ id: "only-in-cache", severity: "low", scope: [], rule: "C" }) });
     mkdirSync(join(rulesCache(cache), ".tmp-1-dead"), { recursive: true }); // an interrupted write is never read
     const warnings = /** @type {string[]} */ ([]);
     const r = loadGreptileRules({ warn: (m) => warnings.push(m) });
@@ -704,7 +704,7 @@ test("lookup: the newest valid cache copy is preferred over the shipped one", as
 
 test("lookup: an invalid cache copy is ignored with a warning naming it, never trusted", async () => {
   await withCache((_dir, cache) => {
-    const good = cacheCopy(cache, { name: "good", sha: SHA_D, committed: "2026-11-04T00:00:00Z" });
+    const good = cacheCopy(cache, { name: "good", sha: SHA_D, committed: afterShipped(1) });
     const dup = cacheCopy(cache, { name: "dup", sha: SHA_C, committed: LATER, config: (c) => c.rules.push({ ...c.rules[0] }) });
     const badSource = cacheCopy(cache, { name: "bad-source", sha: SHA_C, source: { repo: "raycast/extensions", source: "main", sha: "not-a-sha", committed: LATER, fetched: "2026-11-05" } });
     const warnings = /** @type {string[]} */ ([]);
@@ -802,7 +802,7 @@ test("greptile outdated: a copy at the last commit that touched .greptile/ is cu
 
 test("greptile outdated: a copy from a PR whose rules are now on main reports source moved first", async () => {
   const r = await withFake(fakeGitHub({ mainHas: true, mainSha: MAIN }).t, ["greptile", "outdated"], {
-    setup: (dir) => void cacheCopy(join(dir, "cache"), { name: "p", sha: SHA_C, source: { repo: "raycast/extensions", pr: 32933, source: "pr", sha: SHA_C, committed: "2026-11-04T00:00:00Z", fetched: "2099-01-01" } }),
+    setup: (dir) => void cacheCopy(join(dir, "cache"), { name: "p", sha: SHA_C, source: { repo: "raycast/extensions", pr: 32933, source: "pr", sha: SHA_C, committed: afterShipped(1), fetched: "2099-01-01" } }),
   });
   assert.equal(r.by["greptile-outdated"].verdict, "FAIL");
   assert.equal(r.json.data.changes[0], "source moved pr → main (PR #32933 merged)");
@@ -838,7 +838,7 @@ test("greptile update: writes a new cache copy atomically, reports the changes, 
   let after = [];
   const r = await withFake(fakeGitHub({ mainHas: true, mainSha: MAIN, snapshotFiles: { "rules.md": liveRules } }).t, ["greptile", "update"], {
     // A minute ago: newer than the shipped copy, older than the one update writes now.
-    setup: (dir) => void cacheCopy(join(dir, "cache"), { name: "c", sha: SHA_C, committed: "2026-11-04T00:00:00Z", fetched: new Date(Date.now() - 60_000).toISOString() }),
+    setup: (dir) => void cacheCopy(join(dir, "cache"), { name: "c", sha: SHA_C, committed: afterShipped(1), fetched: new Date(Date.now() - 60_000).toISOString() }),
     inspect: (dir) => {
       after = readdirSync(rulesCache(join(dir, "cache"))).sort();
       const loaded = loadGreptileRules({ warn: (m) => assert.fail(m) });
@@ -1047,13 +1047,13 @@ test("greptile (W9 finding 3): every upstream request names raycast/extensions, 
 test("greptile update (W9 finding 2): out of order — a copy from a later upstream commit already in the cache stays in use; update says so with a WARN, never PASS updated", async () => {
   /** @type {any} */
   let inUse = null;
-  const r = await withFake(fakeGitHub({ mainHas: true, mainSha: MAIN, mainCommitted: "2026-11-04T00:00:00Z", snapshotFiles: { "rules.md": "# older upstream text\n" } }).t, ["greptile", "update"], {
+  const r = await withFake(fakeGitHub({ mainHas: true, mainSha: MAIN, mainCommitted: afterShipped(1), snapshotFiles: { "rules.md": "# older upstream text\n" } }).t, ["greptile", "update"], {
     setup: (dir) => void cacheCopy(join(dir, "cache"), { name: "later", sha: SHA_D, committed: LATER, fetched: "2026-11-05T00:00:00.000Z" }),
     inspect: () => { inUse = loadGreptileRules({ warn: (m) => assert.fail(m) }).source; },
   });
   assert.equal(r.code, 0, r.stdout);
   assert.equal(r.by["greptile-update"].verdict, "WARN");
-  assert.match(r.by["greptile-update"].message, /^wrote .*aaaaaaa \(aaaaaaa, committed 2026-11-04T00:00:00Z\) but it is not the copy in use: raycast\/extensions main @ ddddddd .*committed 2026-11-05T00:00:00Z, sorts later/);
+  assert.match(r.by["greptile-update"].message, new RegExp(`^wrote .*aaaaaaa \\(aaaaaaa, committed ${afterShipped(1)}\\) but it is not the copy in use: raycast\\/extensions main @ ddddddd .*committed ${afterShipped(2)}, sorts later`));
   assert.equal(r.json.data.inUse, false);
   assert.equal(inUse.sha, SHA_D, "the later commit is still the copy in use");
 });
@@ -1131,7 +1131,7 @@ test("greptile update --dest (W9 round 2 finding D): a write that truncates then
     const destDir = join(destCheckout(dir), "src", "rules", "greptile");
     const before = Object.fromEntries(readdirSync(destDir).map((f) => [f, readFileSync(join(destDir, f))]));
     const raw = { "config.json": before["config.json"].toString(), "files.json": before["files.json"].toString(), "rules.md": before["rules.md"].toString() + "\n## Added\n\nnew\n" };
-    const src = { repo: "raycast/extensions", source: /** @type {const} */ ("main"), sha: "a".repeat(40), committed: "2026-11-04T00:00:00Z", fetched: "2026-11-04" };
+    const src = { repo: "raycast/extensions", source: /** @type {const} */ ("main"), sha: "a".repeat(40), committed: afterShipped(1), fetched: "2026-11-04" };
     const ok = truncatingIo(destDir);
     assert.throws(() => writeDestCopy(destDir, raw, src, /** @type {any} */ (ok.io)), (/** @type {any} */ e) => {
       assert.match(e.message, /^ENOSPC: no space left on device, write; every file in .* was restored$/);

@@ -14,12 +14,12 @@ import { setTransport } from "../src/pr/transport.mjs";
 import { setGreptileRulesDeadline } from "../src/commands/gates.mjs";
 import { updateWithin } from "../src/greptile/update.mjs";
 import { auditRecord, bashPayload, buildGated, byId, fullEntries, gates, greptileFake, guard, readJson, stateDir, withGatedEnv, writeAttested, writeEntries } from "./gates-helpers.mjs";
-import { rx } from "./helpers.mjs";
+import { afterShipped, rx } from "./helpers.mjs";
 
 const SHIPPED = JSON.parse(readFileSync(join(SHIPPED_DIR, "SOURCE.json"), "utf8"));
 const S7 = SHIPPED.sha.slice(0, 7);
 /** After the shipped copy's commit date, so a copy from it is the copy in use. */
-const LATER = "2026-11-05T00:00:00Z";
+const LATER = afterShipped(2);
 const E = "e".repeat(40);
 const C = "c".repeat(40);
 const D = "d".repeat(40);

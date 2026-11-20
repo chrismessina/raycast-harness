@@ -1,6 +1,6 @@
 // Shared test helpers: temp dirs, fake extensions, running the CLI in-process or as a child.
 
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execFile } from "node:child_process";
@@ -9,6 +9,19 @@ import { runCli } from "../src/cli.mjs";
 import { _setGhForTests, _setGreptileFetcherForTests } from "../src/commands/doctor.mjs";
 
 export const REPO = join(fileURLToPath(import.meta.url), "..", "..");
+
+/** The shipped Greptile copy's upstream commit time (src/rules/greptile/SOURCE.json). */
+const SHIPPED_COMMITTED = Date.parse(JSON.parse(readFileSync(join(REPO, "src", "rules", "greptile", "SOURCE.json"), "utf8")).committed);
+
+/**
+ * A commit time `hours` after the shipped Greptile copy's: a fixture copy that must sort later
+ * than the shipped one (copies are ordered by upstream commit time) yet never lie in the future,
+ * which the rules loader rejects. Follows the shipped copy through every snapshot refresh.
+ * @param {number} hours
+ */
+export function afterShipped(hours) {
+  return new Date(SHIPPED_COMMITTED + hours * 3_600_000).toISOString().replace(".000Z", "Z");
+}
 export const BIN = join(REPO, "bin", "rx.mjs");
 
 /**

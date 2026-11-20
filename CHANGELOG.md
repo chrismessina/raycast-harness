@@ -12,6 +12,34 @@
   `log.follow`, `log.showSignature` and `diff.renames` could mislead. It also stops counting a
   blob from a file's earlier name or from a former directory's contents, so such a path is now
   `UPSTREAM` instead of `CHECK`.
+- New core preflight check `readme-dev-sections`: a README heading for contributor material
+  (Development, Building from source, Clone & Run, Project Structure, Running locally) FAILs,
+  because the README is the Store page (Greptile `readme-user-facing`). Scripts, Contributing and
+  Build can be user-facing, so they FAIL only when their section shows a contributor command
+  (`npm run`, `git clone`, a pull request). ATX, setext and HTML headings count, judged on their
+  displayed text with punctuation and emoji collapsed; headings in code blocks and HTML comments do
+  not. The audit binds it to `greptile/readme-user-facing`.
+- `readme-dev-sections`, `readme-assets` and `readme-links` no longer lose every heading and link
+  after an HTML comment block that contains a code fence: a comment that opens a block is raw HTML
+  until its `-->`, so a fence line inside it opens nothing.
+- New core preflight check `store-description` (WARN), the mechanical half of Greptile's new
+  `store-description` rule: a new or changed `package.json` `description` outside 40 to 155
+  characters, without a closing period, with the shared filler ("Raycast extension to", a closing
+  "from Raycast", "directly from your command bar", "the fastest way to"), or naming a platform
+  `platforms` does not list. Unchanged from the published copy is N/A; a description mostly in a
+  non-Latin script is not judged. It flags none of the 3,544 descriptions Raycast rewrote in
+  raycast/extensions#33590–#33599. The audit's `greptile/store-description` entry judges the rest.
+- New preset-class preflight check `contributing-mirror` (FAIL): a `CONTRIBUTING.md` the published
+  copy lacks must be listed in the extension's `.gitignore`, so it stays in the mirror and out of
+  the Store PR; without `--published` it WARNs, and a published copy that already ships one is
+  grandfathered. A preset binds it for the extensions it applies to.
+- The shipped Greptile rules are `main` `092555d` (61 rules): `store-description`,
+  `mcp-registry-entries` and `changelog-hardcoded-date` are new, and 12 rules changed text. All
+  three are judgment rules (58 audit entries); `changelog-placeholder` covers part of
+  `changelog-hardcoded-date` (a top entry with no `{PR_MERGE_DATE}`).
+- `agent-scaffolding` and `dev-material` flag only files the published copy lacks, as the
+  refreshed `no-agent-scaffolding` and `no-dev-material` rules do: an edit to a file already on
+  `main` is the owner's call.
 
 ## 0.1.4
 

@@ -34,11 +34,14 @@
       "title-case": "preset",
       "agent-scaffolding": "preset",
       "dev-material": "preset",
+      "contributing-mirror": "preset",
       "generated-files": "preset",
       "screenshot-count": "core",
       "screenshot-format": "core",
       "screenshot-size": "core",
       "icon-size": "core",
+      "store-description": "core",
+      "readme-dev-sections": "core",
       "readme-links": "core",
       "changelog-placeholder": "core",
       "nested-review-config": "core",
@@ -212,6 +215,12 @@
       "details": []
     },
     {
+      "id": "contributing-mirror",
+      "verdict": "N/A",
+      "message": "no preset (core enforces only Store facts)",
+      "details": []
+    },
+    {
       "id": "generated-files",
       "verdict": "N/A",
       "message": "no preset (core enforces only Store facts)",
@@ -239,6 +248,18 @@
       "id": "icon-size",
       "verdict": "PASS",
       "message": "1 icon 512×512",
+      "details": []
+    },
+    {
+      "id": "store-description",
+      "verdict": "WARN",
+      "message": "no description in package.json; the Store, the web page and search results show it (no published copy given, so judged as new)",
+      "details": []
+    },
+    {
+      "id": "readme-dev-sections",
+      "verdict": "PASS",
+      "message": "no contributor section (Development, build, clone-and-run, project structure) in README",
       "details": []
     },
     {

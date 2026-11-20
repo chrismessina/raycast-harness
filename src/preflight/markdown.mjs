@@ -26,13 +26,19 @@ const LIST_MARKER = /^(\s*)([-*+]|\d{1,9}[.)])( +|\t|$)/;
  * columns past the content column after a blank line. A line indented less closes the container.
  * So `- item`, blank, 4 spaces + text is a continuation paragraph (rendered), and `- item`, blank,
  * 8 spaces + text is code inside the item (blanked). Blank lines inside a code run belong to it.
- * HTML comments (`<!-- … -->`, across lines) are blanked last, so delimiters inside code are inert.
+ * An HTML comment that opens a block (`<!--` at the start of a line, indentation ≤ 3 relative to the
+ * container) is raw HTML until the line holding `-->` (CommonMark HTML block type 2): its lines are
+ * blanked and a fence or indented line inside it opens nothing, so the content after the comment
+ * still renders. Every other comment (`<!-- … -->`, across lines) is blanked last, so delimiters
+ * inside code are inert.
  * @param {string} text
  */
 export function stripCode(text) {
   const lines = text.split("\n");
   /** @type {{ char: string, length: number } | null} */
   let fence = null;
+  /** Inside an HTML comment block, waiting for the line that holds `-->`. */
+  let comment = false;
   /** The content column the open indented code block is measured against, or null. @type {number | null} */
   let code = null;
   let prevBlank = true;
@@ -42,6 +48,15 @@ export function stripCode(text) {
     const blank = /^\s*$/.test(line);
     const indent = /** @type {RegExpMatchArray} */ (line.match(/^[ \t]*/))[0].replace(/\t/g, "    ").length;
     const trimmed = line.trimStart();
+    if (comment) {
+      const end = line.indexOf("-->");
+      if (end === -1) return "";
+      comment = false;
+      prevBlank = false;
+      // The whole closing line belongs to the HTML block: Markdown after `-->` is literal text,
+      // while an HTML tag there still renders, so only tags survive.
+      return " ".repeat(end + 3) + line.slice(end + 3).replace(/(<[^>]*>)|./g, (m, tag) => tag ?? " ");
+    }
     if (fence) {
       const close = trimmed.match(/^(`{3,}|~{3,})\s*$/);
       if (close && close[1][0] === fence.char && close[1].length >= fence.length) fence = null;
@@ -62,8 +77,14 @@ export function stripCode(text) {
       const gap = marker[3].replace(/\t/g, "    ").length;
       containers.push(indent + marker[2].length + (gap === 0 || gap > 4 ? 1 : gap));
       prevBlank = false;
+      // The item's first line can itself open a comment block or a fence.
+      const content = line.slice(marker[0].length).trimStart();
+      if (content.startsWith("<!--") && !content.slice(4).includes("-->")) { comment = true; return ""; }
+      const itemFence = content.match(/^(`{3,}|~{3,})/);
+      if (itemFence) { fence = { char: itemFence[1][0], length: itemFence[1].length }; return ""; }
       return stripInlineCode(line);
     }
+    if (rel <= 3 && trimmed.startsWith("<!--") && !trimmed.slice(4).includes("-->")) { comment = true; prevBlank = false; return ""; }
     const open = rel <= 3 ? trimmed.match(/^(`{3,}|~{3,})/) : null;
     if (open) { fence = { char: open[1][0], length: open[1].length }; prevBlank = false; return ""; }
     prevBlank = false;

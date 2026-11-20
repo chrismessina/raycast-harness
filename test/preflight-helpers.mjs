@@ -46,6 +46,7 @@ export const GOOD_PKG = {
   $schema: "https://www.raycast.com/schemas/extension.json",
   name: "good",
   title: "Good Extension",
+  description: "Search, open and manage items in Good Extension, and copy their links from the list.",
   author: "testowner",
   icon: "icon.png",
   categories: ["Productivity"],

@@ -16,7 +16,7 @@ import { decide, staleDispositions } from "../src/audit/evaluate.mjs";
 import { _setRuntimePaths } from "../src/commands/shortcuts.mjs";
 import { _setBeforeWriteHookForTests } from "../src/commands/audit.mjs";
 import { SHIPPED_DIR } from "../src/greptile/rules.mjs";
-import { REPO, rx, withTempDir } from "./helpers.mjs";
+import { afterShipped, REPO, rx, withTempDir } from "./helpers.mjs";
 import { auditRecord, buildGated, byId, fullEntries, gates, stateDir, validPng, withGatedEnv, writeAttested, writeEntries } from "./gates-helpers.mjs";
 import { commit } from "./upstream-fixtures.mjs";
 
@@ -47,7 +47,7 @@ test("audit record: a complete entries file against a clean receipt → PASS cov
     assert.equal(r.code, 0, r.stdout + r.stderr);
     const by = byId(r);
     assert.equal(by["audit-coverage"].verdict, "PASS");
-    assert.match(by["audit-coverage"].message, /2 preset, 55 Greptile judgment/);
+    assert.match(by["audit-coverage"].message, /2 preset, 58 Greptile judgment/);
     assert.equal(by["audit-dispositions"].verdict, "N/A");
     assert.equal(by["audit-verification"].verdict, "N/A");
     assert.equal(by["shortcut-runtime-table"].verdict, "N/A", "the fixture declares no shortcuts");
@@ -64,7 +64,7 @@ test("audit record: a complete entries file against a clean receipt → PASS cov
     const audit = JSON.parse(readFileSync(await auditPath(root), "utf8"));
     assert.equal(audit.fingerprint, receipt.fingerprints.combined);
     assert.deepEqual(audit.blocking, []);
-    assert.equal(audit.entries.length, 57);
+    assert.equal(audit.entries.length, 60);
     assert.deepEqual(audit.greptileRules, greptileRulesStamp(), "bound to the Greptile rules in use (W9 finding 1)");
     assert.ok(Array.isArray(audit.evidence.shortcuts) && audit.evidence.shortcuts.length === 3);
     assert.ok(audit.evidence.png.length >= 1);
@@ -325,7 +325,7 @@ test("audit show: N/A when nothing is recorded; WARN when the audit is tied to a
     const s = await rx(["audit", "show", "--root", root, "--json"]);
     assert.equal(byId(s)["audit-show"].verdict, "WARN");
     assert.equal(byId(s)["audit-show"].message, "audit.json was recorded against an earlier receipt.json; run rx audit record again");
-    assert.equal(s.json.data.audit.entries.length, 57);
+    assert.equal(s.json.data.audit.entries.length, 60);
   });
 });
 
@@ -374,18 +374,22 @@ test("greptile judgment rules: a rule rx has not classified (an rx greptile upda
   });
 });
 
-test("greptile judgment rules: 55 ids, every one present in the core snapshot, all blocking", () => {
+test("greptile judgment rules: 58 ids, every one present in the core snapshot, all blocking except a rule that says it never blocks (Codex B1-1)", () => {
   const rules = greptileJudgmentRules(GREPTILE_CONFIG);
-  assert.equal(rules.length, 55);
+  assert.equal(rules.length, 58);
   assert.deepEqual(rules.map((r) => r.id), [...GREPTILE_JUDGMENT_RULES]);
-  assert.ok(rules.every((r) => r.severity === "block" && r.entryId === `greptile/${r.id}` && r.title.length > 0));
+  assert.ok(rules.every((r) => r.entryId === `greptile/${r.id}` && r.title.length > 0));
+  // changelog-hardcoded-date: "never as a required change or a blocker".
+  assert.deepEqual(rules.filter((r) => r.severity !== "block").map((r) => [r.id, r.severity]), [["changelog-hardcoded-date", "report"]]);
+  const failed = decide({ applicable: rules.map((r) => ({ id: r.entryId, severity: r.severity, why: "judgment" })), entries: rules.map((r) => ({ id: r.entryId, scope: "x", result: r.id === "changelog-hardcoded-date" ? "fail" : "pass", evidence: "x" })), dispositions: [], verifications: [], required: [], effects: [], evidence: { shortcuts: [{ id: "shortcuts", verdict: "PASS", message: "ok", details: [] }], png: [{ id: "png", verdict: "PASS", message: "ok", details: [] }] } });
+  assert.deepEqual([failed.blocking, failed.reportOnly], [[], ["greptile/changelog-hardcoded-date"]]);
   assert.throws(() => greptileJudgmentRules(join(REPO, "test", "fixtures", "gates", "preset.json")), /absent from the snapshot/);
 });
 
 test("greptile mechanical exemptions (Codex P2): each is bound to the digest of the rule text and scope it was reviewed against; a changed rule needs a judgment entry again", async () => {
   const mechanical = greptileAudit.GREPTILE_MECHANICAL_RULES;
   assert.ok(mechanical, "GREPTILE_MECHANICAL_RULES is exported");
-  // The shipped rules give exactly today's coverage: these three exempt, the 55 judgment rules required.
+  // The shipped rules give exactly today's coverage: these three exempt, the 58 judgment rules required.
   assert.deepEqual(Object.keys(mechanical).sort(), ["native-fetch", "no-nested-review-config", "platforms-field"]);
   const shipped = JSON.parse(readFileSync(GREPTILE_CONFIG, "utf8"));
   for (const [id, digest] of Object.entries(mechanical)) {
@@ -409,11 +413,11 @@ test("greptile mechanical exemptions (Codex P2): each is bound to the digest of 
     assert.equal(nf.entryId, "greptile/native-fetch");
     assert.equal(nf.severity, "block");
     assert.match(nf.why ?? "", /^Greptile rule changed since its mechanical mapping to rx preflight was reviewed; the mapping needs re-review, so judge the rule in the audit$/);
-    assert.equal(broadened.length, 56);
+    assert.equal(broadened.length, 59);
     // A scope change alone counts too.
     assert.ok(variant("scope", (c) => { rule(c, "platforms-field").scope = ["extensions/**"]; }).some((r) => r.id === "platforms-field"));
     // A severity change alone does not change what the rule asks for.
-    assert.equal(variant("severity", (c) => { rule(c, "no-nested-review-config").severity = "medium"; }).length, 55);
+    assert.equal(variant("severity", (c) => { rule(c, "no-nested-review-config").severity = "medium"; }).length, 58);
   });
 });
 
@@ -425,9 +429,9 @@ test("greptile classification (W9 finding 5): a rule preflight covers only in pa
   }
   const preflightOnly = preflightRules.filter((id) => !judgment.has(id));
   assert.deepEqual(preflightOnly.sort(), ["native-fetch", "no-nested-review-config", "platforms-field"], "re-read the rule text before adding a preflight-only rule");
-  assert.equal(preflightRules.filter((id) => judgment.has(id)).length, 22);
-  assert.equal(judgment.size, 55);
-  assert.equal(preflightRules.length, 25);
+  assert.equal(preflightRules.filter((id) => judgment.has(id)).length, 24);
+  assert.equal(judgment.size, 58);
+  assert.equal(preflightRules.length, 27);
 });
 
 // ---- Codex Wave 3 review -------------------------------------------------------------------
@@ -587,7 +591,7 @@ test("audit record (W9 round 2 finding A): the Greptile rules change mid-recordi
       const config = JSON.parse(readFileSync(join(SHIPPED_DIR, "config.json"), "utf8"));
       config.rules.find((/** @type {any} */ x) => x.id === "no-silent-failure").rule += "\n\nAlso flag: a requirement the audit never read.";
       writeFileSync(join(copy, "config.json"), JSON.stringify(config));
-      writeFileSync(join(copy, "SOURCE.json"), JSON.stringify({ repo: "raycast/extensions", source: "main", sha: "c".repeat(40), committed: "2026-11-05T00:00:00Z", fetched: "2026-11-05T00:00:01.000Z" }));
+      writeFileSync(join(copy, "SOURCE.json"), JSON.stringify({ repo: "raycast/extensions", source: "main", sha: "c".repeat(40), committed: afterShipped(2), fetched: "2026-11-05T00:00:01.000Z" }));
     });
     try {
       const r = await auditRecord(root, writeEntries(dir, fullEntries()));

@@ -196,6 +196,64 @@ test("N6: a .prettierrc holding JSON null, an array or a string FAILs prettierrc
   });
 });
 
+test("readme-dev-sections: a Development, Clone & Run, Project Structure or Scripts heading in README FAILs; one in code or a comment does not", async () => {
+  await withTempDir(async (dir) => {
+    const dev = await preflight(makeExt(join(dir, "dev"), { files: { "README.md": "# X\n\n## Features\n\n## Development\n\n### Project Structure\n\n### Scripts\n\n`npm run dev`\n\n### Clone & Run\n\n## 🛠️ Building from source\n" } }));
+    assert.equal(dev.verdict("readme-dev-sections"), "FAIL", JSON.stringify(dev.by["readme-dev-sections"]));
+    assert.deepEqual(dev.by["readme-dev-sections"].details.map((d) => [d.line, d.text]), [[5, "Development"], [7, "Project Structure"], [9, "Scripts"], [13, "Clone & Run"], [15, "🛠️ Building from source"]]);
+    const fine = await preflight(makeExt(join(dir, "fine"), { files: { "README.md": "# X\n\n## Features\n\n```md\n## Development\n```\n\n<!--\n## Scripts\n-->\n\n## Usage\n\nDevelopment of this feature is ongoing.\n" } }));
+    assert.equal(fine.verdict("readme-dev-sections"), "PASS", JSON.stringify(fine.by["readme-dev-sections"]));
+  });
+});
+
+test("readme-dev-sections: setext, HTML, linked, code-span and punctuated headings count; an ambiguous Scripts or Contributing heading FAILs only over contributor commands", async () => {
+  await withTempDir(async (dir) => {
+    const forms = [
+      "Development\n-----------\n\nRun it.\n",
+      "<h2>Development</h2>\n",
+      "## [Development](#development)\n",
+      "## Development <a name=\"development\"></a>\n",
+      "## `Development`\n",
+      "## Clone-and-Run\n",
+      "## Project / Structure\n",
+      "## Project 🧱 Structure\n",
+      "##\tProject\tStructure\n",
+      "## Scripts\n\n```sh\nnpm run dev\n```\n",
+      "## Contributing\n\nFork it, then `git clone` and open a pull request.\n",
+      // Codex B1-3 and B1-4: a command under a child heading, a reference link, a multi-line HTML
+      // heading, a setext heading right after an ATX one, and an entity.
+      "## Scripts\n\n### Setup\n\n`npm run dev`\n",
+      "## [Development][dev]\n\n[dev]: https://example.com\n",
+      "<h2>\nDevelopment\n</h2>\n",
+      "## Setup\nDevelopment\n-----------\n",
+      "## Clone &amp; Run\n",
+      // Codex B2-1: a decoded newline stays one line in the message.
+      "## Clone&#10;&amp; Run\n",
+    ];
+    for (const [i, body] of forms.entries()) {
+      const r = await preflight(makeExt(join(dir, `f${i}`), { files: { "README.md": `# X\n\nIntro.\n\n${body}` } }));
+      assert.equal(r.verdict("readme-dev-sections"), "FAIL", `${JSON.stringify(body)}: ${JSON.stringify(r.by["readme-dev-sections"])}`);
+    }
+    const userFacing = [
+      "## Scripts\n\nSelect a script to run it, or configure your scripts in Preferences.\n\n## Usage\n\nRun `npm run dev` here.\n",
+      "## Contributing\n\nDonations made through the extension go to the project.\n",
+      "Intro paragraph\nstill the paragraph\n",
+      // Codex B1-2: a command inside a comment is not shown to Store readers.
+      "## Scripts\n\nSelect a script to run it.\n\n<!-- npm run dev -->\n",
+      // A sibling section's command does not reach back into the Scripts section.
+      "## Scripts\n\nSelect a script to run it.\n\n## Usage\n\n### Examples\n\nRun `npm run dev`.\n",
+    ];
+    // Codex B2-1: an out-of-range numeric reference decodes to U+FFFD, as a renderer does, never a crash.
+    const invalid = await preflight(makeExt(join(dir, "invalid-entity"), { files: { "README.md": "# X\n\n## Example &#x110000; &#0;\n" } }));
+    assert.equal(invalid.code, 0, invalid.stdout + invalid.stderr);
+    assert.equal(invalid.verdict("readme-dev-sections"), "PASS");
+        for (const [i, body] of userFacing.entries()) {
+      const r = await preflight(makeExt(join(dir, `u${i}`), { files: { "README.md": `# X\n\nIntro.\n\n${body}` } }));
+      assert.equal(r.verdict("readme-dev-sections"), "PASS", `${JSON.stringify(body)}: ${JSON.stringify(r.by["readme-dev-sections"])}`);
+    }
+  });
+});
+
 test("N3/N4/N5: list-contained code is excluded while a list paragraph's image renders; shortcut references nested in a link are extracted; HTML comments are not", async () => {
   await withTempDir(async (dir) => {
     const listCode = await preflight(makeExt(join(dir, "listcode"), { files: { "README.md": "# L\n\n- item\n\n        ![code](metadata/good-1.png)\n\n- other\n\n    paragraph in the item\n\n    ![real](metadata/good-1.png)\n\n1. numbered\n\n   ![also real](metadata/good-1.png)\n\n       ![code too](metadata/good-1.png)\n" } }));
@@ -725,25 +783,31 @@ test("agent-scaffolding: agent and planning files warn; gitignored ones don't sh
   });
 });
 
-test("file checks with --published: identical files are not flagged, changed or added ones are; ignored-but-published still ships; bytes compared", async () => {
+test("file checks with --published: identical files are not flagged; agent-scaffolding and dev-material flag only added files (Greptile no-agent-scaffolding and no-dev-material, main 092555d), generated-files changed ones too; bytes compared", async () => {
   await withTempDir(async (dir) => {
     const pub = makeExt(join(dir, "pub"), { files: { "AGENTS.md": "# Agents\n", ".claude/settings.json": "{}", LICENSE: "MIT\n", ".greptile/config.json": "{}", "dist/index.js": "x", "dist/a": Buffer.from([0x80]) } });
     const same = await preflight(makeExt(join(dir, "same"), { files: { "AGENTS.md": "# Agents\n", ".claude/settings.json": "{}", LICENSE: "MIT\n", ".greptile/config.json": "{}", "dist/index.js": "x", "dist/a": Buffer.from([0x80]) } }), { published: pub });
     for (const id of ["agent-scaffolding", "dev-material", "generated-files"]) assert.equal(same.verdict(id), "PASS", id);
-    assert.ok((await preflight(makeExt(join(dir, "fresh"), { files: { "AGENTS.md": "# Agents, freshened\n" } }), { published: pub })).warns.includes("agent-scaffolding"));
+    // "Files already on main are the owner's call, even when this PR edits them."
+    assert.equal((await preflight(makeExt(join(dir, "fresh"), { files: { "AGENTS.md": "# Agents, freshened\n" } }), { published: pub })).verdict("agent-scaffolding"), "PASS");
     assert.ok((await preflight(makeExt(join(dir, "add"), { files: { ".claude/settings.json": "{}", ".claude/new.json": "{}" } }), { published: pub })).warns.includes("agent-scaffolding"));
-    assert.ok((await preflight(makeExt(join(dir, "ign"), { files: { "AGENTS.md": "new\n", ".gitignore": "AGENTS.md\n" } }), { published: pub })).warns.includes("agent-scaffolding"));
+    assert.ok((await preflight(makeExt(join(dir, "added"), { files: { "PLAN.md": "x\n" } }), { published: pub })).warns.includes("agent-scaffolding"));
+    // Ignored but published still ships; edited, it is still not an added file.
+    assert.equal((await preflight(makeExt(join(dir, "ign"), { files: { "AGENTS.md": "new\n", ".gitignore": "AGENTS.md\n" } }), { published: pub })).verdict("agent-scaffolding"), "PASS");
+    assert.equal((await preflight(makeExt(join(dir, "lic-edit"), { files: { LICENSE: "MIT, edited\n" } }), { published: pub })).verdict("dev-material"), "PASS");
+    assert.ok((await preflight(makeExt(join(dir, "dev-added"), { files: { "SECURITY.md": "x\n" } }), { published: pub })).warns.includes("dev-material"));
     assert.ok((await preflight(makeExt(join(dir, "bytes"), { files: { "dist/a": Buffer.from([0x81]) } }), { published: pub })).fails.includes("generated-files"));
     assert.equal((await preflight(makeExt(join(dir, "lic"), { files: { LICENSE: "MIT\n" } }), { published: pub })).verdict("dev-material"), "PASS");
   });
 });
 
-test("file checks with --published: a changed file inside an already-published directory is flagged with the same path set; bytes, not decoded text, decide (live preflight.test.mjs port, W13)", async () => {
+test("file checks with --published: a changed file inside an already-published directory is not an added one, a new file there is; bytes, not decoded text, decide (live preflight.test.mjs port, W13)", async () => {
   await withTempDir(async (dir) => {
     const pub = makeExt(join(dir, "pub"), { files: { ".claude/settings.json": "{}", "dist/a": Buffer.from([0x80]) } });
     const changed = await preflight(makeExt(join(dir, "changed"), { files: { ".claude/settings.json": '{"x":1}', "dist/a": Buffer.from([0x80]) } }), { published: pub });
-    assert.equal(changed.verdict("agent-scaffolding"), "WARN");
-    assert.deepEqual(changed.by["agent-scaffolding"].details.map((d) => d.file), [".claude"]);
+    assert.equal(changed.verdict("agent-scaffolding"), "PASS", "an edit to a published file is the owner's call");
+    const grown = await preflight(makeExt(join(dir, "grown"), { files: { ".claude/settings.json": "{}", ".claude/new.json": "{}", "dist/a": Buffer.from([0x80]) } }), { published: pub });
+    assert.deepEqual(grown.by["agent-scaffolding"].details.map((d) => d.file), [".claude"]);
     assert.equal(changed.verdict("generated-files"), "PASS", "an identical dist/ is not flagged");
     // 0x80 and 0x81 both decode to U+FFFD as UTF-8, so only a byte comparison tells them apart.
     const bytes = await preflight(makeExt(join(dir, "bytes"), { files: { ".claude/settings.json": "{}", "dist/a": Buffer.from([0x81]) } }), { published: pub });
@@ -1074,6 +1138,116 @@ test("N2 (gate): comment delimiters inside code are inert, so a rendered image b
     const fenced = await preflight(makeExt(join(dir, "fenced"), { files: { "README.md": "# C\n\n```html\n<!--\n```\n\n![Hidden](metadata/good-1.png)\n\n```html\n-->\n```\n" } }));
     assert.equal(fenced.verdict("readme-assets"), "FAIL", JSON.stringify(fenced.by["readme-assets"]));
     assert.deepEqual(fenced.by["readme-assets"].details.map((d) => d.line), [7]);
+  });
+});
+
+test("stripCode: a fence inside an HTML comment block is not a fence, so the content after the comment still renders (readme-assets, readme-dev-sections)", async () => {
+  const md = "# C\n\n<!--\n```\n-->\n\n## Development\n\n![Hidden](metadata/good-1.png)\n";
+  const lines = stripCode(md).split("\n");
+  assert.equal(lines.length, md.split("\n").length);
+  assert.equal(lines[6], "## Development", "the heading after the comment survives");
+  assert.ok(lines.slice(2, 5).every((l) => l.trim() === ""), "the comment itself is blanked");
+  // Indented under a list item, the comment block still opens at the item's content column.
+  const listed = stripCode("- item\n\n  <!--\n  ~~~\n  -->\n\n  ![x](metadata/a.png)\n").split("\n");
+  assert.equal(listed[6], "  ![x](metadata/a.png)");
+  // A comment opened on the list-marker line is a comment block too (Codex B1-5).
+  const onMarker = stripCode("- <!--\n  ~~~\n  -->\n\n## After\n").split("\n");
+  assert.equal(onMarker[4], "## After");
+  // The closing line belongs to the HTML block: Markdown after `-->` is literal text, an HTML tag still renders (Codex B1-6).
+  const closing = stripCode("<!--\nnote\n--> ![x](metadata/x.png) [l](missing.md) <img src=\"assets/y.png\">\n").split("\n");
+  assert.doesNotMatch(closing[2], /metadata|missing/);
+  assert.match(closing[2], /<img src="assets\/y\.png">/);
+  // A comment that opens mid-paragraph does not hide a following fence's content any more than a renderer would.
+  const midline = stripCode("text <!-- note -->\n\n```\n## In code\n```\n").split("\n");
+  assert.equal(midline[3], "", "fence content is still code");
+  await withTempDir(async (dir) => {
+    const r = await preflight(makeExt(join(dir, "commented-fence"), { files: { "README.md": md } }));
+    assert.equal(r.verdict("readme-assets"), "FAIL", JSON.stringify(r.by["readme-assets"]));
+    assert.deepEqual(r.by["readme-assets"].details.map((d) => d.line), [9]);
+    assert.equal(r.verdict("readme-dev-sections"), "FAIL", JSON.stringify(r.by["readme-dev-sections"]));
+  });
+});
+
+test("contributing-mirror: a self-authored CONTRIBUTING.md stays in the mirror (the extension's .gitignore lists it); one the published copy already ships is grandfathered; others' extensions are N/A", async () => {
+  await withTempDir(async (dir) => {
+    const presetFile = join(dir, "p.json");
+    const base = JSON.parse(readFileSync(HOUSE_PRESET, "utf8"));
+    base.rules.push({ id: "contributing-mirror", title: "Test house: CONTRIBUTING.md stays in the mirror", anchor: "house-anchors.md#agents-md", tag: "verify", applies: { selfAuthored: true }, severity: "block", bindings: [{ kind: "rx", check: "contributing-mirror", coverage: "full" }] });
+    writeFileSync(presetFile, JSON.stringify(base));
+    const run = (/** @type {string} */ name, /** @type {Record<string, any>} */ over, /** @type {Record<string, any>} */ opts = {}) => preflight(makeExt(join(dir, name), over), { preset: presetFile, ...opts });
+    const contributing = "# Contributing\n\nnpm install, then npm run dev.\n";
+
+    const ships = await run("ships", { files: { "CONTRIBUTING.md": contributing } }, { published: makeExt(join(dir, "pub-none"), {}) });
+    assert.equal(ships.verdict("contributing-mirror"), "FAIL", JSON.stringify(ships.by["contributing-mirror"]));
+    assert.match(ships.by["contributing-mirror"].message, /\.gitignore/);
+    const ignored = await run("ignored", { files: { "CONTRIBUTING.md": contributing, ".gitignore": "node_modules\nCONTRIBUTING.md\n" } }, { published: makeExt(join(dir, "pub-none2"), {}) });
+    assert.equal(ignored.verdict("contributing-mirror"), "PASS", JSON.stringify(ignored.by["contributing-mirror"]));
+    assert.equal(ignored.verdict("dev-material"), "PASS", "a gitignored CONTRIBUTING.md does not ship, so dev-material agrees");
+    const grandfathered = await run("brew", { files: { "CONTRIBUTING.md": contributing + "More.\n" } }, { published: makeExt(join(dir, "pub-has"), { files: { "CONTRIBUTING.md": contributing } }) });
+    assert.equal(grandfathered.verdict("contributing-mirror"), "PASS");
+    assert.equal(grandfathered.verdict("dev-material"), "PASS", "an edited published CONTRIBUTING.md is not added dev material either");
+    assert.match(grandfathered.by["contributing-mirror"].message, /grandfathered/);
+    const unknown = await run("no-published", { files: { "CONTRIBUTING.md": contributing } });
+    assert.equal(unknown.verdict("contributing-mirror"), "WARN", "without --published it cannot tell a grandfathered copy");
+    assert.match(unknown.by["contributing-mirror"].message, /--published/);
+    const none = await run("none", {});
+    assert.equal(none.verdict("contributing-mirror"), "N/A");
+    const other = await run("other", { pkg: { author: "someone-else" }, files: { "CONTRIBUTING.md": contributing } }, { published: makeExt(join(dir, "pub-none3"), {}) });
+    assert.equal(other.verdict("contributing-mirror"), "N/A", "never judged on an extension someone else authored");
+    // A README link to a gitignored CONTRIBUTING.md is readme-links' FAIL: the target does not ship.
+    const linked = await run("linked", { files: { "CONTRIBUTING.md": contributing, ".gitignore": "node_modules\nCONTRIBUTING.md\n", "README.md": "# Good\n\n![Shot](media/shot.png)\n\nSee [contributing](CONTRIBUTING.md).\n" } }, { published: makeExt(join(dir, "pub-none4"), {}) });
+    assert.equal(linked.verdict("readme-links"), "FAIL", JSON.stringify(linked.by["readme-links"]));
+  });
+});
+
+test("store-description: a new or changed description WARNs on length, the closing period, shared filler and a platform the manifest does not list; an unchanged one is not judged", async () => {
+  await withTempDir(async (dir) => {
+    const good = "Search, open and manage items in Example, and copy their links from the list.";
+    const run = (/** @type {string} */ name, /** @type {Record<string, any>} */ pkg, /** @type {string | undefined} */ published = undefined) =>
+      preflight(makeExt(join(dir, name), { pkg }), published === undefined ? {} : { published: makeExt(join(dir, `${name}-pub`), { pkg: { description: published } }) });
+    const ok = await run("ok", { description: good });
+    assert.equal(ok.verdict("store-description"), "PASS", JSON.stringify(ok.by["store-description"]));
+    assert.match(ok.by["store-description"].message, /no published copy given/);
+    /** @type {[string, string, RegExp][]} */
+    const misses = [
+      ["short", "Manage Example items.", /21 characters; aim for about 50 to 155/],
+      ["long", `${"Search and manage the items in your Example workspace, ".repeat(3)}and more.`, /characters; aim for about 50 to 155/],
+      ["period", "Search, open and manage items in Example, and copy their links from the list", /end with a period/],
+      ["filler", "Raycast extension to search, open and manage items in Example and copy links.", /"Raycast extension to"/],
+      ["from-raycast", "Search, open and manage items in Example and copy their links from Raycast.", /"from Raycast"/],
+      ["command-bar", "Search, open and manage Example items directly from your command bar.", /"directly from your command bar"/],
+      ["fastest", "The fastest way to search, open and manage items in Example and copy links.", /"the fastest way to"/],
+      ["windows", "Search, open and manage items in Example on macOS and Windows, and copy links.", /names Windows, but platforms is macOS/],
+    ];
+    for (const [name, description, why] of misses) {
+      const r = await run(name, { description });
+      assert.equal(r.verdict("store-description"), "WARN", `${name}: ${JSON.stringify(r.by["store-description"])}`);
+      assert.match(r.by["store-description"].message, why, name);
+    }
+    const mac = await run("mac-on-windows", { description: "Search, open and manage items in Example on your Mac, and copy their links.", platforms: ["Windows"] });
+    assert.match(mac.by["store-description"].message, /names macOS, but platforms is Windows/);
+    // What Raycast's own rewrites (#33590–#33599) do is not flagged.
+    for (const [name, description] of [
+      ["raycast-ai", "Control agent-browser sessions from Raycast AI: open websites in Chromium or Dia, inspect pages, click elements and type text."],
+      ["keyboard", "Swap the Option (Alt) and Command keys on your Mac when switching between a Windows keyboard and a Mac keyboard layout."],
+      // Codex B1-8: a preposition before "Windows" is not enough when a noun follows it.
+      ["with-keyboards", "Swap Option and Command keys on your Mac when working with Windows keyboards."],
+      ["for-keyboards", "Remap the keys of keyboards made for Windows PCs so they work on your Mac."],
+      // Codex r2: the conjunction forms take the same noun-phrase exclusion.
+      ["layouts", "Switch between macOS and Windows keyboard layouts using a shortcut on your Mac."],
+      ["and-mac-keyboards", "Remap keys for Windows and Mac keyboards while working on your Mac."],
+      ["two-sentences", "Search files in your Example drive. Open, rename and share them without leaving the keyboard."],
+      ["forty-one", "Convert between PX and REM units for CSS."],
+      ["locale", "搜索中文表情包（Meme），在 Raycast 中预览静态图片和 GIF，回车复制原图。需在设置中配置自定义 JSON 数据源。"],
+    ]) assert.equal((await run(name, { description })).verdict("store-description"), "PASS", name);
+    // Greptile does not judge a description the PR leaves unchanged.
+    const same = await run("unchanged", { description: "Manage Example items" }, "Manage Example items");
+    assert.equal(same.verdict("store-description"), "N/A", JSON.stringify(same.by["store-description"]));
+    const changed = await run("changed", { description: "Manage Example items" }, "Something else entirely, as published on the Store today.");
+    assert.equal(changed.verdict("store-description"), "WARN");
+    const missing = await run("missing", { description: undefined });
+    assert.equal(missing.verdict("store-description"), "WARN");
+    assert.match(missing.by["store-description"].message, /no description/);
   });
 });
 

@@ -1,11 +1,12 @@
 // The Greptile rules no program decides (docs/commands.md §4.9: "one entry per … Greptile
-// judgment rule"). Greptile reviews every Store PR against the 58 rules in
+// judgment rule"). Greptile reviews every Store PR against the 61 rules in
 // `src/rules/greptile/config.json`; `rx preflight` covers the mechanical ones
 // (`GREPTILE_PREFLIGHT_RULES`), and the judgment ones are the rest: an agent reads the branch diff
 // for each and records pass / fail / n-a with evidence in `rx audit record`. The list is checked
 // against the snapshot at load, so a rule Raycast renames or removes is an ERROR here, never a
 // silently skipped entry. A Greptile finding at any of its severities (`high` / `medium` / `low`)
-// holds a Store PR, so every judgment rule is blocking.
+// holds a Store PR, so every judgment rule is blocking, except one whose own text says it never
+// blocks (GREPTILE_REPORT_ONLY_RULES).
 //
 // Every rule in the snapshot is classified: bound to preflight checks, listed as judgment, or
 // both. A rule is preflight-only ONLY when its checks cover the whole rule text; a check that
@@ -89,6 +90,7 @@ export const GREPTILE_JUDGMENT_RULES = Object.freeze([
   "extension-overlap",
   "data-hooks-bugs",
   "oauth-token-bugs",
+  "mcp-registry-entries",
   // Preflight covers part of each of these (classification "both").
   "store-screenshots",
   "unused-dependencies",
@@ -105,7 +107,18 @@ export const GREPTILE_JUDGMENT_RULES = Object.freeze([
   "no-agent-scaffolding",
   "no-generated-files",
   "no-dev-material",
+  "store-description",
+  // changelog-placeholder FAILs a top entry with no {PR_MERGE_DATE}, but passes a second new dated
+  // entry under it and a placeholder written into the bracketed title.
+  "changelog-hardcoded-date",
 ]);
+
+/**
+ * Judgment rules whose own text says a finding is never a blocker: their audit entry is still
+ * required, and a `fail` is report-only. changelog-hardcoded-date: "Mention it at most once per PR,
+ * as a suggestion, and never as a required change or a blocker."
+ */
+export const GREPTILE_REPORT_ONLY_RULES = Object.freeze(["changelog-hardcoded-date"]);
 
 /**
  * Greptile rule ids `rx preflight` checks mechanically, each with the preflight result ids that
@@ -115,6 +128,7 @@ export const GREPTILE_JUDGMENT_RULES = Object.freeze([
 export const GREPTILE_PREFLIGHT_RULES = Object.freeze({
   "generated-preference-argument-types": ["hand-typed-preferences"],
   "changelog-entries": ["changelog-exists", "changelog-order", "changelog-placeholder", "changelog-updated"],
+  "changelog-hardcoded-date": ["changelog-placeholder"],
   "store-screenshots": ["screenshots", "screenshot-count", "screenshot-format", "screenshot-size"],
   "unused-dependencies": ["unused-dependencies"],
   "eslint-flat-config": ["eslint-config"],
@@ -132,12 +146,13 @@ export const GREPTILE_PREFLIGHT_RULES = Object.freeze({
   "preference-types": ["preference-type"],
   "no-agent-scaffolding": ["agent-scaffolding"],
   "no-nested-review-config": ["nested-review-config"],
-  "readme-user-facing": ["readme-assets", "readme-links"],
+  "readme-user-facing": ["readme-assets", "readme-links", "readme-dev-sections"],
   "no-generated-files": ["generated-files"],
   "no-dev-material": ["dev-material"],
   "npm-lockfile-registry": ["lockfile", "npm-registry"],
   "backward-compatible-updates": ["command-renamed"],
   "manifest-basics": ["icon-size"],
+  "store-description": ["store-description"],
 });
 
 /**
@@ -313,7 +328,7 @@ function snapshotRules(configPath) {
  * whose text or scope differs from what its mechanical mapping was reviewed against (with `why`),
  * then every rule this release has not classified.
  * @param {string} [configPath] a rule file to read instead of the rules in use
- * @returns {{ id: string, entryId: string, severity: "block", title: string, why?: string }[]}
+ * @returns {{ id: string, entryId: string, severity: "block" | "report", title: string, why?: string }[]}
  */
 export function greptileJudgmentRules(configPath) {
   const byId = snapshotRules(configPath);
@@ -331,7 +346,7 @@ export function greptileJudgmentRules(configPath) {
   const row = (/** @type {string} */ id) => ({
     id,
     entryId: `${GREPTILE_PREFIX}${id}`,
-    severity: /** @type {const} */ ("block"),
+    severity: /** @type {"block" | "report"} */ (GREPTILE_REPORT_ONLY_RULES.includes(id) ? "report" : "block"),
     title: (byId.get(id)?.rule ?? id).split("\n")[0].trim() || id,
   });
   return [...GREPTILE_JUDGMENT_RULES.map(row), ...changed.map((id) => ({ ...row(id), why: MECHANICAL_REREVIEW })), ...unclassified.map(row)];

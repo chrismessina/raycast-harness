@@ -18,7 +18,10 @@ import { ignoredPredicate } from "./gitignore.mjs";
 import { shortcutPlatformCase } from "./platform-keys.mjs";
 import { loadTypeScript } from "../typescript.mjs";
 import { PUBLISH_SKIPS, isSkipped, listPayload } from "../payload.mjs";
-import { extractEmbeds, isExternal, targetPath } from "./markdown.mjs";
+import { extractEmbeds, isExternal, targetPath, stripCode } from "./markdown.mjs";
+
+/** The contributor guide a self-authored extension keeps in its mirror (contributing-mirror). */
+const CONTRIBUTING = "CONTRIBUTING.md";
 
 /** The N/A message when a comparison check ran without --published (a missing flag, not a fact about publication). */
 export const NO_PUBLISHED_COPY = "no published copy given; pass --published <dir> (rx stale prints it)";
@@ -225,6 +228,10 @@ export async function runPreflight({ root, publishedDir, preset, extensionTypesc
     if (isObj(pub) && pub.platforms === undefined) c.warn("platforms", `${missing} (also missing in the published copy)`);
     else c.fail("platforms", missing);
   }
+
+  // store-description — Greptile store-description: the mechanical half (length, closing period,
+  // shared filler, a platform the manifest does not list); the audit judges the rest.
+  storeDescription(pkg, publishedDir, c);
 
   // preference-type — preference-types (there is no "number" type)
   const prefs = allPreferences(pkg);
@@ -451,6 +458,78 @@ export async function runPreflight({ root, publishedDir, preset, extensionTypesc
   return { outcomes: c.outcomes(), data: { ...base, selfAuthored: owner === null ? null : ctx.selfAuthored } };
 }
 
+/** The filler Greptile's store-description names; "from Raycast" only where it ends a clause (Raycast's own rewrites say "from Raycast AI" and "from Raycast or the menu bar"). */
+const DESCRIPTION_FILLER = /** @type {[string, RegExp][]} */ ([
+  ["Raycast extension to", /\bRaycast extension to\b/i],
+  ["from Raycast", /\bfrom Raycast(?=\s*[.,;:!?]|\s*$)/i],
+  ["directly from your command bar", /\bdirectly from your command bar\b/i],
+  ["the fastest way to", /\bthe fastest way to\b/i],
+]);
+/**
+ * A platform claim: macOS or Mac anywhere; Windows only where it names the platform ("on Windows.",
+ * "for Windows and macOS", "macOS and Windows"), never a noun phrase ("a Windows keyboard", "with
+ * Windows keyboards", "made for Windows PCs").
+ */
+const NAMES_MAC = /\b(Mac|macOS)\b/;
+/** The platform name ends the phrase: punctuation, the end, or "and/or" another platform name that does. */
+const ENDS_NAME = String.raw`(?=\s*(?:[.,;:!?)]|$)|\s+(?:and|or|&)\s+(?:macOS|Mac|Windows)\s*(?:[.,;:!?)]|$))`;
+const NAMES_WINDOWS = new RegExp(String.raw`\b(?:on|for|across) Windows${ENDS_NAME}|\bWindows (?:and|or|&) (?:macOS|Mac)${ENDS_NAME}|\b(?:macOS|Mac),? (?:and|or|&) Windows${ENDS_NAME}`);
+
+/**
+ * Is most of a description's lettering in a non-Latin script (a locale-targeted extension)? An
+ * English description quoting a native name ("Hupu (虎扑)") is still judged.
+ * @param {string} description
+ */
+export function localeTargeted(description) {
+  const letters = description.match(/\p{L}/gu) ?? [];
+  return letters.length > 0 && letters.filter((ch) => !/\p{Script=Latin}/u.test(ch)).length * 2 > letters.length;
+}
+
+/**
+ * What a Latin-script description misses of store-description's mechanical points. Exported for
+ * the corpus check (the 3,544 descriptions Raycast rewrote must give none).
+ * @param {string} description trimmed @param {unknown} platforms the manifest's field
+ * @returns {string[]}
+ */
+export function descriptionMisses(description, platforms) {
+  /** @type {string[]} */
+  const misses = [];
+  const length = [...description].length;
+  if (length < 40 || length > 155) misses.push(`${length} characters; aim for about 50 to 155`);
+  if (!description.endsWith(".")) misses.push("end with a period");
+  for (const [phrase, re] of DESCRIPTION_FILLER) if (re.test(description)) misses.push(`drop the filler "${phrase}"`);
+  if (Array.isArray(platforms)) {
+    const listed = platforms.join(", ") || "empty";
+    if (NAMES_MAC.test(description) && !platforms.includes("macOS")) misses.push(`names macOS, but platforms is ${listed}`);
+    if (NAMES_WINDOWS.test(description) && !platforms.includes("Windows")) misses.push(`names Windows, but platforms is ${listed}`);
+  }
+  return misses;
+}
+
+/**
+ * store-description: Greptile judges a new or changed top-level `description` (a description the
+ * published copy already has is not flagged). The bounds and phrases were checked against the
+ * 3,544 descriptions Raycast rewrote in raycast/extensions#33590–#33599, none of which this flags:
+ * "about 50 to 155" is 40 to 155 here, two sentences and "quickly" are left to the audit, and a
+ * description mostly in a non-Latin script (a locale-targeted extension) is not judged.
+ * @param {any} pkg @param {string | null} publishedDir @param {Collector} c
+ */
+function storeDescription(pkg, publishedDir, c) {
+  const id = "store-description";
+  const description = typeof pkg.description === "string" ? pkg.description.trim() : "";
+  /** @type {any} */
+  let pub = null;
+  if (publishedDir !== null) try { pub = JSON.parse(read(join(publishedDir, "package.json")) ?? "null"); } catch { /* unreadable: judged as new */ }
+  if (description && isObj(pub) && typeof pub.description === "string" && pub.description.trim() === description) { c.na(id, "description unchanged from the published copy (Greptile judges only a new or changed one)"); return; }
+  const scope = publishedDir === null ? "no published copy given, so judged as new" : isObj(pub) && typeof pub.description === "string" ? "changed from the published copy" : "new";
+  if (!description) { c.warn(id, `no description in package.json; the Store, the web page and search results show it (${scope})`); return; }
+  if (localeTargeted(description)) { c.pass(id, `description is mostly in a non-Latin script; Greptile does not judge a locale-targeted one (${scope})`); return; }
+  const misses = descriptionMisses(description, pkg.platforms);
+  const length = [...description].length;
+  if (misses.length) c.warn(id, `Store description (${scope}): ${misses.join("; ")}`, [{ file: "package.json", text: description }]);
+  else c.pass(id, `description is ${length} characters, ends with a period, no shared filler (${scope})`);
+}
+
 /** @param {{ width: number, height: number } | null} s */
 function describeSize(s) { return s ? `${s.width}×${s.height}` : "not a PNG"; }
 
@@ -558,6 +637,77 @@ async function notShippedReason(root, publishedDir, files) {
   };
 }
 
+/** README headings that introduce contributor material, matched against `readmeHeadings`' normalized words. */
+const DEV_HEADING = /^(development|developing|local development|developer setup|build(ing)? (from source|locally)|clone (&|and) run|project structure|running locally)$/i;
+/** Headings that can also be user-facing; they count only when their section shows a contributor command. */
+const AMBIGUOUS_DEV_HEADING = /^(scripts|contributing|build(ing)?)$/i;
+const CONTRIBUTOR_COMMAND = /\b(npm (run|install|i|ci)|pnpm|yarn|git clone|ray (develop|build)|pull request)\b/i;
+
+/** A numeric character reference as CommonMark decodes it: 0, a surrogate or an out-of-range value is U+FFFD. @param {number} n */
+const codePoint = (n) => (n === 0 || n > 0x10ffff || (n >= 0xd800 && n <= 0xdfff) ? "\uFFFD" : String.fromCodePoint(n));
+
+/** The few HTML entities a heading spells ("Clone &amp; Run"), decoded before matching. @param {string} t */
+const decodeEntities = (t) => t
+  .replace(/&#(\d+);/g, (_, n) => codePoint(Number(n)))
+  .replace(/&#x([0-9a-f]+);/gi, (_, n) => codePoint(parseInt(n, 16)))
+  .replace(/&(amp|lt|gt|quot|apos|nbsp);/g, (_, e) => ({ amp: "&", lt: "<", gt: ">", quot: '"', apos: "'", nbsp: " " })[/** @type {"amp"} */ (e)]);
+
+/**
+ * Every rendered heading in a README: ATX, setext and HTML `<h1>`–`<h6>` (an HTML heading may span
+ * lines), skipping code blocks and HTML comments. `level` is 1–6 (setext `=` is 1, `-` is 2). `text`
+ * is the displayed text (tags, link destinations and reference labels, and code-span backticks
+ * dropped; code-span text kept; entities decoded); `words` is that text lowercased with every run
+ * of punctuation, emoji and whitespace collapsed to one space (`&` kept).
+ * @param {string} readme
+ * @returns {{ line: number, level: number, text: string, words: string }[]}
+ */
+function readmeHeadings(readme) {
+  const raw = readme.split("\n");
+  const stripped = stripCode(readme).split("\n");
+  const display = (/** @type {string} */ t) => decodeEntities(t
+    .replace(/<[^>]*>/g, "")
+    .replace(/!?\[([^\]]*)\]\([^)]*\)/g, "$1")
+    .replace(/!?\[([^\]]*)\]\[[^\]]*\]/g, "$1")
+    .replace(/`+/g, "")
+    .replace(/[ \t#]+$/, ""))
+    .replace(/\s+/g, " ")
+    .trim();
+  /** @type {{ line: number, level: number, text: string, words: string }[]} */
+  const out = [];
+  const push = (/** @type {number} */ i, /** @type {number} */ level, /** @type {string} */ t) => {
+    const text = display(t);
+    const words = text.toLowerCase().replace(/[^\p{L}\p{N}&]+/gu, " ").trim();
+    if (words) out.push({ line: i + 1, level, text, words });
+  };
+  const atx = (/** @type {string | undefined} */ l) => l !== undefined && /^ {0,3}#{1,6}([ \t]|$)/.test(l);
+  for (let i = 0; i < stripped.length; i++) {
+    const line = stripped[i];
+    // An ATX heading is judged on its raw text, so a code span's words survive; a line inside a code
+    // block or comment is blank once stripped and never matches.
+    if (atx(line)) { push(i, /** @type {RegExpMatchArray} */ (line.match(/^ {0,3}(#{1,6})/))[1].length, raw[i].replace(/^ {0,3}#{1,6}/, "")); continue; }
+    const open = /<h([1-6])\b[^>]*>/i.exec(line);
+    if (open) {
+      // The heading closes on this line or a later one; its text is everything between the tags.
+      const close = new RegExp(`</h${open[1]}\\s*>`, "i");
+      let end = i;
+      while (end < stripped.length && !close.test(end === i ? stripped[end].slice(open.index) : stripped[end])) end++;
+      if (end < stripped.length) {
+        const body = raw.slice(i, end + 1).join(" ");
+        const inner = new RegExp(`<h${open[1]}\\b[^>]*>([\\s\\S]*?)</h${open[1]}\\s*>`, "i").exec(body);
+        if (inner) push(i, Number(open[1]), inner[1]);
+        i = end;
+        continue;
+      }
+    }
+    const next = stripped[i + 1];
+    // A setext heading's text is a paragraph: it starts after a blank line or right after an ATX heading.
+    const startsParagraph = i === 0 || /^\s*$/.test(stripped[i - 1]) || atx(stripped[i - 1]);
+    if (next !== undefined && /^ {0,3}(=+|-+)[ \t]*$/.test(next) && /\S/.test(line) && startsParagraph && !/^ {0,3}([-*+]|\d+[.)])[ \t]/.test(line))
+      push(i, next.trim().startsWith("=") ? 1 : 2, raw[i]);
+  }
+  return out;
+}
+
 /** @param {string} root @param {string | null} publishedDir @param {Collector} c */
 async function readmeChecks(root, publishedDir, c) {
   const readmePath = join(root, "README.md");
@@ -574,6 +724,21 @@ async function readmeChecks(root, publishedDir, c) {
     if (misplaced.length)
       c.fail("readme-assets", `README images belong in media/, not metadata/ or assets/: ${misplaced.map((e) => targetPath(e.target)).join(", ")}`, misplaced.map((e) => ({ file: "README.md", line: e.line, text: e.target })));
     c.pass("readme-assets", `${embeds.filter((e) => e.kind === "image").length} README image${embeds.filter((e) => e.kind === "image").length === 1 ? "" : "s"}, none in metadata/ or assets/`);
+    // readme-dev-sections: Greptile `readme-user-facing` names Development and clone-and-run sections. The README is the
+    // Store page, so a heading for contributor material FAILs (#33710 was the second Store PR to ship one).
+    // Command evidence is what a reader sees: code blocks and spans count, HTML comments do not.
+    const shown = readme.replace(/<!--[\s\S]*?-->/g, (m) => m.replace(/[^\n]/g, " ")).split("\n");
+    const devHeadings = readmeHeadings(readme).filter((h, i, all) => {
+      if (DEV_HEADING.test(h.words)) return true;
+      if (!AMBIGUOUS_DEV_HEADING.test(h.words)) return false;
+      // "Scripts" or "Contributing" can be user-facing; it is contributor material only over contributor commands.
+      // Its section runs to the next heading of the same or a higher rank, so child headings stay inside it.
+      const end = all.slice(i + 1).find((n) => n.level <= h.level)?.line ?? Infinity;
+      return shown.slice(h.line, end - 1).some((l) => CONTRIBUTOR_COMMAND.test(l));
+    }).map((h) => ({ file: "README.md", line: h.line, text: h.text }));
+    if (devHeadings.length)
+      c.fail("readme-dev-sections", `README is the Store page; move contributor sections to the mirror's docs: ${devHeadings.map((d) => d.text).join(", ")}`, devHeadings);
+    c.pass("readme-dev-sections", "no contributor section (Development, build, clone-and-run, project structure) in README");
   }
   // readme-links (Q9): README.md and docs/**/*.md, every relative destination resolved from its own directory.
   /** @type {string[]} */
@@ -691,7 +856,7 @@ async function fileChecks(root, publishedDir, c, enabled, keep) {
   const scaffoldPaths = [...G.agentScaffolding, ...readdirSync(root).filter((f) => /^CONTEXT.*\.md$/i.test(f))].filter((p) => !keep.includes(p));
   const devMaterial = G.devMaterial.filter((/** @type {string} */ p) => !keep.includes(p));
   const strayPaths = G.strays;
-  const candidates = [...nestedPaths, ...scaffoldPaths, ...devMaterial, ...G.generatedDirs, ...strayPaths].flatMap((rel) => filesUnder(root, rel));
+  const candidates = [...nestedPaths, ...scaffoldPaths, ...devMaterial, ...G.generatedDirs, ...strayPaths, CONTRIBUTING].flatMap((rel) => filesUnder(root, rel));
   const reason = await notShippedReason(root, publishedDir, candidates);
   const shipping = (/** @type {string} */ rel) => filesUnder(root, rel).filter((f) => reason(f) === null);
   const flagged = (/** @type {string} */ rel) => {
@@ -706,7 +871,16 @@ async function fileChecks(root, publishedDir, c, enabled, keep) {
     if (files.length !== pubFiles.size || files.some((f) => !pubFiles.has(f))) return true;
     return files.some((f) => !readFileSync(join(publishedDir, f)).equals(readFileSync(join(root, f))));
   };
-  const scope = publishedDir !== null ? "new or changed versus the published copy" : "present (pass --published to see which this PR changes)";
+  // Greptile's no-agent-scaffolding and no-dev-material (main 092555d) flag only files a PR adds:
+  // "files already on main are the owner's call, even when this PR edits them". A shipped file the
+  // published copy lacks is an added one; a directory counts when any file under it is added.
+  const added = (/** @type {string} */ rel) => {
+    const files = shipping(rel);
+    if (!files.length) return false;
+    if (publishedDir === null) return true;
+    return files.some((f) => !existsSync(join(/** @type {string} */ (publishedDir), f)));
+  };
+  const addedScope = publishedDir !== null ? "added versus the published copy" : "present (pass --published to see which this PR adds)";
   const details = (/** @type {string[]} */ paths) => paths.map((p) => ({ file: p, text: p }));
 
   // no-nested-review-config (high): core, so no preset can exempt or cap it
@@ -714,14 +888,27 @@ async function fileChecks(root, publishedDir, c, enabled, keep) {
   if (nestedGreptile.length) c.fail("nested-review-config", `a nested Greptile config overrides Raycast's repo rules: ${nestedGreptile.join(", ")}`, details(nestedGreptile));
   c.pass("nested-review-config", "no nested Greptile config would ship");
   if (enabled("agent-scaffolding")) {
-    const scaffolding = scaffoldPaths.filter(flagged);
-    if (scaffolding.length) c.warn("agent-scaffolding", `agent or planning files ${scope}: ${scaffolding.join(", ")}`, details(scaffolding));
-    c.pass("agent-scaffolding", keep.length ? `no agent or planning files would ship (kept on purpose: ${keep.join(", ")})` : "no agent or planning files would ship");
+    const scaffolding = scaffoldPaths.filter(added);
+    if (scaffolding.length) c.warn("agent-scaffolding", `agent or planning files ${addedScope}: ${scaffolding.join(", ")}`, details(scaffolding));
+    const scaffoldPass = publishedDir !== null ? "no agent or planning files added versus the published copy" : "no agent or planning files would ship";
+    c.pass("agent-scaffolding", keep.length ? `${scaffoldPass} (kept on purpose: ${keep.join(", ")})` : scaffoldPass);
   }
   if (enabled("dev-material")) {
-    const dev = devMaterial.filter(flagged);
-    if (dev.length) c.warn("dev-material", `repo-only files ${scope}: ${dev.join(", ")}`, details(dev));
-    c.pass("dev-material", "no repo-only files would ship");
+    const dev = devMaterial.filter(added);
+    if (dev.length) c.warn("dev-material", `repo-only files ${addedScope}: ${dev.join(", ")}`, details(dev));
+    c.pass("dev-material", publishedDir !== null ? "no repo-only files added versus the published copy" : "no repo-only files would ship");
+  }
+  if (enabled("contributing-mirror")) {
+    // Chris's 2026-11-19 decision: a self-authored extension keeps CONTRIBUTING.md in its mirror,
+    // listed in its .gitignore so the fork-side `git add` leaves it out of the Store PR (it stays
+    // tracked, so holdout.localOnly must not list it). A Store copy that already ships one is
+    // grandfathered (brew, reader-mode). Which extensions this applies to is the preset's call.
+    const present = existsSync(join(root, CONTRIBUTING));
+    if (!present) c.na("contributing-mirror", `no ${CONTRIBUTING}`);
+    else if (publishedDir !== null && existsSync(join(publishedDir, CONTRIBUTING))) c.pass("contributing-mirror", `${CONTRIBUTING} is grandfathered: the published copy already ships one`);
+    else if (!shipping(CONTRIBUTING).length) c.pass("contributing-mirror", `${CONTRIBUTING} stays in the mirror: the extension's .gitignore keeps it out of the Store PR`);
+    else if (publishedDir === null) c.warn("contributing-mirror", `${CONTRIBUTING} would ship; list it in the extension's .gitignore, unless the published copy already ships one (pass --published to tell)`, details([CONTRIBUTING]));
+    else c.fail("contributing-mirror", `${CONTRIBUTING} would ship into the Store PR; list it in the extension's .gitignore (it stays tracked in the mirror)`, details([CONTRIBUTING]));
   }
   if (enabled("generated-files")) {
     const builds = G.generatedDirs.filter(flagged);
