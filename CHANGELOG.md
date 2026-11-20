@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+- `rx preflight` and `rx shortcuts check` no longer load the extension's own `typescript` by
+  default, since loading it runs that package's code. 0.1.4's parsing now happens only under the new
+  `--extension-typescript` flag, which `rx gates` passes (gates runs the extension's build anyway)
+  and `rx audit record` accepts for its embedded shortcut evidence. Without the flag,
+  `shortcut-platform-case` is a text scan that reports a WARN at most, never a PASS, and
+  `rx shortcuts check` reads source with the text scan, as in 0.1.3; `data.parser` and
+  `data.textScanned` say which.
+- `shortcut-reserved` checks a panel against the defaults of the view that hosts it: `↵` and `⌘↵` in
+  a List, Grid or Detail, `⌘↵` and `⌘⇧↵` in a Form. An explicit `↵` on a Form's submit action no
+  longer FAILs. With `--extension-typescript` the host is the element whose `actions` prop holds the
+  panel, when that name is imported from `@raycast/api` unrenamed and bound nowhere else in the
+  file. When rx cannot see the host (a panel a component returns, or no parser), `↵` and `⌘⇧↵` are a
+  WARN and `⌘↵`, a default in every view, stays a FAIL. `data.reserved` adds `certain` and `host`,
+  with one entry per distinct binding at a site, so a certain match on one platform is no longer
+  hidden by an uncertain one on another.
 - `rx stale` classifies a published file you deleted as `DELETED` (`stale-deleted`, WARN) instead
   of the `ONLY-PUB` FAIL, when its published version sits at that exact path in a commit reachable
   from HEAD (an uncommitted deletion, or one in an unreleased commit). `rx audit record` answers it
@@ -16,12 +31,21 @@
   (Development, Building from source, Clone & Run, Project Structure, Running locally) FAILs,
   because the README is the Store page (Greptile `readme-user-facing`). Scripts, Contributing and
   Build can be user-facing, so they FAIL only when their section shows a contributor command
-  (`npm run`, `git clone`, a pull request). ATX, setext and HTML headings count, judged on their
-  displayed text with punctuation and emoji collapsed; headings in code blocks and HTML comments do
-  not. The audit binds it to `greptile/readme-user-facing`.
-- `readme-dev-sections`, `readme-assets` and `readme-links` no longer lose every heading and link
-  after an HTML comment block that contains a code fence: a comment that opens a block is raw HTML
-  until its `-->`, so a fence line inside it opens nothing.
+  (`npm run`, `git clone`, a pull request). Every rendered heading counts, Markdown or HTML, judged
+  on the text it displays with punctuation and emoji collapsed. The audit binds it to
+  `greptile/readme-user-facing`.
+- `readme-dev-sections`, `readme-assets` and `readme-links` judge the rendered README instead of
+  hand-written Markdown rules: it is parsed as CommonMark + GFM (micromark), and its raw HTML by
+  parse5, the HTML spec parser, and `srcset` by the HTML spec's algorithm (parse-srcset). Cases the
+  old rules got wrong include a fence inside an HTML comment that hid every later heading and link,
+  a list under a line read as a setext underline, a one-line triple-backtick span read as an
+  unclosed fence, a heading inside a list item, a byte-order mark, `<br>` inside an HTML heading,
+  and a `srcset` URL holding a comma or a line break; a heading the browser hides (`hidden`,
+  `<noscript>`, a closed `<dialog>`) no longer counts or ends a section. Over every README and
+  `docs/*.md` in raycast/extensions (3,574 files) the three checks reach the same verdicts as the
+  old rules did. rx gains eight exact-pinned runtime dependencies (`mdast-util-from-markdown`,
+  `micromark-extension-gfm`, `mdast-util-gfm`, `mdast-util-to-hast`, `hast-util-raw`,
+  `hast-util-to-text`, `parse-srcset` and `vfile`), 82 packages in all.
 - New core preflight check `store-description` (WARN), the mechanical half of Greptile's new
   `store-description` rule: a new or changed `package.json` `description` outside 40 to 155
   characters, without a closing period, with the shared filler ("Raycast extension to", a closing
@@ -36,32 +60,22 @@
 - The shipped Greptile rules are `main` `092555d` (61 rules): `store-description`,
   `mcp-registry-entries` and `changelog-hardcoded-date` are new, and 12 rules changed text. All
   three are judgment rules (58 audit entries); `changelog-placeholder` covers part of
-  `changelog-hardcoded-date` (a top entry with no `{PR_MERGE_DATE}`).
+  `changelog-hardcoded-date` (a top entry with no `{PR_MERGE_DATE}`). A `changelog-hardcoded-date` fail is report-only,
+  because the rule's text says it never blocks; that exception holds only while the text matches the
+  digest it was read against, so a rewritten rule blocks again until it is re-read.
 - `agent-scaffolding` and `dev-material` flag only files the published copy lacks, as the
   refreshed `no-agent-scaffolding` and `no-dev-material` rules do: an edit to a file already on
   `main` is the owner's call.
 
 ## 0.1.4
 
-- `shortcut-platform-case` can parse `src/` with the extension's own `typescript` and then FAILs
-  only on a miscased `windows` or `macos` key whose object value has both `modifiers` and `key`. A
-  lowercase `macos` key in other data, such as Homebrew's cask schema, no longer FAILs. Loading that
-  package runs its code, so it happens only under the new `--extension-typescript` flag, which
-  `rx gates` passes (gates runs the extension's build anyway). Without the flag, or with no loadable
-  `typescript`, a text scan reports a WARN at most, never a PASS; a file that does not parse is a
-  WARN that its keys were not fully checked.
-- `rx shortcuts check --extension-typescript` reads source through the same parser, so text inside
-  strings, regex literals, templates and JSX can no longer count as a shortcut or end an object
-  early. Without the flag, and for a file that does not parse, the text scan reads the source as
-  before; `data.parser` and `data.textScanned` say which.
-- `shortcut-reserved` checks a panel against the defaults of the view that hosts it: `↵` and `⌘↵` in
-  a List, Grid or Detail, `⌘↵` and `⌘⇧↵` in a Form. An explicit `↵` on a Form's submit action no
-  longer FAILs. With `--extension-typescript` the host is the element whose `actions` prop holds the
-  panel, when that name is imported from `@raycast/api` unrenamed and bound nowhere else in the
-  file. When rx cannot see the host (a panel a component returns, or no parser), `↵` and `⌘⇧↵` are a
-  WARN and `⌘↵`, a default in every view, stays a FAIL. `data.reserved` adds `certain` and `host`,
-  with one entry per distinct binding at a site, so a certain match on one platform is no longer
-  hidden by an uncertain one on another.
+- `shortcut-platform-case` parses `src/` with the extension's own `typescript` and FAILs only on a
+  miscased `windows` or `macos` key whose object value has both `modifiers` and `key`. A lowercase
+  `macos` key in other data, such as Homebrew's cask schema, no longer FAILs. A file that does not
+  parse, or an extension without a loadable `typescript`, is a WARN, never a PASS.
+- `rx shortcuts check` reads source through the same parser, so text inside strings, regex literals,
+  templates and JSX can no longer count as a shortcut or end an object early. The text scan is the
+  fallback for a file that does not parse, and `data.textScanned` lists those files.
 - `changelog-order` is a WARN, not a FAIL, for an out-of-order pair the published CHANGELOG already
   has: every published dated heading is kept byte for byte, in the published order and count, and
   the pair is adjacent in both. `changelog-history` forbids editing those entries, so no branch

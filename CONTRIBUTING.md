@@ -28,6 +28,12 @@ opening a pull request you agree your contribution is licensed that way.
    does). Anything specific to one developer's house style belongs in a preset
    file passed with `--preset`.
 7. US English. No absolute home-directory paths in any file.
+8. **Parse a format with a maintained parser.** Markdown, HTML, JSON and YAML
+   have spec-tested parsers; finding their structure with regular expressions
+   over the raw text gets the edge cases wrong one review round at a time (the
+   README checks did, until they moved to micromark and parse5). A regex is for
+   matching words inside what a parser returns. A new runtime dependency is
+   pinned to an exact version at least two weeks old.
 
 ## Running the checks
 

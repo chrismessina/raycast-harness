@@ -85,6 +85,7 @@ export const spec = {
         "--root": { type: "string", value: "<dir>", help: "extension root" },
         "--preset": { type: "string", value: "<file>", required: true, help: "preset JSON: rule ids, applicability and severity" },
         "--entries": { type: "string", value: "<file>", required: true, help: "JSON array of rule entries, dispositions and verifications (see src/audit/entries.mjs); must live outside the extension root" },
+        "--extension-typescript": { type: "boolean", help: "read the embedded shortcut evidence with the extension's installed typescript, which loads and runs that package's code (as rx gates' build already did); without it the shortcut step is the text scan and runs no extension code" },
       },
       checks: RECORD_CHECKS,
       data: {
@@ -263,7 +264,10 @@ async function recordWith(ctx, auditPath, rules) {
   const effects = effectsOf(applyCtx);
 
   // 5. Embedded evidence: shortcuts (F4) and png against the receipt's published copy.
-  const sc = await runStep(shortcuts, ctx, { root, flags: { "--root": root }, subcommand: "check" });
+  /** @type {Record<string, string | boolean>} */
+  const scFlags = { "--root": root };
+  if (args.flags["--extension-typescript"] === true) scFlags["--extension-typescript"] = true;
+  const sc = await runStep(shortcuts, ctx, { root, flags: scFlags, subcommand: "check" });
   results.merge(sc.results);
   const staleData = receipt.data.stale;
   /** @type {Record<string, string>} */

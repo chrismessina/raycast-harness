@@ -18,7 +18,7 @@ import { ignoredPredicate } from "./gitignore.mjs";
 import { shortcutPlatformCase } from "./platform-keys.mjs";
 import { loadTypeScript } from "../typescript.mjs";
 import { PUBLISH_SKIPS, isSkipped, listPayload } from "../payload.mjs";
-import { extractEmbeds, isExternal, targetPath, stripCode } from "./markdown.mjs";
+import { extractEmbeds, headings, isExternal, targetPath } from "./markdown.mjs";
 
 /** The contributor guide a self-authored extension keeps in its mirror (contributing-mirror). */
 const CONTRIBUTING = "CONTRIBUTING.md";
@@ -637,76 +637,11 @@ async function notShippedReason(root, publishedDir, files) {
   };
 }
 
-/** README headings that introduce contributor material, matched against `readmeHeadings`' normalized words. */
+/** README headings that introduce contributor material, matched against `headings`' normalized words. */
 const DEV_HEADING = /^(development|developing|local development|developer setup|build(ing)? (from source|locally)|clone (&|and) run|project structure|running locally)$/i;
 /** Headings that can also be user-facing; they count only when their section shows a contributor command. */
 const AMBIGUOUS_DEV_HEADING = /^(scripts|contributing|build(ing)?)$/i;
 const CONTRIBUTOR_COMMAND = /\b(npm (run|install|i|ci)|pnpm|yarn|git clone|ray (develop|build)|pull request)\b/i;
-
-/** A numeric character reference as CommonMark decodes it: 0, a surrogate or an out-of-range value is U+FFFD. @param {number} n */
-const codePoint = (n) => (n === 0 || n > 0x10ffff || (n >= 0xd800 && n <= 0xdfff) ? "\uFFFD" : String.fromCodePoint(n));
-
-/** The few HTML entities a heading spells ("Clone &amp; Run"), decoded before matching. @param {string} t */
-const decodeEntities = (t) => t
-  .replace(/&#(\d+);/g, (_, n) => codePoint(Number(n)))
-  .replace(/&#x([0-9a-f]+);/gi, (_, n) => codePoint(parseInt(n, 16)))
-  .replace(/&(amp|lt|gt|quot|apos|nbsp);/g, (_, e) => ({ amp: "&", lt: "<", gt: ">", quot: '"', apos: "'", nbsp: " " })[/** @type {"amp"} */ (e)]);
-
-/**
- * Every rendered heading in a README: ATX, setext and HTML `<h1>`–`<h6>` (an HTML heading may span
- * lines), skipping code blocks and HTML comments. `level` is 1–6 (setext `=` is 1, `-` is 2). `text`
- * is the displayed text (tags, link destinations and reference labels, and code-span backticks
- * dropped; code-span text kept; entities decoded); `words` is that text lowercased with every run
- * of punctuation, emoji and whitespace collapsed to one space (`&` kept).
- * @param {string} readme
- * @returns {{ line: number, level: number, text: string, words: string }[]}
- */
-function readmeHeadings(readme) {
-  const raw = readme.split("\n");
-  const stripped = stripCode(readme).split("\n");
-  const display = (/** @type {string} */ t) => decodeEntities(t
-    .replace(/<[^>]*>/g, "")
-    .replace(/!?\[([^\]]*)\]\([^)]*\)/g, "$1")
-    .replace(/!?\[([^\]]*)\]\[[^\]]*\]/g, "$1")
-    .replace(/`+/g, "")
-    .replace(/[ \t#]+$/, ""))
-    .replace(/\s+/g, " ")
-    .trim();
-  /** @type {{ line: number, level: number, text: string, words: string }[]} */
-  const out = [];
-  const push = (/** @type {number} */ i, /** @type {number} */ level, /** @type {string} */ t) => {
-    const text = display(t);
-    const words = text.toLowerCase().replace(/[^\p{L}\p{N}&]+/gu, " ").trim();
-    if (words) out.push({ line: i + 1, level, text, words });
-  };
-  const atx = (/** @type {string | undefined} */ l) => l !== undefined && /^ {0,3}#{1,6}([ \t]|$)/.test(l);
-  for (let i = 0; i < stripped.length; i++) {
-    const line = stripped[i];
-    // An ATX heading is judged on its raw text, so a code span's words survive; a line inside a code
-    // block or comment is blank once stripped and never matches.
-    if (atx(line)) { push(i, /** @type {RegExpMatchArray} */ (line.match(/^ {0,3}(#{1,6})/))[1].length, raw[i].replace(/^ {0,3}#{1,6}/, "")); continue; }
-    const open = /<h([1-6])\b[^>]*>/i.exec(line);
-    if (open) {
-      // The heading closes on this line or a later one; its text is everything between the tags.
-      const close = new RegExp(`</h${open[1]}\\s*>`, "i");
-      let end = i;
-      while (end < stripped.length && !close.test(end === i ? stripped[end].slice(open.index) : stripped[end])) end++;
-      if (end < stripped.length) {
-        const body = raw.slice(i, end + 1).join(" ");
-        const inner = new RegExp(`<h${open[1]}\\b[^>]*>([\\s\\S]*?)</h${open[1]}\\s*>`, "i").exec(body);
-        if (inner) push(i, Number(open[1]), inner[1]);
-        i = end;
-        continue;
-      }
-    }
-    const next = stripped[i + 1];
-    // A setext heading's text is a paragraph: it starts after a blank line or right after an ATX heading.
-    const startsParagraph = i === 0 || /^\s*$/.test(stripped[i - 1]) || atx(stripped[i - 1]);
-    if (next !== undefined && /^ {0,3}(=+|-+)[ \t]*$/.test(next) && /\S/.test(line) && startsParagraph && !/^ {0,3}([-*+]|\d+[.)])[ \t]/.test(line))
-      push(i, next.trim().startsWith("=") ? 1 : 2, raw[i]);
-  }
-  return out;
-}
 
 /** @param {string} root @param {string | null} publishedDir @param {Collector} c */
 async function readmeChecks(root, publishedDir, c) {
@@ -726,16 +661,11 @@ async function readmeChecks(root, publishedDir, c) {
     c.pass("readme-assets", `${embeds.filter((e) => e.kind === "image").length} README image${embeds.filter((e) => e.kind === "image").length === 1 ? "" : "s"}, none in metadata/ or assets/`);
     // readme-dev-sections: Greptile `readme-user-facing` names Development and clone-and-run sections. The README is the
     // Store page, so a heading for contributor material FAILs (#33710 was the second Store PR to ship one).
-    // Command evidence is what a reader sees: code blocks and spans count, HTML comments do not.
-    const shown = readme.replace(/<!--[\s\S]*?-->/g, (m) => m.replace(/[^\n]/g, " ")).split("\n");
-    const devHeadings = readmeHeadings(readme).filter((h, i, all) => {
-      if (DEV_HEADING.test(h.words)) return true;
-      if (!AMBIGUOUS_DEV_HEADING.test(h.words)) return false;
-      // "Scripts" or "Contributing" can be user-facing; it is contributor material only over contributor commands.
-      // Its section runs to the next heading of the same or a higher rank, so child headings stay inside it.
-      const end = all.slice(i + 1).find((n) => n.level <= h.level)?.line ?? Infinity;
-      return shown.slice(h.line, end - 1).some((l) => CONTRIBUTOR_COMMAND.test(l));
-    }).map((h) => ({ file: "README.md", line: h.line, text: h.text }));
+    // "Scripts" or "Contributing" can be user-facing; it is contributor material only over a contributor command a
+    // reader sees in its section (code counts, comments do not), which runs to the next heading of the same or a higher rank.
+    const devHeadings = headings(readme)
+      .filter((h) => DEV_HEADING.test(h.words) || (AMBIGUOUS_DEV_HEADING.test(h.words) && CONTRIBUTOR_COMMAND.test(h.section().replace(/\s+/g, " "))))
+      .map((h) => ({ file: "README.md", line: h.line, text: h.text }));
     if (devHeadings.length)
       c.fail("readme-dev-sections", `README is the Store page; move contributor sections to the mirror's docs: ${devHeadings.map((d) => d.text).join(", ")}`, devHeadings);
     c.pass("readme-dev-sections", "no contributor section (Development, build, clone-and-run, project structure) in README");

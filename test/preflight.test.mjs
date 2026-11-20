@@ -11,7 +11,7 @@ import { CHECK_IDS } from "../src/preflight/catalog.mjs";
 import * as gitignore from "../src/preflight/gitignore.mjs";
 import { gitignoreMatcher } from "../src/preflight/gitignore.mjs";
 import { stripComments } from "../src/preflight/lexer.mjs";
-import { extractEmbeds, stripCode } from "../src/preflight/markdown.mjs";
+import { extractEmbeds, headings } from "../src/preflight/markdown.mjs";
 import { REPO, rx, withTempDir } from "./helpers.mjs";
 import { GOOD_PKG, HOUSE_PRESET, LEGACY_PRESET, LOCK, makeExt, png, preflight } from "./preflight-helpers.mjs";
 
@@ -407,9 +407,8 @@ test("T4: a fenced or inline code example of the forbidden form passes", async (
   });
 });
 
-test("markdown extraction unit: code stripping keeps line numbers; nested badge-in-link is a link", () => {
+test("markdown extraction unit: lines survive code; nested badge-in-link is a link", () => {
   const md = "a\n```\nb\n```\nc `x` d\n[![Badge](https://img/x.svg)](docs/a.md)";
-  assert.equal(stripCode(md).split("\n").length, md.split("\n").length);
   const embeds = extractEmbeds(md);
   assert.deepEqual(embeds.map((e) => [e.kind, e.target, e.line]), [["link", "docs/a.md", 6], ["image", "https://img/x.svg", 6]]);
 });
@@ -1141,30 +1140,90 @@ test("N2 (gate): comment delimiters inside code are inert, so a rendered image b
   });
 });
 
-test("stripCode: a fence inside an HTML comment block is not a fence, so the content after the comment still renders (readme-assets, readme-dev-sections)", async () => {
+test("a fence inside an HTML comment block is not a fence, so the content after the comment still renders (readme-assets, readme-dev-sections)", async () => {
   const md = "# C\n\n<!--\n```\n-->\n\n## Development\n\n![Hidden](metadata/good-1.png)\n";
-  const lines = stripCode(md).split("\n");
-  assert.equal(lines.length, md.split("\n").length);
-  assert.equal(lines[6], "## Development", "the heading after the comment survives");
-  assert.ok(lines.slice(2, 5).every((l) => l.trim() === ""), "the comment itself is blanked");
+  assert.deepEqual(headings(md).map((h) => [h.line, h.text]), [[1, "C"], [7, "Development"]]);
+  assert.deepEqual(extractEmbeds(md).map((e) => [e.target, e.line]), [["metadata/good-1.png", 9]]);
   // Indented under a list item, the comment block still opens at the item's content column.
-  const listed = stripCode("- item\n\n  <!--\n  ~~~\n  -->\n\n  ![x](metadata/a.png)\n").split("\n");
-  assert.equal(listed[6], "  ![x](metadata/a.png)");
+  assert.deepEqual(extractEmbeds("- item\n\n  <!--\n  ~~~\n  -->\n\n  ![x](metadata/a.png)\n").map((e) => e.line), [7]);
   // A comment opened on the list-marker line is a comment block too (Codex B1-5).
-  const onMarker = stripCode("- <!--\n  ~~~\n  -->\n\n## After\n").split("\n");
-  assert.equal(onMarker[4], "## After");
+  assert.deepEqual(headings("- <!--\n  ~~~\n  -->\n\n## After\n").map((h) => [h.line, h.text]), [[5, "After"]]);
   // The closing line belongs to the HTML block: Markdown after `-->` is literal text, an HTML tag still renders (Codex B1-6).
-  const closing = stripCode("<!--\nnote\n--> ![x](metadata/x.png) [l](missing.md) <img src=\"assets/y.png\">\n").split("\n");
-  assert.doesNotMatch(closing[2], /metadata|missing/);
-  assert.match(closing[2], /<img src="assets\/y\.png">/);
-  // A comment that opens mid-paragraph does not hide a following fence's content any more than a renderer would.
-  const midline = stripCode("text <!-- note -->\n\n```\n## In code\n```\n").split("\n");
-  assert.equal(midline[3], "", "fence content is still code");
+  assert.deepEqual(extractEmbeds("<!--\nnote\n--> ![x](metadata/x.png) [l](missing.md) <img src=\"assets/y.png\">\n").map((e) => [e.target, e.line]), [["assets/y.png", 3]]);
+  // A comment mid-paragraph does not stop a later fence from being code.
+  assert.deepEqual(headings("text <!-- note -->\n\n```\n## In code\n```\n"), []);
   await withTempDir(async (dir) => {
     const r = await preflight(makeExt(join(dir, "commented-fence"), { files: { "README.md": md } }));
     assert.equal(r.verdict("readme-assets"), "FAIL", JSON.stringify(r.by["readme-assets"]));
     assert.deepEqual(r.by["readme-assets"].details.map((d) => d.line), [9]);
     assert.equal(r.verdict("readme-dev-sections"), "FAIL", JSON.stringify(r.by["readme-dev-sections"]));
+  });
+});
+
+test("README checks judge the rendered document (CommonMark + GFM, raw HTML as the HTML parser reads it): the cases hand-written parsing got wrong", async () => {
+  await withTempDir(async (dir) => {
+    const run = async (/** @type {string} */ name, /** @type {string} */ readme, /** @type {Record<string, string>} */ files = {}) =>
+      preflight(makeExt(join(dir, name), { files: { "README.md": readme, ...files } }));
+    /** [README, readme-dev-sections, readme-assets], each a case the old code judged differently from a renderer. */
+    const cases = [
+      // Codex B1-5: a nested item's comment block cannot lazily continue, so the top-level fence opens and swallows the heading.
+      ["- - <!--\n```\n-->\n\n## Development\n", "PASS", "PASS"],
+      // Codex B1-6: the whole line is an HTML block, so the image is literal text.
+      ["<!-- x --> ![x](metadata/a.png)\n", "PASS", "PASS"],
+      // Codex B1-4: a setext heading over two lines, and over a code span.
+      ["Clone and\nRun\n---\n", "FAIL", "PASS"],
+      ["`Development`\n===\n", "FAIL", "PASS"],
+      // Codex B1-2: comment delimiters inside code spans are code, so the command between them shows.
+      ["## Scripts\n\n`<!--`\n\nnpm run dev\n\n`-->`\n", "FAIL", "PASS"],
+      // Store corpus (tidal): a one-line triple-backtick span is inline code, not a fence that hides the rest.
+      ["## About\n\n```git clone https://example.com/x.git```\n\n## Development\n", "FAIL", "PASS"],
+      // Store corpus (jump, wled-controller): a list item under a line is a list, not a setext underline.
+      ["Development\n- `npm run dev`\n", "PASS", "PASS"],
+      // Store corpus (keeper-security): a heading inside a list item renders.
+      ["- ### Development\n", "FAIL", "PASS"],
+      // Codex D3-1: GFM's tagfilter escapes <iframe>, so what it wraps renders.
+      ["<iframe>\n<h2>Development</h2>\n<img src=\"metadata/a.png\">\n</iframe>\n", "FAIL", "FAIL"],
+      // Codex D3-3: a <br> separates words; inline formatting joins them.
+      ["<h2>Project<br>Structure</h2>\n", "FAIL", "PASS"],
+      ["## Scripts\n\nRun npm <b>run</b> dev.\n", "FAIL", "PASS"],
+      // An image's alt is not heading text.
+      ["## ![logo](media/logo.png) Development\n", "FAIL", "PASS"],
+      // A decoded entity is the character it names.
+      ["![x](metadata&#47;x.png)\n", "PASS", "FAIL"],
+    ];
+    /** @type {string[]} */
+    const wrong = [];
+    for (const [i, [body, dev, assets]] of cases.entries()) {
+      const r = await run(`c${i}`, `# X\n\nIntro.\n\n${body}`);
+      if (r.verdict("readme-dev-sections") !== dev || r.verdict("readme-assets") !== assets)
+        wrong.push(`${JSON.stringify(body)}: dev ${r.verdict("readme-dev-sections")} (want ${dev}), assets ${r.verdict("readme-assets")} (want ${assets})`);
+    }
+    assert.deepEqual(wrong, []);
+    // Store corpus (geforce-now): a byte-order mark opening the file does not hide the first heading.
+    assert.equal((await run("bom", "\uFEFF## Development\n")).verdict("readme-dev-sections"), "FAIL");
+    // Codex D3-2: a srcset URL may hold a comma; both candidates ship, so readme-links PASSes.
+    const srcset = await run("srcset", "# X\n\n<img srcset=\"media/a,b.png 1x, media/c.png 2x\">\n", { "media/a,b.png": "x", "media/c.png": "x" });
+    assert.equal(srcset.verdict("readme-links"), "PASS", JSON.stringify(srcset.by["readme-links"]));
+    // Codex D3-2 (r4): any whitespace separates a descriptor, a one-character URL is a URL, and
+    // a candidate with an invalid descriptor is dropped as a browser drops it.
+    assert.deepEqual(extractEmbeds("<img srcset=\"media/a.png\n1x, b 2x\">\n<img srcset=\"c 1x 2x, media/d.png 2x\">\n").map((e) => [e.target, e.line]),
+      [["media/a.png", 1], ["b", 1], ["media/d.png", 3]]);
+    const newline = await run("srcset-newline", "# X\n\n<img srcset=\"media/a.png\n1x, media/c.png 2x\">\n", { "media/a.png": "x", "media/c.png": "x" });
+    assert.equal(newline.verdict("readme-links"), "PASS", JSON.stringify(newline.by["readme-links"]));
+    // Codex R4-1: hidden content does not render, so a heading inside it neither counts nor ends a section.
+    assert.equal((await run("hidden", "# X\n\n<div hidden>\n<h2>Development</h2>\n</div>\n")).verdict("readme-dev-sections"), "PASS");
+    assert.equal((await run("dialog", "# X\n\n<dialog>\n<h2>Development</h2>\n</dialog>\n")).verdict("readme-dev-sections"), "PASS");
+    const split = await run("hidden-split", "# X\n\n## Scripts\n\nUse scripts here.\n\n<div hidden>\n<h2>Other</h2>\n</div>\n\nnpm run dev\n");
+    assert.equal(split.verdict("readme-dev-sections"), "FAIL", JSON.stringify(split.by["readme-dev-sections"]));
+    // Codex R5-1: visibility is the text library's own rule, so <noscript> (and the rest it hides) behaves like `hidden`.
+    assert.equal((await run("noscript", "# X\n\n<noscript>\n<h2>Development</h2>\n</noscript>\n")).verdict("readme-dev-sections"), "PASS");
+    const noscriptSplit = await run("noscript-split", "# X\n\n## Scripts\n\nUse scripts here.\n\n<noscript>\n<h2>Other</h2>\n</noscript>\n\nnpm run dev\n");
+    assert.equal(noscriptSplit.verdict("readme-dev-sections"), "FAIL", JSON.stringify(noscriptSplit.by["readme-dev-sections"]));
+    // An empty heading still renders, so it still ends the section above it.
+    assert.equal((await run("empty-heading", "# X\n\n## Scripts\n\nUse scripts here.\n\n##\n\nnpm run dev\n")).verdict("readme-dev-sections"), "PASS");
+    // A raw-HTML image in a multi-line tag reports the tag's first line.
+    const multi = await run("multi", "# X\n\nIntro.\n\n<p>\n  <img\n    src=\"metadata/a.png\">\n</p>\n");
+    assert.deepEqual(multi.by["readme-assets"].details.map((d) => d.line), [6]);
   });
 });
 

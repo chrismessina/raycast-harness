@@ -219,9 +219,9 @@ export function writeEntries(dir, entries) {
   return file;
 }
 
-/** `rx audit record`. @param {string} root @param {string} entriesFile */
-export function auditRecord(root, entriesFile) {
-  return rx(["audit", "record", "--root", root, "--preset", PRESET, "--entries", entriesFile, "--json"]);
+/** `rx audit record`. @param {string} root @param {string} entriesFile @param {string[]} [extra] */
+export function auditRecord(root, entriesFile, extra = []) {
+  return rx(["audit", "record", "--root", root, "--preset", PRESET, "--entries", entriesFile, "--json", ...extra]);
 }
 
 /** A PreToolUse payload for a Bash command. @param {string} command @param {string} cwd */

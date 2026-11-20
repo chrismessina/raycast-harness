@@ -293,6 +293,27 @@ test("audit record: shortcut evidence is embedded; unavailable runtime evidence 
   });
 });
 
+test("audit record runs no extension code unless --extension-typescript is given; with it, its shortcut evidence is read with the extension's parser (Codex W6-1)", async () => {
+  await withGatedEnv(async (dir) => {
+    const src = 'import { Detail } from "@raycast/api";\nexport default function Command() {\n  return <Detail markdown="x" />;\n}\n';
+    const { root } = await buildGated(dir, { src });
+    const gr = await gates(root);
+    assert.equal(gr.code, 0, gr.stdout);
+    // A typescript package that leaves a marker when it is loaded, planted after gates.
+    const pkg = join(root, "node_modules", "typescript");
+    mkdirSync(pkg, { recursive: true });
+    const marker = join(dir, "loaded");
+    writeFileSync(join(pkg, "package.json"), JSON.stringify({ name: "typescript", version: "0.0.0", main: "index.js" }));
+    writeFileSync(join(pkg, "index.js"), `require("node:fs").writeFileSync(${JSON.stringify(marker)}, "1"); module.exports = {};\n`);
+    const off = await auditRecord(root, writeEntries(dir, fullEntries()));
+    assert.equal(existsSync(marker), false, "audit record must not load the extension's typescript by default");
+    assert.match(byId(off)["shortcut-reserved"].message, /--extension-typescript was not given/);
+    const on = await auditRecord(root, writeEntries(dir, fullEntries()), ["--extension-typescript"]);
+    assert.equal(existsSync(marker), true, "with the flag the shortcuts step loads it, as gates' preflight does");
+    assert.match(byId(on)["shortcut-reserved"].message, /could not be loaded/, "a module without the compiler API falls back to the text scan");
+  });
+});
+
 test("audit record: a malformed entries file or an unknown rule id is ERROR input before any verdict", async () => {
   await withGatedEnv(async (dir) => {
     const { root } = await buildGated(dir);
@@ -384,6 +405,19 @@ test("greptile judgment rules: 58 ids, every one present in the core snapshot, a
   const failed = decide({ applicable: rules.map((r) => ({ id: r.entryId, severity: r.severity, why: "judgment" })), entries: rules.map((r) => ({ id: r.entryId, scope: "x", result: r.id === "changelog-hardcoded-date" ? "fail" : "pass", evidence: "x" })), dispositions: [], verifications: [], required: [], effects: [], evidence: { shortcuts: [{ id: "shortcuts", verdict: "PASS", message: "ok", details: [] }], png: [{ id: "png", verdict: "PASS", message: "ok", details: [] }] } });
   assert.deepEqual([failed.blocking, failed.reportOnly], [[], ["greptile/changelog-hardcoded-date"]]);
   assert.throws(() => greptileJudgmentRules(join(REPO, "test", "fixtures", "gates", "preset.json")), /absent from the snapshot/);
+});
+
+test("greptile report-only exception (Codex W6-2): bound to the digest of the rule text it was reviewed against; a changed text blocks again", async () => {
+  await withTempDir(async (dir) => {
+    const config = JSON.parse(readFileSync(GREPTILE_CONFIG, "utf8"));
+    const rule = config.rules.find((/** @type {any} */ r) => r.id === "changelog-hardcoded-date");
+    rule.rule = rule.rule.replace("never as a required change or a blocker", "as a required change");
+    const path = join(dir, "config.json");
+    writeFileSync(path, JSON.stringify(config));
+    const changed = greptileJudgmentRules(path).find((r) => r.id === "changelog-hardcoded-date");
+    assert.equal(changed?.severity, "block", "a rewritten rule is blocking until its report-only reading is reviewed again");
+    assert.equal(greptileJudgmentRules(GREPTILE_CONFIG).find((r) => r.id === "changelog-hardcoded-date")?.severity, "report");
+  });
 });
 
 test("greptile mechanical exemptions (Codex P2): each is bound to the digest of the rule text and scope it was reviewed against; a changed rule needs a judgment entry again", async () => {

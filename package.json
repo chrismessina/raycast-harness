@@ -45,7 +45,15 @@
     "check": "npm run typecheck && npm run lint && npm test"
   },
   "dependencies": {
-    "pngjs": "7.0.0"
+    "hast-util-raw": "9.1.0",
+    "hast-util-to-text": "4.0.3",
+    "mdast-util-from-markdown": "2.1.0",
+    "mdast-util-gfm": "3.1.0",
+    "mdast-util-to-hast": "13.2.1",
+    "micromark-extension-gfm": "3.0.0",
+    "parse-srcset": "1.0.2",
+    "pngjs": "7.0.0",
+    "vfile": "6.0.3"
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",

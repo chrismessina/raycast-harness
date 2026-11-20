@@ -115,10 +115,14 @@ export const GREPTILE_JUDGMENT_RULES = Object.freeze([
 
 /**
  * Judgment rules whose own text says a finding is never a blocker: their audit entry is still
- * required, and a `fail` is report-only. changelog-hardcoded-date: "Mention it at most once per PR,
- * as a suggestion, and never as a required change or a blocker."
+ * required, and a `fail` is report-only. Each is bound to the ruleContentDigest() of the text that
+ * says so, like GREPTILE_MECHANICAL_RULES: a rule whose text changed is blocking again until it is
+ * re-read. changelog-hardcoded-date: "Mention it at most once per PR, as a suggestion, and never as
+ * a required change or a blocker."
  */
-export const GREPTILE_REPORT_ONLY_RULES = Object.freeze(["changelog-hardcoded-date"]);
+export const GREPTILE_REPORT_ONLY_RULES = Object.freeze({
+  "changelog-hardcoded-date": "762b5608cbce9db4c9156afc9c3e4f8be62e101576f02174589446d3955d5a54",
+});
 
 /**
  * Greptile rule ids `rx preflight` checks mechanically, each with the preflight result ids that
@@ -343,10 +347,12 @@ export function greptileJudgmentRules(configPath) {
   // audit silently.
   const classified = new Set([...GREPTILE_JUDGMENT_RULES, ...Object.keys(GREPTILE_PREFLIGHT_RULES)]);
   const unclassified = [...byId.keys()].filter((id) => !classified.has(id));
+  const advisory = /** @type {Record<string, string>} */ (GREPTILE_REPORT_ONLY_RULES);
+  const reportOnly = (/** @type {string} */ id) => Object.hasOwn(advisory, id) && byId.has(id) && ruleContentDigest(/** @type {any} */ (byId.get(id))) === advisory[id];
   const row = (/** @type {string} */ id) => ({
     id,
     entryId: `${GREPTILE_PREFIX}${id}`,
-    severity: /** @type {"block" | "report"} */ (GREPTILE_REPORT_ONLY_RULES.includes(id) ? "report" : "block"),
+    severity: /** @type {"block" | "report"} */ (reportOnly(id) ? "report" : "block"),
     title: (byId.get(id)?.rule ?? id).split("\n")[0].trim() || id,
   });
   return [...GREPTILE_JUDGMENT_RULES.map(row), ...changed.map((id) => ({ ...row(id), why: MECHANICAL_REREVIEW })), ...unclassified.map(row)];
