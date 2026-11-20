@@ -42,7 +42,9 @@
     "test": "node --test 'test/**/*.test.mjs'",
     "typecheck": "tsc --noEmit --checkJs -p .",
     "lint": "eslint .",
-    "check": "npm run typecheck && npm run lint && npm test"
+    "check": "npm run typecheck && npm run lint && npm test",
+    "prepublishOnly": "node scripts/github-release.mjs --check",
+    "postpublish": "node scripts/github-release.mjs"
   },
   "dependencies": {
     "hast-util-raw": "9.1.0",

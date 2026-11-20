@@ -35,6 +35,18 @@ opening a pull request you agree your contribution is licensed that way.
    matching words inside what a parser returns. A new runtime dependency is
    pinned to an exact version at least two weeks old.
 
+## Releasing
+
+Bump the version (`package.json`, `package-lock.json`, the version in
+`docs/commands.md` and the tarball name in `docs/guide.md`), rename the
+CHANGELOG's `## Unreleased` to `## <version>`, and commit that on `main`. Then
+run npm's release command. Its `prepublishOnly` script refuses when the
+CHANGELOG has no section for the version, the tree is dirty, or HEAD is not on
+`main`. Its `postpublish` script pushes `main`, pushes a signed `v<version>`
+tag, and creates the GitHub release from that CHANGELOG section. If a step
+fails after the npm upload, run `node scripts/github-release.mjs` again; it
+skips what is already done.
+
 ## Running the checks
 
 ```sh
