@@ -2,70 +2,36 @@
 
 ## 0.2.0
 
-- `rx preflight` and `rx shortcuts check` no longer load the extension's own `typescript` by
-  default, since loading it runs that package's code. 0.1.4's parsing now happens only under the new
-  `--extension-typescript` flag, which `rx gates` passes (gates runs the extension's build anyway)
-  and `rx audit record` accepts for its embedded shortcut evidence. Without the flag,
-  `shortcut-platform-case` is a text scan that reports a WARN at most, never a PASS, and
-  `rx shortcuts check` reads source with the text scan, as in 0.1.3; `data.parser` and
-  `data.textScanned` say which.
-- `shortcut-reserved` checks a panel against the defaults of the view that hosts it: `↵` and `⌘↵` in
-  a List, Grid or Detail, `⌘↵` and `⌘⇧↵` in a Form. An explicit `↵` on a Form's submit action no
-  longer FAILs. With `--extension-typescript` the host is the element whose `actions` prop holds the
-  panel, when that name is imported from `@raycast/api` unrenamed and bound nowhere else in the
-  file. When rx cannot see the host (a panel a component returns, or no parser), `↵` and `⌘⇧↵` are a
-  WARN and `⌘↵`, a default in every view, stays a FAIL. `data.reserved` adds `certain` and `host`,
-  with one entry per distinct binding at a site, so a certain match on one platform is no longer
-  hidden by an uncertain one on another.
-- `rx stale` classifies a published file you deleted as `DELETED` (`stale-deleted`, WARN) instead
-  of the `ONLY-PUB` FAIL, when its published version sits at that exact path in a commit reachable
-  from HEAD (an uncommitted deletion, or one in an unreleased commit). `rx audit record` answers it
-  with `remove-published` keyed `{ path, localHash: "absent", baseline }`, as for `REMOVE`. A file
-  upstream added or edited that local history never held stays `ONLY-PUB`.
-- The history lookup behind `CHECK` and `DELETED` no longer depends on git config: it uses
-  `rev-list` and an exact `ls-tree` lookup instead of `git log`, which `log.showRoot=false`,
-  `log.follow`, `log.showSignature` and `diff.renames` could mislead. It also stops counting a
-  blob from a file's earlier name or from a former directory's contents, so such a path is now
-  `UPSTREAM` instead of `CHECK`.
-- New core preflight check `readme-dev-sections`: a README heading for contributor material
-  (Development, Building from source, Clone & Run, Project Structure, Running locally) FAILs,
-  because the README is the Store page (Greptile `readme-user-facing`). Scripts, Contributing and
-  Build can be user-facing, so they FAIL only when their section shows a contributor command
-  (`npm run`, `git clone`, a pull request). Every rendered heading counts, Markdown or HTML, judged
-  on the text it displays with punctuation and emoji collapsed. The audit binds it to
-  `greptile/readme-user-facing`.
-- `readme-dev-sections`, `readme-assets` and `readme-links` judge the rendered README instead of
-  hand-written Markdown rules: it is parsed as CommonMark + GFM (micromark), and its raw HTML by
-  parse5, the HTML spec parser, and `srcset` by the HTML spec's algorithm (parse-srcset). Cases the
-  old rules got wrong include a fence inside an HTML comment that hid every later heading and link,
-  a list under a line read as a setext underline, a one-line triple-backtick span read as an
-  unclosed fence, a heading inside a list item, a byte-order mark, `<br>` inside an HTML heading,
-  and a `srcset` URL holding a comma or a line break; a heading the browser hides (`hidden`,
-  `<noscript>`, a closed `<dialog>`) no longer counts or ends a section. Over every README and
-  `docs/*.md` in raycast/extensions (3,574 files) the three checks reach the same verdicts as the
-  old rules did. rx gains eight exact-pinned runtime dependencies (`mdast-util-from-markdown`,
-  `micromark-extension-gfm`, `mdast-util-gfm`, `mdast-util-to-hast`, `hast-util-raw`,
-  `hast-util-to-text`, `parse-srcset` and `vfile`), 82 packages in all.
-- New core preflight check `store-description` (WARN), the mechanical half of Greptile's new
-  `store-description` rule: a new or changed `package.json` `description` outside 40 to 155
-  characters, without a closing period, with the shared filler ("Raycast extension to", a closing
-  "from Raycast", "directly from your command bar", "the fastest way to"), or naming a platform
-  `platforms` does not list. Unchanged from the published copy is N/A; a description mostly in a
-  non-Latin script is not judged. It flags none of the 3,544 descriptions Raycast rewrote in
-  raycast/extensions#33590–#33599. The audit's `greptile/store-description` entry judges the rest.
-- New preset-class preflight check `contributing-mirror` (FAIL): a `CONTRIBUTING.md` the published
-  copy lacks must be listed in the extension's `.gitignore`, so it stays in the mirror and out of
-  the Store PR; without `--published` it WARNs, and a published copy that already ships one is
-  grandfathered. A preset binds it for the extensions it applies to.
-- The shipped Greptile rules are `main` `092555d` (61 rules): `store-description`,
-  `mcp-registry-entries` and `changelog-hardcoded-date` are new, and 12 rules changed text. All
-  three are judgment rules (58 audit entries); `changelog-placeholder` covers part of
-  `changelog-hardcoded-date` (a top entry with no `{PR_MERGE_DATE}`). A `changelog-hardcoded-date` fail is report-only,
-  because the rule's text says it never blocks; that exception holds only while the text matches the
-  digest it was read against, so a rewritten rule blocks again until it is re-read.
-- `agent-scaffolding` and `dev-material` flag only files the published copy lacks, as the
-  refreshed `no-agent-scaffolding` and `no-dev-material` rules do: an edit to a file already on
-  `main` is the owner's call.
+README checks now read a README the way the Store renders it, and three new checks cover the
+Store description, contributor sections and `CONTRIBUTING.md`.
+
+### Breaking
+
+- `rx preflight` and `rx shortcuts check` no longer run the extension's own `typescript` unless
+  you pass `--extension-typescript`. `rx gates` passes it, and `rx audit record` now accepts it.
+
+### New
+
+- `readme-dev-sections` (FAIL): contributor sections such as Development or Clone & Run don't
+  belong on the Store page.
+- `store-description` (WARN): a new or changed description is 40–155 characters, ends with a
+  period, skips boilerplate, and names only listed platforms.
+- `contributing-mirror` (FAIL, preset): a `CONTRIBUTING.md` the Store copy lacks must be
+  gitignored, so it stays in your mirror.
+- `rx stale` reports a published file you deleted as `DELETED` (WARN); the audit clears it with
+  `remove-published`.
+
+### Changed
+
+- README checks parse CommonMark, GFM and HTML as the Store does, fixing a dozen edge cases. Adds
+  eight dependencies.
+- `shortcut-reserved` uses the hosting view's defaults, so `↵` on a Form's submit action passes.
+- `agent-scaffolding` and `dev-material` flag only files the Store copy doesn't already have.
+- Greptile rules are at `092555d`: 3 new, 12 changed. `changelog-hardcoded-date` is advisory.
+
+### Fixed
+
+- `rx stale` reads history correctly when git config sets `log.follow`, `diff.renames` or similar.
 
 ## 0.1.4
 
