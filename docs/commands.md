@@ -29,7 +29,7 @@ Every command accepts `--json` and then prints exactly one document:
 ```json
 {
   "command": "preflight",
-  "version": "0.1.4",
+  "version": "0.2.0",
   "fingerprint": null,
   "data": { },
   "results": [

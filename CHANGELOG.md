@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.2.0
 
 - `rx preflight` and `rx shortcuts check` no longer load the extension's own `typescript` by
   default, since loading it runs that package's code. 0.1.4's parsing now happens only under the new
