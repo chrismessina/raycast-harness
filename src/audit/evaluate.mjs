@@ -57,8 +57,8 @@ export const deletesPublished = (kind) => kind === "REMOVE" || kind === "DELETED
 
 /**
  * Does disposition `d` answer requirement `n`'s kind? A stale REMOVE or DELETED row (the release
- * deletes the published copy) takes `remove-published` and nothing else; every other row takes
- * anything but `remove-published`.
+ * deletes the published copy) takes `remove-published` and nothing else; every other row (stale
+ * CHECK / NEW?, png OLDER-SHOT / UNDECIDED) takes anything but `remove-published`.
  * @param {{ disposition: string }} d @param {{ kind: string }} n
  */
 export function dispositionFits(d, n) {
@@ -82,8 +82,13 @@ export function staleDispositions(staleData) {
   return out;
 }
 
+/** The png outcomes that need a disposition (keep-local or adopt-published, never remove-published). */
+export const PNG_DISPOSITION_KINDS = /** @type {const} */ (["OLDER-SHOT", "UNDECIDED"]);
+
 /**
- * The png OLDER-SHOT rows of a `rx png` data.files[], as required dispositions.
+ * The png OLDER-SHOT and UNDECIDED rows of a `rx png` data.files[], as required dispositions.
+ * OLDER-SHOT's baseline is the provenance commit; UNDECIDED's is the sha256 of the published bytes
+ * a human compared by eye.
  * @param {any[]} files
  * @returns {RequiredDisposition[]}
  */
@@ -91,7 +96,7 @@ export function pngDispositions(files) {
   /** @type {RequiredDisposition[]} */
   const out = [];
   for (const f of Array.isArray(files) ? files : []) {
-    if (f?.outcome === "OLDER-SHOT" && typeof f.path === "string" && typeof f.localHash === "string" && typeof f.baseline === "string") out.push({ path: f.path, localHash: f.localHash, baseline: f.baseline, kind: "OLDER-SHOT" });
+    if (PNG_DISPOSITION_KINDS.includes(f?.outcome) && typeof f.path === "string" && typeof f.localHash === "string" && typeof f.baseline === "string") out.push({ path: f.path, localHash: f.localHash, baseline: f.baseline, kind: f.outcome });
   }
   return out;
 }

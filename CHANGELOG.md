@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- `rx png` rates `UNDECIDED` a WARN, not a FAIL: compare by eye, then record a `keep-local` or `adopt-published` audit disposition.
+- `rx png` FAILs a 16-bit screenshot even with no published copy, and prints the command that converts it to 8-bit.
+
 ## 0.2.0
 
 README checks now read a README the way the Store renders it, and three new checks cover the Store description, contributor sections and `CONTRIBUTING.md`.

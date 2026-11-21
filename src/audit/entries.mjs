@@ -4,7 +4,7 @@
 //   rule entry     { id, scope, result: "pass" | "fail" | "n-a", evidence }
 //                  `id` is a preset rule id, or `greptile/<rule id>` for a Greptile judgment rule
 //   disposition    { path, localHash, baseline, disposition: "keep-local" | "adopt-published" | "remove-published", reason }
-//                  for a stale CHECK / NEW? path or a png OLDER-SHOT image:
+//                  for a stale CHECK / NEW? path or a png OLDER-SHOT / UNDECIDED image:
 //                  keep-local or adopt-published; for a stale REMOVE path (a local-only file the
 //                  published copy still has) or DELETED path (a published file deleted here):
 //                  remove-published, with localHash "absent"

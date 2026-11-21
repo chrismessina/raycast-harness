@@ -394,7 +394,18 @@ test("guard (Codex P1 #4): hand-written or truncated artifacts never authorize; 
     writeAttested(auditPath, { ...audit, applicable: audit.applicable.filter((/** @type {any} */ x) => x.id !== "kit") });
     assert.match(guardResult(await guard(bashPayload(PUBLISH, root))).message, /applicable rules differ/);
     writeAttested(auditPath, { ...audit, required: [{ path: "x.png", localHash: "sha256:0", baseline: "0", kind: "OLDER-SHOT" }] });
-    assert.match(guardResult(await guard(bashPayload(PUBLISH, root))).message, /OLDER-SHOT dispositions do not match its png evidence/);
+    assert.match(guardResult(await guard(bashPayload(PUBLISH, root))).message, /png OLDER-SHOT \/ UNDECIDED dispositions do not match its png evidence/);
+    // An UNDECIDED requirement is a png row too: it is checked against the png evidence, never
+    // counted as a stale row.
+    writeAttested(auditPath, { ...audit, required: [{ path: "x.png", localHash: "sha256:0", baseline: "sha256:1", kind: "UNDECIDED" }] });
+    assert.match(guardResult(await guard(bashPayload(PUBLISH, root))).message, /png OLDER-SHOT \/ UNDECIDED dispositions do not match its png evidence/);
+    // The kind must agree with the evidence: an UNDECIDED WARN does not license an OLDER-SHOT row.
+    const undecidedEvidence = { id: "png", verdict: "WARN", message: "x.png: UNDECIDED; color metadata differs: sRGB; compare by eye, then record an audit disposition", details: [{ file: "x.png", text: "UNDECIDED color metadata differs: sRGB" }] };
+    writeAttested(auditPath, { ...audit, evidence: { ...audit.evidence, png: [...audit.evidence.png, undecidedEvidence] }, required: [{ path: "x.png", localHash: "sha256:0", baseline: "sha256:1", kind: "OLDER-SHOT" }] });
+    assert.match(guardResult(await guard(bashPayload(PUBLISH, root))).message, /png OLDER-SHOT \/ UNDECIDED dispositions do not match its png evidence/);
+    // And an UNDECIDED WARN in the evidence with no required row is refused the same way.
+    writeAttested(auditPath, { ...audit, evidence: { ...audit.evidence, png: [...audit.evidence.png, undecidedEvidence] } });
+    assert.match(guardResult(await guard(bashPayload(PUBLISH, root))).message, /png OLDER-SHOT \/ UNDECIDED dispositions do not match its png evidence/);
     writeAttested(auditPath, audit);
     assert.equal(guardResult(await guard(bashPayload(PUBLISH, root))).verdict, "PASS");
   });

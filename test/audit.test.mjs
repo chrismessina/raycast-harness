@@ -5,6 +5,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import * as greptileAudit from "../src/audit/greptile.mjs";
@@ -16,8 +17,9 @@ import { decide, staleDispositions } from "../src/audit/evaluate.mjs";
 import { _setRuntimePaths } from "../src/commands/shortcuts.mjs";
 import { _setBeforeWriteHookForTests } from "../src/commands/audit.mjs";
 import { SHIPPED_DIR } from "../src/greptile/rules.mjs";
+import { buildChunk, insertChunk } from "../src/png.mjs";
 import { afterShipped, REPO, rx, withTempDir } from "./helpers.mjs";
-import { auditRecord, buildGated, byId, fullEntries, gates, stateDir, validPng, withGatedEnv, writeAttested, writeEntries } from "./gates-helpers.mjs";
+import { auditRecord, bashPayload, buildGated, byId, fullEntries, guard, gates, stateDir, validPng, withGatedEnv, writeAttested, writeEntries } from "./gates-helpers.mjs";
 import { commit } from "./upstream-fixtures.mjs";
 
 const SHIM = join(REPO, "test", "fixtures", "shortcuts", "shim", "index.js");
@@ -216,6 +218,57 @@ test("audit record: a png OLDER-SHOT image in this run needs a disposition keyed
     assert.equal(ok.code, 0, ok.stdout);
     assert.equal(byId(ok)["audit-dispositions"].verdict, "PASS");
     assert.equal(ok.json.data.dispositions, 3);
+  });
+});
+
+test("audit record: a png UNDECIDED image (color metadata differs) needs a disposition keyed on its sha256 and the published bytes' sha256; keep-local unblocks it", async () => {
+  await withGatedEnv(async (dir) => {
+    const { root } = await buildGated(dir, { published: true });
+    // The same pixels recaptured with an sRGB chunk the published copy lacks → UNDECIDED.
+    const publishedBytes = validPng(2000, 1250, 1);
+    const recapture = insertChunk(validPng(2000, 1250, 1), buildChunk("sRGB", Buffer.from([0])));
+    await commit(root, { "metadata/good-1.png": recapture }, "recapture with sRGB");
+    const gr = await gates(root);
+    assert.equal(gr.code, 0, gr.stdout);
+    const receipt = JSON.parse(readFileSync(join(await stateDir(root), "receipt.json"), "utf8"));
+    const checks = receipt.data.stale.files.filter((/** @type {any} */ f) => f.class === "CHECK");
+    const staleDisps = checks.map((/** @type {any} */ f) => ({ path: f.path, localHash: f.localHash, baseline: receipt.data.stale.baseline, disposition: "keep-local", reason: "newer locally" }));
+    const localHash = `sha256:${createHash("sha256").update(recapture).digest("hex")}`;
+    const baseline = `sha256:${createHash("sha256").update(publishedBytes).digest("hex")}`;
+
+    // No png disposition: the png row is a WARN (not a blocking FAIL), and audit-dispositions names the key.
+    const none = await auditRecord(root, writeEntries(dir, fullEntries({ extra: staleDisps })));
+    assert.equal(none.code, 1, none.stdout);
+    const undecided = none.json.results.find((/** @type {any} */ x) => x.id === "png" && /UNDECIDED/.test(x.message));
+    assert.ok(undecided, JSON.stringify(none.json.results.filter((/** @type {any} */ x) => x.id === "png")));
+    assert.equal(undecided.verdict, "WARN");
+    const d = byId(none)["audit-dispositions"];
+    assert.equal(d.verdict, "FAIL");
+    const need = d.details.find((/** @type {any} */ x) => x.file === "metadata/good-1.png" && /^UNDECIDED/.test(x.text));
+    assert.ok(need, JSON.stringify(d.details));
+    assert.equal(need.text, `UNDECIDED needs a disposition: localHash=${localHash} baseline=${baseline}`);
+    assert.deepEqual(none.json.data.blocking, ["dispositions: 1 missing, 0 unmatched"], "png is not itself a blocking reason");
+
+    // remove-published never answers an UNDECIDED row: a misfit is both missing and unmatched.
+    const misfit = { path: "metadata/good-1.png", localHash, baseline, disposition: "remove-published", reason: "wrong kind" };
+    const m = await auditRecord(root, writeEntries(dir, fullEntries({ extra: [...staleDisps, misfit] })));
+    assert.equal(m.code, 1, m.stdout);
+    assert.deepEqual(m.json.data.blocking, ["dispositions: 1 missing, 1 unmatched"]);
+
+    // keep-local, compared by eye: nothing blocks.
+    const keep = { path: "metadata/good-1.png", localHash, baseline, disposition: "keep-local", reason: "compared by eye: same shot, the recapture only adds an sRGB profile" };
+    const ok = await auditRecord(root, writeEntries(dir, fullEntries({ extra: [...staleDisps, keep] })));
+    assert.equal(ok.code, 0, ok.stdout);
+    assert.equal(byId(ok)["audit-dispositions"].verdict, "PASS");
+    assert.deepEqual(ok.json.data.blocking, []);
+    const audit = JSON.parse(readFileSync(await auditPath(root), "utf8"));
+    assert.ok(audit.required.some((/** @type {any} */ r) => r.kind === "UNDECIDED" && r.path === "metadata/good-1.png" && r.baseline === baseline));
+    // The guard recomputes the same decision and allows the publish (raycast/extensions#33805).
+    const allowed = await guard(bashPayload(["npm", "run", "publish"].join(" "), root));
+    assert.equal(byId(allowed).guard.verdict, "PASS", byId(allowed).guard.message);
+    // adopt-published answers it too.
+    const adopt = await auditRecord(root, writeEntries(dir, fullEntries({ extra: [...staleDisps, { ...keep, disposition: "adopt-published" }] })));
+    assert.equal(adopt.code, 0, adopt.stdout);
   });
 });
 

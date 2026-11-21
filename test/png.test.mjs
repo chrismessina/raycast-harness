@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { cpSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { PNG } from "pngjs";
@@ -242,7 +243,7 @@ test("rx png: no PNG at all is N/A with a reason; a bad --published is ERROR; a 
   });
 });
 
-test("rx png with a published twin: the fixture's seven outcomes map to the contract's verdicts", async () => {
+test("rx png with a published twin: the fixture's eight outcomes map to the contract's verdicts", async () => {
   await withTempDir(async (dir) => {
     const expected = JSON.parse(readFileSync(join(FIXTURE, "expected.json"), "utf8"));
     const ext = join(dir, "ext");
@@ -256,8 +257,8 @@ test("rx png with a published twin: the fixture's seven outcomes map to the cont
     // SAME-PIXELS: published is the CI re-encode (RGB) of the local RGBA shot.
     writeFileSync(join(ext, "metadata", "same-1.png"), shot);
     writeFileSync(join(pub, "same-1.png"), png({ pixel: [1, 2, 3, 255], vary: true, colorType: 2 }));
-    // UNDECIDED: 16-bit local.
-    writeFileSync(join(ext, "metadata", "undecided-2.png"), png({ bitDepth: 16 }));
+    // UNDECIDED: same pixels, differing color metadata (gAMA).
+    writeFileSync(join(ext, "metadata", "undecided-2.png"), png({ gamma: 0.45455 }));
     writeFileSync(join(pub, "undecided-2.png"), png());
     // OLDER-SHOT: commit the old shot first, publish it, then replace locally.
     const old = png({ pixel: [9, 9, 9, 255] });
@@ -268,6 +269,8 @@ test("rx png with a published twin: the fixture's seven outcomes map to the cont
     writeFileSync(join(pub, "notyours-4.png"), png({ pixel: [6, 6, 6, 255] }));
     // LOCAL-ONLY: no published copy.
     writeFileSync(join(ext, "metadata", "local-5.png"), png());
+    // 16-BIT: a 16-bit local shot with no published copy still fails (it never reaches a comparison).
+    writeFileSync(join(ext, "metadata", "deep-6.png"), png({ bitDepth: 16 }));
     // icons: top-level icon SAME-PIXELS, command icon LOCAL-ONLY
     writeFileSync(join(ext, "assets", "icon.png"), png({ pixel: [7, 7, 7, 255] }));
     writeFileSync(join(dir, "published", "assets", "icon.png"), png({ pixel: [7, 7, 7, 255] }));
@@ -292,9 +295,17 @@ test("rx png with a published twin: the fixture's seven outcomes map to the cont
     for (const f of r.json.data.files) {
       assert.deepEqual(Object.keys(f).sort(), ["baseline", "local", "localHash", "outcome", "path", "provenance", "published"], f.path);
       assert.match(f.localHash, /^sha256:[0-9a-f]{64}$/, f.path);
-      if (f.outcome !== "OLDER-SHOT") assert.equal(f.baseline, null, f.path);
+      if (f.outcome !== "OLDER-SHOT" && f.outcome !== "UNDECIDED") assert.equal(f.baseline, null, f.path);
     }
     assert.equal(byPath["metadata/notyours-4.png"].baseline, null);
+    // UNDECIDED: the baseline pins the exact published bytes that were compared by eye; no provenance.
+    const undecided = byPath["metadata/undecided-2.png"];
+    const pubHash = `sha256:${createHash("sha256").update(readFileSync(join(pub, "undecided-2.png"))).digest("hex")}`;
+    assert.equal(undecided.baseline, pubHash, "UNDECIDED baseline is the sha256 of the published bytes");
+    assert.equal(undecided.provenance, null);
+    const undecidedResult = resultByPath["metadata/undecided-2.png"];
+    assert.match(undecidedResult.message, /^metadata\/undecided-2\.png: UNDECIDED; .*; compare by eye, then record an audit disposition$/);
+    assert.equal(undecidedResult.details[1].text, `disposition needs: path=metadata/undecided-2.png localHash=${undecided.localHash} baseline=${pubHash}`);
     assert.match(resultByPath["metadata/older-3.png"].details[1].text, new RegExp(`path=metadata/older-3.png localHash=sha256:[0-9a-f]{64} baseline=${baseline}`));
     assert.ok(resultByPath["metadata/older-3.png"].details[1].text.includes(byPath["metadata/older-3.png"].localHash), "prose and structured hash agree");
     assert.equal(byPath["metadata/notyours-4.png"].provenance, null);
@@ -307,6 +318,30 @@ test("rx png with a published twin: the fixture's seven outcomes map to the cont
   });
 });
 
+test("rx png: a 16-bit local shot FAILs with the conversion command, with or without a published copy", async () => {
+  await withTempDir(async (dir) => {
+    const ext = fakeExtension(dir, "ext");
+    mkdirSync(join(ext, "metadata"));
+    mkdirSync(join(dir, "pub", "metadata"), { recursive: true });
+    writeFileSync(join(ext, "metadata", "paired-1.png"), png({ bitDepth: 16 }));
+    writeFileSync(join(dir, "pub", "metadata", "paired-1.png"), png());
+    writeFileSync(join(ext, "metadata", "alone-2.png"), png({ bitDepth: 16 }));
+    const r = await rx(["png", "--root", ext, "--published", join(dir, "pub"), "--json"], { cwd: dir });
+    assert.equal(r.code, 1, r.stdout);
+    for (const path of ["metadata/paired-1.png", "metadata/alone-2.png"]) {
+      const f = r.json.data.files.find((/** @type {any} */ x) => x.path === path);
+      const res = r.json.results.find((/** @type {any} */ x) => x.details[0].file === path);
+      assert.equal(f.outcome, "16-BIT", path);
+      assert.equal(res.verdict, "FAIL", path);
+      assert.equal(res.details[0].text, "16-BIT convert to 8-bit", path);
+      const abs = `'${join(ext, path)}'`;
+      assert.ok(res.message.includes(`magick ${abs} -depth 8 ${abs}`), res.message);
+    }
+    // read-only: the 16-bit file is untouched
+    assert.ok(readFileSync(join(ext, "metadata", "alone-2.png")).equals(png({ bitDepth: 16 })));
+  });
+});
+
 test("rx png: differing metadata alone is UNDECIDED even with identical pixels", async () => {
   await withTempDir(async (dir) => {
     const ext = fakeExtension(dir, "ext");
@@ -315,8 +350,9 @@ test("rx png: differing metadata alone is UNDECIDED even with identical pixels",
     writeFileSync(join(ext, "metadata", "s-1.png"), png({ gamma: 0.45455 }));
     writeFileSync(join(dir, "pub", "metadata", "s-1.png"), png());
     const r = await rx(["png", "--root", ext, "--published", join(dir, "pub"), "--json"], { cwd: dir });
-    assert.equal(r.code, 1);
+    assert.equal(r.code, 0, "UNDECIDED is a WARN: a human compares by eye and records a disposition");
     assert.equal(r.json.data.files[0].outcome, "UNDECIDED");
+    assert.equal(r.json.results[0].verdict, "WARN");
     assert.match(r.json.results[0].message, /metadata differs: gAMA/);
   });
 });

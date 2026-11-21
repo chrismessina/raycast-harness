@@ -3,7 +3,10 @@
 //
 // One result per PNG, id `png`, outcome in details[0].text and data.files[].outcome:
 //   SAME-PIXELS  equal size, RGBA and color metadata     PASS  adopt the published copy (it is what ships)
-//   UNDECIDED    bit depth > 8 or metadata differs         FAIL  compare by eye
+//   16-BIT       local bit depth > 8, with or without a published copy
+//                                                          FAIL  convert to 8-bit (the message gives the magick command)
+//   UNDECIDED    published copy 16-bit, or metadata differs WARN  compare by eye, then record an audit disposition
+//                                                                (path, local hash, baseline = sha256 of the published bytes)
 //   LOCAL-ONLY   no published copy, or no --published      N/A   keep local
 //   OLDER-SHOT   differs; published equals a commit in this path's history
 //                                                          WARN  needs an audit disposition (path, local hash, baseline SHA)
@@ -20,14 +23,17 @@ import { PngError, comparePng, decodeRgba, readPngInfo } from "../png.mjs";
 import { git, isWorkTree } from "../git.mjs";
 import { withPublishedCopy } from "../published-copy.mjs";
 
+/** Single-quotes a path for a shell command the user copies. @param {string} p */
+const shq = (p) => `'${p.replace(/'/g, `'\\''`)}'`;
+
 /** @type {import("../cli.mjs").CommandSpec} */
 export const spec = {
   name: "png",
-  summary: "triage screenshots and icons against the published copy: SAME-PIXELS, UNDECIDED, LOCAL-ONLY, OLDER-SHOT, NOT-YOURS (read-only)",
+  summary: "triage screenshots and icons against the published copy: SAME-PIXELS, 16-BIT, UNDECIDED, LOCAL-ONLY, OLDER-SHOT, NOT-YOURS (read-only; UNDECIDED and OLDER-SHOT need an audit disposition)",
   root: "required",
   flags: {
     "--root": { type: "string", value: "<dir>", help: "extension root" },
-    "--published": { type: "string", value: "<dir>", help: "the extension as published in raycast/extensions (same layout); without it every file is LOCAL-ONLY" },
+    "--published": { type: "string", value: "<dir>", help: "the extension as published in raycast/extensions (same layout); without it every 8-bit file is LOCAL-ONLY" },
   },
   network: "none (reads git history locally)",
   state: "none (read-only; recommends, never modifies a file). A --published dir inside the upstream cache is read under the cache's reader lock (ERROR github after the wait if another rx holds it)",
@@ -36,7 +42,7 @@ export const spec = {
   },
   data: {
     published: "boolean — whether --published was given",
-    files: "[{ path, outcome, local: { width, height, bitDepth, colorType, gAMA, iCCP, sRGB, cHRM } | null, published: {…} | null, provenance: string | null (commit whose blob the published bytes match, OLDER-SHOT only), localHash: \"sha256:…\" | null (null only when the local file is unreadable), baseline: string | null (same commit as provenance) }]",
+    files: "[{ path, outcome, local: { width, height, bitDepth, colorType, gAMA, iCCP, sRGB, cHRM } | null, published: {…} | null, provenance: string | null (commit whose blob the published bytes match, OLDER-SHOT only), localHash: \"sha256:…\" | null (null only when the local file is unreadable), baseline: string | null (OLDER-SHOT: same commit as provenance; UNDECIDED: \"sha256:…\" of the published bytes) }]",
   },
   examples: ["rx png --published ~/.cache/raycast-harness/upstream/extensions/my-ext", "rx png --root ./my-ext --json"],
 };
@@ -123,10 +129,11 @@ export function extractFirstFile(tar) {
 const sha256 = (b) => `sha256:${createHash("sha256").update(b).digest("hex")}`;
 
 /**
- * One data.files[] row; every field present on every row.
- * @param {{ path: string, outcome: string, local?: import("../png.mjs").PngInfo | null, published?: import("../png.mjs").PngInfo | null, provenance?: string | null, localHash?: string | null }} r
+ * One data.files[] row; every field present on every row. `baseline` defaults to the provenance
+ * commit (OLDER-SHOT); UNDECIDED passes the published bytes' sha256 instead.
+ * @param {{ path: string, outcome: string, local?: import("../png.mjs").PngInfo | null, published?: import("../png.mjs").PngInfo | null, provenance?: string | null, localHash?: string | null, baseline?: string | null }} r
  */
-const row = (r) => ({ path: r.path, outcome: r.outcome, local: r.local ?? null, published: r.published ?? null, provenance: r.provenance ?? null, localHash: r.localHash ?? null, baseline: r.provenance ?? null });
+const row = (r) => ({ path: r.path, outcome: r.outcome, local: r.local ?? null, published: r.published ?? null, provenance: r.provenance ?? null, localHash: r.localHash ?? null, baseline: r.baseline ?? r.provenance ?? null });
 
 /** @type {import("../cli.mjs").CommandModule["run"]} */
 export async function run({ args, root, results, log }) {
@@ -168,6 +175,14 @@ export async function run({ args, root, results, log }) {
       files.push(row({ path, outcome: "ERROR", localHash }));
       continue;
     }
+    // 16-bit before anything else: decoding to 8 bits merges distinct values, so no comparison
+    // could vouch for it, and with no published copy it would otherwise pass as LOCAL-ONLY.
+    // Read-only, so recommend the conversion instead of making it (sips keeps 16 bits).
+    if (local.bitDepth > 8) {
+      results.fail("png", `${path}: 16-bit; convert it to 8-bit, then run gates again: magick ${shq(localPath)} -depth 8 ${shq(localPath)} (ImageMagick: brew install imagemagick)`, [{ file: path, text: "16-BIT convert to 8-bit" }]);
+      files.push(row({ path, outcome: "16-BIT", local, localHash }));
+      continue;
+    }
     const pubPath = copy && published ? copy.path(path) : null;
     if (!pubPath || !existsSync(pubPath) || !statSync(pubPath).isFile()) {
       results.na("png", `${path}: LOCAL-ONLY, keep local (${published ? "no published copy of this path" : "no --published given"})`, [{ file: path, text: "LOCAL-ONLY keep local" }]);
@@ -193,8 +208,15 @@ export async function run({ args, root, results, log }) {
       continue;
     }
     if (cmp.outcome === "UNDECIDED") {
-      results.fail("png", `${path}: UNDECIDED; ${cmp.reason}`, [{ file: path, text: `UNDECIDED ${cmp.reason}` }]);
-      files.push(row({ path, outcome: "UNDECIDED", local, published: pub, localHash }));
+      // A human compares the two by eye; the disposition pins the exact published bytes they saw.
+      // comparePng's reason already ends "; compare by eye"; the message says it once, with the next step.
+      const pubHash = sha256(pubBuf);
+      const reason = cmp.reason.replace(/; compare by eye$/, "");
+      results.warn("png", `${path}: UNDECIDED; ${reason}; compare by eye, then record an audit disposition`, [
+        { file: path, text: `UNDECIDED ${reason}` },
+        { file: path, text: `disposition needs: path=${path} localHash=${localHash} baseline=${pubHash}` },
+      ]);
+      files.push(row({ path, outcome: "UNDECIDED", local, published: pub, localHash, baseline: pubHash }));
       continue;
     }
 

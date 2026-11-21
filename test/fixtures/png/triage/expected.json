@@ -1,11 +1,12 @@
 {
-  "comment": "Run by test/png.test.mjs: PNGs are generated with pngjs into a temp copy (metadata/same-1.png, metadata/undecided-2.png, metadata/older-3.png, metadata/notyours-4.png, metadata/local-5.png, assets/icon.png, assets/command.png) and a --published twin is built so each outcome occurs once.",
+  "comment": "Run by test/png.test.mjs: PNGs are generated with pngjs into a temp copy (metadata/same-1.png, metadata/undecided-2.png, metadata/older-3.png, metadata/notyours-4.png, metadata/local-5.png, metadata/deep-6.png, assets/icon.png, assets/command.png) and a --published twin is built so each outcome occurs once.",
   "outcomes": {
     "metadata/same-1.png": { "outcome": "SAME-PIXELS", "verdict": "PASS" },
-    "metadata/undecided-2.png": { "outcome": "UNDECIDED", "verdict": "FAIL" },
+    "metadata/undecided-2.png": { "outcome": "UNDECIDED", "verdict": "WARN" },
     "metadata/older-3.png": { "outcome": "OLDER-SHOT", "verdict": "WARN" },
     "metadata/notyours-4.png": { "outcome": "NOT-YOURS", "verdict": "FAIL" },
     "metadata/local-5.png": { "outcome": "LOCAL-ONLY", "verdict": "N/A" },
+    "metadata/deep-6.png": { "outcome": "16-BIT", "verdict": "FAIL" },
     "assets/icon.png": { "outcome": "SAME-PIXELS", "verdict": "PASS" },
     "assets/command.png": { "outcome": "LOCAL-ONLY", "verdict": "N/A" }
   },

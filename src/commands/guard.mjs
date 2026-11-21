@@ -154,7 +154,7 @@ export async function checkRoot(root, version) {
     { buildApplyContext, loadSources, readLockfile, readPublished },
     { validateAudit, validateReceipt },
     { dispositionKey, parseEntries },
-    { applicableRules, decide: decideAudit, effectsOf, staleDispositions },
+    { PNG_DISPOSITION_KINDS, applicableRules, decide: decideAudit, effectsOf, staleDispositions },
     { greptileRulesAgreementProblem, greptileRulesStamp },
   ] = await Promise.all([
     import("../binding.mjs"),
@@ -268,17 +268,23 @@ export async function checkRoot(root, version) {
   const effects = effectsOf(applyCtx);
 
   // Required dispositions: stale rows from the receipt (independent of the audit), png OLDER-SHOT
-  // rows from the audit's own record, cross-checked against its embedded png evidence.
+  // and UNDECIDED rows from the audit's own record, cross-checked (path and kind) against its
+  // embedded png WARN evidence.
+  const isPngKind = (/** @type {any} */ r) => PNG_DISPOSITION_KINDS.includes(r.kind);
   const stale = staleDispositions(receipt.data.stale);
-  const storedStale = audit.required.filter((/** @type {any} */ r) => r.kind !== "OLDER-SHOT");
+  const storedStale = audit.required.filter((/** @type {any} */ r) => !isPngKind(r));
   const staleKeys = new Set(stale.map(dispositionKey));
   if (storedStale.length !== stale.length || storedStale.some((/** @type {any} */ r) => !staleKeys.has(dispositionKey(r)))) return fail("the audit's required dispositions do not match the receipt's stale CHECK / NEW? / REMOVE / DELETED rows; run rx audit record again");
-  const olderShots = audit.required.filter((/** @type {any} */ r) => r.kind === "OLDER-SHOT");
-  const pngOlder = new Set(audit.evidence.png.filter((/** @type {any} */ r) => r.verdict === "WARN" && /OLDER-SHOT/.test(r.message)).map((/** @type {any} */ r) => r.details[0]?.file ?? ""));
-  if (olderShots.length !== pngOlder.size || olderShots.some((/** @type {any} */ r) => !pngOlder.has(r.path))) return fail("the audit's png OLDER-SHOT dispositions do not match its png evidence; run rx audit record again");
+  const pngRequired = audit.required.filter(isPngKind);
+  const pngKey = (/** @type {string} */ kind, /** @type {string} */ path) => `${kind}\u0000${path}`;
+  const pngWarned = new Set(audit.evidence.png.flatMap((/** @type {any} */ r) => {
+    const kind = PNG_DISPOSITION_KINDS.find((k) => r.verdict === "WARN" && typeof r.message === "string" && r.message.includes(`: ${k}; `));
+    return kind ? [pngKey(kind, r.details[0]?.file ?? "")] : [];
+  }));
+  if (pngRequired.length !== pngWarned.size || pngRequired.some((/** @type {any} */ r) => !pngWarned.has(pngKey(r.kind, r.path)))) return fail("the audit's png OLDER-SHOT / UNDECIDED dispositions do not match its png evidence; run rx audit record again");
 
   const parts = parseEntries([...audit.entries, ...audit.dispositions, ...audit.verifications], "audit.json");
-  const d = decideAudit({ applicable, entries: parts.entries, dispositions: parts.dispositions, verifications: parts.verifications, required: [...olderShots, ...stale], effects, evidence: audit.evidence });
+  const d = decideAudit({ applicable, entries: parts.entries, dispositions: parts.dispositions, verifications: parts.verifications, required: [...pngRequired, ...stale], effects, evidence: audit.evidence });
   if (d.blocking.length) return fail(`the audit carries ${d.blocking.length} blocking reason(s): ${d.blocking.slice(0, 3).join("; ")}${d.blocking.length > 3 ? "; …" : ""}`);
   auditState.blocking = false;
   return { ok: true, reason: "allowed: current receipt and audit", receipt: receiptState, audit: auditState, fingerprint: fp };

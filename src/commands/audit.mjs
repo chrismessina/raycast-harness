@@ -9,7 +9,7 @@
 //                  FAIL audit-<id>; a `report` rule with result fail → WARN audit-<id>
 //   shortcuts      `rx shortcuts check` run in-process and embedded; its ERROR (runtime evidence
 //                  unavailable) or FAIL blocks, and is never an accepted N/A (F4)
-//   dispositions   every stale CHECK / NEW? / REMOVE / DELETED path in the receipt and every png OLDER-SHOT
+//   dispositions   every stale CHECK / NEW? / REMOVE / DELETED path in the receipt and every png OLDER-SHOT / UNDECIDED
 //                  image in this run (`rx png` run in-process against the recorded published copy)
 //                  needs a disposition matching { path, localHash, baseline } exactly (a REMOVE
 //                  or DELETED row's localHash is "absent", and only `remove-published` answers it, which
@@ -60,7 +60,7 @@ import * as shortcuts from "./shortcuts.mjs";
 const RECORD_CHECKS = {
   "audit-coverage": "one entry per applicable preset rule and Greptile judgment rule (FAIL naming the missing ids)",
   "audit-*": "audit-<rule id>: a rule whose entry says fail (FAIL for a block rule, WARN for a report rule)",
-  "audit-dispositions": "every stale CHECK / NEW? / REMOVE / DELETED path and png OLDER-SHOT image in this run has a disposition matching { path, localHash, baseline } (REMOVE and DELETED: localHash \"absent\", disposition remove-published, which no other row accepts)",
+  "audit-dispositions": "every stale CHECK / NEW? / REMOVE / DELETED path and png OLDER-SHOT / UNDECIDED image in this run has a disposition matching { path, localHash, baseline } (REMOVE and DELETED: localHash \"absent\", disposition remove-published, which no other row accepts)",
   "audit-verification": "a destination / runtime verification entry per external effect the extension has (writes files, web requests, Raycast AI)",
   "audit-greptile-rules": { description: "ERROR when the Greptile rules in use changed while the audit was being recorded (another rx greptile update finished mid-recording); nothing is written", levels: ["ERROR"] },
   "audit-receipt": { description: "ERROR when there is no current receipt (missing, not attested by this machine's key, malformed, written for another checkout or an earlier gates attempt, its fingerprints no longer match the tree, it records a FAIL/ERROR, it was written with a different preset, or its greptileRules are not the Greptile rules in use)", levels: ["ERROR"] },
@@ -327,14 +327,14 @@ async function recordWith(ctx, auditPath, rules) {
       ...d.unresolved.map((n) => ({ file: n.path, text: `${n.kind} needs a disposition${deletesPublished(n.kind) ? " remove-published" : ""}: localHash=${n.localHash} baseline=${n.baseline}` })),
       ...d.unmatched.map((x) => ({ file: x.path, text: required.some((n) => dispositionKey(n) === dispositionKey(x))
         ? `${x.disposition} does not answer this row: remove-published answers a stale REMOVE or DELETED row and nothing else`
-        : `stale disposition: localHash=${x.localHash} baseline=${x.baseline} matches no current CHECK / NEW? / REMOVE / DELETED / OLDER-SHOT` })),
+        : `stale disposition: localHash=${x.localHash} baseline=${x.baseline} matches no current CHECK / NEW? / REMOVE / DELETED / OLDER-SHOT / UNDECIDED` })),
     ]);
   } else if (required.length) {
     results.pass("audit-dispositions", `${required.length} outcome(s) dispositioned`, required.map((n) => {
       const g = given.get(dispositionKey(n));
       return { file: n.path, text: `${n.kind}: ${g?.disposition} — ${String(g?.reason ?? "").split(/\r?\n/)[0]}` };
     }));
-  } else results.na("audit-dispositions", "no stale CHECK / NEW? / REMOVE / DELETED path and no png OLDER-SHOT image in this run");
+  } else results.na("audit-dispositions", "no stale CHECK / NEW? / REMOVE / DELETED path and no png OLDER-SHOT / UNDECIDED image in this run");
 
   const byEffect = new Map(file.verifications.map((v) => [v.verification, v]));
   if (d.missingEffects.length || d.failedEffects.length) {
