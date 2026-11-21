@@ -6,7 +6,7 @@ Two new preflight checks catch the AppleScript and failure-toast patterns Grepti
 
 ### New
 
-- `script-utils` (FAIL): run AppleScript and JXA with `runAppleScript` from `@raycast/utils`, not `osascript` via `child_process` or the `run-applescript` package.
+- `script-utils` (FAIL): run AppleScript and JXA with `runAppleScript` from `@raycast/utils`, not `osascript` via `child_process` or `run-applescript`.
 - `failure-toast-helper` (WARN): show a caught error with `showFailureToast`, not a hand-built Failure toast, including through a wrapper the catch calls.
 
 ## 0.3.0
