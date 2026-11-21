@@ -342,6 +342,61 @@ test("rx png: a 16-bit local shot FAILs with the conversion command, with or wit
   });
 });
 
+test("rx png: differing metadata AND pixels runs provenance: NOT-YOURS when the published shot is not in history, OLDER-SHOT when it is", async () => {
+  await withTempDir(async (dir) => {
+    const ext = fakeExtension(dir, "ext");
+    mkdirSync(join(ext, "metadata"));
+    mkdirSync(join(dir, "pub", "metadata"), { recursive: true });
+    gitInit(ext);
+    // A contributor's shot upstream (never in this history), with a different color profile from ours.
+    writeFileSync(join(dir, "pub", "metadata", "theirs-1.png"), png({ pixel: [6, 6, 6, 255], gamma: 0.45455 }));
+    writeFileSync(join(ext, "metadata", "theirs-1.png"), png({ pixel: [5, 5, 5, 255] }));
+    // Our older shot upstream (committed here first), recaptured with a different color profile.
+    const old = png({ pixel: [9, 9, 9, 255], gamma: 0.45455 });
+    writeFileSync(join(dir, "pub", "metadata", "ours-2.png"), old);
+    writeFileSync(join(ext, "metadata", "ours-2.png"), old);
+    const baseline = gitCommit(ext, "old shots");
+    writeFileSync(join(ext, "metadata", "ours-2.png"), png({ pixel: [8, 8, 8, 255] }));
+    gitCommit(ext, "recapture");
+    const r = await rx(["png", "--root", ext, "--published", join(dir, "pub"), "--json"], { cwd: dir });
+    const byPath = Object.fromEntries(r.json.data.files.map((/** @type {any} */ f) => [f.path, f]));
+    const verdict = Object.fromEntries(r.json.results.map((/** @type {any} */ x) => [x.details[0].file, x.verdict]));
+    assert.equal(byPath["metadata/theirs-1.png"].outcome, "NOT-YOURS", "a contributor's shot is never dispositionable just because its profile differs");
+    assert.equal(verdict["metadata/theirs-1.png"], "FAIL");
+    assert.equal(byPath["metadata/ours-2.png"].outcome, "OLDER-SHOT");
+    assert.equal(byPath["metadata/ours-2.png"].baseline, baseline);
+    assert.equal(verdict["metadata/ours-2.png"], "WARN");
+    assert.equal(r.code, 1, r.stdout);
+  });
+});
+
+test("rx png: a 16-bit published copy is never dispositionable, even when it decodes to the local 8-bit pixels", async () => {
+  await withTempDir(async (dir) => {
+    const ext = fakeExtension(dir, "ext");
+    mkdirSync(join(ext, "metadata"));
+    mkdirSync(join(dir, "pub", "metadata"), { recursive: true });
+    gitInit(ext);
+    writeFileSync(join(ext, "metadata", "s-1.png"), png());
+    gitCommit(ext, "shot");
+    // A real 16-bit RGBA encoding of png()'s pixel: each sample is v*257, so its high byte is v.
+    const [w, h, px] = [4, 3, [200, 100, 50, 255]];
+    const ihdr = Buffer.alloc(13);
+    ihdr.writeUInt32BE(w, 0);
+    ihdr.writeUInt32BE(h, 4);
+    ihdr.set([16, 6, 0, 0, 0], 8);
+    const row = Buffer.alloc(1 + w * 8);
+    for (let x = 0; x < w; x++) px.forEach((v, c) => row.writeUInt16BE(v * 257, 1 + x * 8 + c * 2));
+    const raw = Buffer.concat(Array.from({ length: h }, () => row));
+    const pub16 = Buffer.concat([Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]), buildChunk("IHDR", ihdr), buildChunk("IDAT", zlib.deflateSync(raw)), buildChunk("IEND", Buffer.alloc(0))]);
+    assert.equal(comparePng(pub16, png()).pixelsEqual, true, "precondition: the 16-bit copy decodes to the same 8-bit RGBA");
+    writeFileSync(join(dir, "pub", "metadata", "s-1.png"), pub16);
+    const r = await rx(["png", "--root", ext, "--published", join(dir, "pub"), "--json"], { cwd: dir });
+    assert.equal(r.json.data.files[0].outcome, "NOT-YOURS", r.stdout);
+    assert.equal(r.json.results[0].verdict, "FAIL");
+    assert.equal(r.code, 1);
+  });
+});
+
 test("rx png: differing metadata alone is UNDECIDED even with identical pixels", async () => {
   await withTempDir(async (dir) => {
     const ext = fakeExtension(dir, "ext");

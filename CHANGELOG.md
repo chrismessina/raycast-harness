@@ -6,7 +6,7 @@ A screenshot whose color profile changed can now ship after an eye check, and a 
 
 ### Changed
 
-- `rx png` rates `UNDECIDED` a WARN, not a FAIL: compare by eye, then record a `keep-local` or `adopt-published` audit disposition.
+- `rx png`: an image that only differs in color metadata is a WARN, not a FAIL; compare by eye, then record a disposition.
 - `rx png` FAILs a 16-bit screenshot even with no published copy, and prints the command that converts it to 8-bit.
 
 ## 0.2.0

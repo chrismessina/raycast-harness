@@ -148,7 +148,7 @@ rx changelog --published "$PUB"
 rx png --published "$PUB"
 ```
 
-Each image is `SAME-PIXELS` (adopt the published copy), `16-BIT` (convert it to 8-bit; the message gives the command), `UNDECIDED` (compare by eye, then record an audit disposition), `LOCAL-ONLY`, `OLDER-SHOT` (needs an audit disposition) or `NOT-YOURS`. The message names every difference it found, so `UNDECIDED; color metadata differs: iCCP; RGBA pixels differ; compare by eye, then record an audit disposition` means a tool added an ICC profile and the pixels changed too. After looking at both, record `keep-local` or `adopt-published` with the `path`, `localHash` and `baseline` (the published bytes' sha256) that `rx png` prints. It is read-only and never rewrites a file.
+Each image is `SAME-PIXELS` (adopt the published copy), `16-BIT` (convert it to 8-bit; the message gives the command), `UNDECIDED` (the same image with different color metadata: compare by eye, then record an audit disposition), `LOCAL-ONLY`, `OLDER-SHOT` (needs an audit disposition) or `NOT-YOURS`. The message names every difference it found, so `UNDECIDED; color metadata differs: iCCP; compare by eye, then record an audit disposition` means a tool added an ICC profile to the same pixels. If the pixels changed too, the image is not UNDECIDED: provenance decides between `OLDER-SHOT` and `NOT-YOURS`. After looking at both, record `keep-local` or `adopt-published` with the `path`, `localHash` and `baseline` (the published bytes' sha256) that `rx png` prints. It is read-only and never rewrites a file.
 
 ### Ship with the gate chain
 

@@ -173,7 +173,9 @@ export function expectedRawLength(w, h, bitDepth, colorType, interlace) {
 }
 
 /**
- * @typedef {{ outcome: "SAME-PIXELS" | "DIFFERENT" | "UNDECIDED", reason: string, a: PngInfo, b: PngInfo }} Comparison
+ * `pixelsEqual`: equal size and equal 8-bit RGBA. On UNDECIDED it separates a metadata-only
+ * difference (the same image, re-tagged) from a different image that also carries other metadata.
+ * @typedef {{ outcome: "SAME-PIXELS" | "DIFFERENT" | "UNDECIDED", reason: string, pixelsEqual: boolean, a: PngInfo, b: PngInfo }} Comparison
  */
 
 /**
@@ -196,11 +198,12 @@ export function comparePng(a, b) {
   const diffs = [];
   if (sixteen) diffs.push(`16-bit PNG (bit depth ${ia.bitDepth} vs ${ib.bitDepth})`);
   if (differing.length) diffs.push(`color metadata differs: ${differing.join(", ")}`);
+  const pixelsEqual = sameSize && da.data.equals(db.data);
   if (!sameSize) diffs.push(`size ${ia.width}x${ia.height} vs ${ib.width}x${ib.height}`);
-  else if (!da.data.equals(db.data)) diffs.push("RGBA pixels differ");
-  if (sixteen || differing.length) return { outcome: "UNDECIDED", reason: `${diffs.join("; ")}; compare by eye`, a: ia, b: ib };
-  if (diffs.length) return { outcome: "DIFFERENT", reason: diffs.join("; "), a: ia, b: ib };
-  return { outcome: "SAME-PIXELS", reason: "equal size, RGBA pixels and color metadata", a: ia, b: ib };
+  else if (!pixelsEqual) diffs.push("RGBA pixels differ");
+  if (sixteen || differing.length) return { outcome: "UNDECIDED", reason: `${diffs.join("; ")}; compare by eye`, pixelsEqual, a: ia, b: ib };
+  if (diffs.length) return { outcome: "DIFFERENT", reason: diffs.join("; "), pixelsEqual, a: ia, b: ib };
+  return { outcome: "SAME-PIXELS", reason: "equal size, RGBA pixels and color metadata", pixelsEqual, a: ia, b: ib };
 }
 
 /**

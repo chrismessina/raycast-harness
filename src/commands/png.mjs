@@ -5,7 +5,8 @@
 //   SAME-PIXELS  equal size, RGBA and color metadata     PASS  adopt the published copy (it is what ships)
 //   16-BIT       local bit depth > 8, with or without a published copy
 //                                                          FAIL  convert to 8-bit (the message gives the magick command)
-//   UNDECIDED    published copy 16-bit, or metadata differs WARN  compare by eye, then record an audit disposition
+//   UNDECIDED    bit depth <= 8, same size and RGBA, color metadata differs
+//                                                          WARN  compare by eye, then record an audit disposition
 //                                                                (path, local hash, baseline = sha256 of the published bytes)
 //   LOCAL-ONLY   no published copy, or no --published      N/A   keep local
 //   OLDER-SHOT   differs; published equals a commit in this path's history
@@ -207,7 +208,11 @@ export async function run({ args, root, results, log }) {
       files.push(row({ path, outcome: "SAME-PIXELS", local, published: pub, localHash }));
       continue;
     }
-    if (cmp.outcome === "UNDECIDED") {
+    // UNDECIDED takes a disposition only for the same 8-bit image re-tagged (a metadata-only
+    // difference). A different image, or a 16-bit published copy (its decode to 8 bits merges
+    // distinct values, so "equal" proves nothing), goes through provenance like any other change,
+    // so a contributor's shot can never be kept over by a disposition.
+    if (cmp.outcome === "UNDECIDED" && cmp.pixelsEqual && pub.bitDepth <= 8) {
       // A human compares the two by eye; the disposition pins the exact published bytes they saw.
       // comparePng's reason already ends "; compare by eye"; the message says it once, with the next step.
       const pubHash = sha256(pubBuf);
