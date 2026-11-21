@@ -15,6 +15,7 @@ import {
   readLockfile, readPublished,
 } from "./context.mjs";
 import { ignoredPredicate } from "./gitignore.mjs";
+import { handBuiltFailureToasts, handRolledScripts } from "./helper-usage.mjs";
 import { shortcutPlatformCase } from "./platform-keys.mjs";
 import { loadTypeScript } from "../typescript.mjs";
 import { PUBLISH_SKIPS, isSkipped, listPayload } from "../payload.mjs";
@@ -428,6 +429,12 @@ export async function runPreflight({ root, publishedDir, preset, extensionTypesc
 
   // What ships (nested-review-config: core; agent-scaffolding, dev-material, generated-files: preset-class)
   await fileChecks(root, publishedDir, c, enabled, keep);
+
+  // Greptile script-and-sql-utils and failure-toasts, settled by text (src/preflight/helper-usage.mjs)
+  const scripts = handRolledScripts(sources);
+  if (scripts.length) c.fail("script-utils", "run AppleScript and JXA with runAppleScript(script, args, { language }) from @raycast/utils, not osascript via child_process or the run-applescript package", where(scripts));
+  c.pass("script-utils", sources.length ? "no osascript process call or run-applescript import in src/" : "no source files under src/");
+  handBuiltFailureToasts(root, sources, c, extensionTypescript ? loadTypeScript(root) : null);
 
   // warn-only heuristics
   /** @type {[string, RegExp, string][]} */

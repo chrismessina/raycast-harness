@@ -20,6 +20,8 @@ const REQUIRED_FUNCTIONS = [...BINDER_PREDICATES,
   "isArrayLiteralExpression", "isIdentifier", "isStringLiteral", "isNoSubstitutionTemplateLiteral", "isParenthesizedExpression",
   "isAsExpression", "isJsxAttribute", "isJsxElement", "isJsxSelfClosingElement", "isJsxOpeningElement", "isJsxExpression",
   "isJsxSpreadAttribute", "isJsxFragment", "isCallExpression", "isNewExpression", "isPropertyAccessExpression",
+  "isArrowFunction", "isObjectBindingPattern", "isArrayBindingPattern", "isBlock", "isCatchClause", "isCaseBlock", "isModuleBlock",
+  "isVariableStatement", "isExportDeclaration", "isNamedExports", "isExportAssignment",
   "isConditionalExpression", "isBinaryExpression", "isImportDeclaration", "isNamedImports", "isFunctionLike", "isIterationStatement",
 ];
 

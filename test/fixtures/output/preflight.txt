@@ -37,6 +37,8 @@ FAIL   readme-links             3 relative links do not resolve
        README.md:3  LICENSE
        docs/guide.md:3  ./diagram.png
 PASS   changelog-placeholder    one {PR_MERGE_DATE}, in the top entry's heading
+PASS   script-utils             no osascript process call or run-applescript import in src/
+PASS   failure-toast-helper     no hand-built Failure toast found by the text scan (pass --extension-typescript, as rx gates does, for the parsed check)
 PASS   nested-review-config     no nested Greptile config would ship
 N/A    pref-description-length  no preset (core enforces only Store facts)
 N/A    pref-label-length        no preset (core enforces only Store facts)

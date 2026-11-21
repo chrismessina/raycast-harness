@@ -44,6 +44,8 @@
       "readme-dev-sections": "core",
       "readme-links": "core",
       "changelog-placeholder": "core",
+      "script-utils": "core",
+      "failure-toast-helper": "core",
       "nested-review-config": "core",
       "pref-description-length": "preset",
       "pref-label-length": "preset",
@@ -288,6 +290,18 @@
       "id": "changelog-placeholder",
       "verdict": "PASS",
       "message": "one {PR_MERGE_DATE}, in the top entry's heading",
+      "details": []
+    },
+    {
+      "id": "script-utils",
+      "verdict": "PASS",
+      "message": "no osascript process call or run-applescript import in src/",
+      "details": []
+    },
+    {
+      "id": "failure-toast-helper",
+      "verdict": "PASS",
+      "message": "no hand-built Failure toast found by the text scan (pass --extension-typescript, as rx gates does, for the parsed check)",
       "details": []
     },
     {

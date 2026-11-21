@@ -711,6 +711,93 @@ test("warn-only heuristics: raycast:// deeplinks, hand-built favicon URLs, shell
   });
 });
 
+test("script-utils: osascript through child_process or the run-applescript package fails; runAppleScript passes", async () => {
+  await withTempDir(async (dir) => {
+    const jxa = 'const out = await execFileAsync("/usr/bin/osascript", ["-l", "JavaScript", "-e", script]);';
+    const spawned = 'spawn(\n  "osascript",\n  ["-e", s],\n);';
+    const pkgImport = 'import runAppleScript from "run-applescript";';
+    // Codex H2: a require split across lines, and a side-effect import, still load the package.
+    const splitRequire = 'const x = 1;\nconst run = require(\n  "run-applescript"\n);';
+    const sideEffect = 'import "run-applescript";';
+    const binConst = 'const BIN = "/usr/bin/osascript";';
+    for (const [name, src, line] of [["jxa", jxa, 1], ["spawned", spawned, 2], ["pkg", pkgImport, 1], ["split", splitRequire, 3], ["side", sideEffect, 1], ["const", binConst, 1]]) {
+      const r = await preflight(makeExt(join(dir, String(name)), { files: { "src/a.ts": String(src) } }));
+      assert.equal(r.verdict("script-utils"), "FAIL", String(name));
+      assert.deepEqual(r.by["script-utils"].details.map((/** @type {any} */ d) => d.line), [line], String(name));
+    }
+    const fixture = await preflight(makeExt(join(dir, "test"), { files: { "src/clipboard.test.ts": 'execFileSync("osascript", ["-e", setup]);' } }));
+    assert.equal(fixture.verdict("script-utils"), "PASS", "a test file may drive osascript");
+    const ok = ['import { runAppleScript } from "@raycast/utils";', 'await runAppleScript(s, ["-1"], { language: "JavaScript" });', "// osascript via child_process used to live here", 'throw new Error("osascript failed");', 'const help = `Install "osascript" to continue`;', "const note = 'run \"osascript\" yourself';"].join("\n");
+    assert.equal((await preflight(makeExt(join(dir, "ok"), { files: { "src/a.ts": ok } }))).verdict("script-utils"), "PASS");
+  });
+});
+
+test("failure-toast-helper: a hand-built Failure toast for a caught error warns, directly or through a wrapper; a result toast passes", async () => {
+  await withTempDir(async (dir) => {
+    const direct = ["try {", "  await run();", "} catch (error) {", '  await showToast({ style: Toast.Style.Failure, title: "Failed", message: String(error) });', "}"].join("\n");
+    const r1 = await preflight(makeExt(join(dir, "direct"), { files: { "src/a.ts": direct } }));
+    assert.equal(r1.verdict("failure-toast-helper"), "WARN");
+    assert.deepEqual(r1.by["failure-toast-helper"].details.map((/** @type {any} */ d) => d.line), [4]);
+
+    // capture-raycast-metadata #33805: the wrapper lives in a util, the catch in the command.
+    const util = ["export async function showFailure(title: string, message: string) {", "  await showToast({", "    style: Toast.Style.Failure,", "    title,", "    message,", "  });", "}", "", "export const report = async (m: string) => {", '  await showToast({ style: Toast.Style.Failure, title: "Wrong Size", message: m });', "};"].join("\n");
+    const cmd = ['import { showFailure, report } from "./util";', "export default async function Command() {", "  try {", "    const r = await capture();", "    if (r.bad) await report(r.m);", "  } catch (error) {", '    await showFailure("Capture Failed", String(error));', "  }", "}"].join("\n");
+    const r2 = await preflight(makeExt(join(dir, "wrapper"), { files: { "src/util.ts": util, "src/command.ts": cmd } }));
+    assert.equal(r2.verdict("failure-toast-helper"), "WARN");
+    assert.deepEqual(r2.by["failure-toast-helper"].details.map((/** @type {any} */ d) => `${d.file}:${d.line}`), ["src/util.ts:3"]);
+
+    const ok = ["try { await run(); } catch (error) {", '  await showFailureToast(error, { title: "Failed" });', "  toast.style = Toast.Style.Failure;", "}", 'await showToast({ style: Toast.Style.Failure, title: "Saved at the Wrong Size" });'].join("\n");
+    assert.equal((await preflight(makeExt(join(dir, "ok"), { files: { "src/a.ts": ok } }))).verdict("failure-toast-helper"), "PASS");
+  });
+});
+
+// Parsed failure-toast regressions use the same real compiler fixture as platform keys.
+const failureStyle = "showToast({ style: Toast.Style.Failure })";
+const failureCases = [
+  { name: "H3 template brace", code: "try {} catch(e) { const x = `}`;\n" + failureStyle + "; }", lines: [2] },
+  { name: "H3 regex brace", code: "try {} catch(e) { const x = /}/;\n" + failureStyle + "; }", lines: [2] },
+  { name: "H3 JSX apostrophe", code: "try {} catch(e) { <Text>Don't</Text>; } " + failureStyle, lines: [] },
+  { name: "H4 return type", code: "function report(e: Error): Promise<{ a: string }> {\n" + failureStyle + "; }\ntry {} catch(e) { report(e); }", lines: [2] },
+  { name: "H4 single parameter arrow", code: "const report = e => {\n" + failureStyle + "; };\ntry {} catch(e) { report(e); }", lines: [2] },
+  { name: "H4 expression arrow", code: "const report = (m) => " + failureStyle + ";\ntry {} catch(e) { report(e); }", lines: [1] },
+  { name: "H5 different file binding", code: "function report(e) {} try {} catch(e) { report(e); }", extra: { "src/util.ts": "function report(e) { " + failureStyle + "; }" }, lines: [] },
+  { name: "H5 import alias", code: 'import { showFailure as fail } from "./util"; try {} catch(e) { fail(e); }', extra: { "src/util.ts": "export function showFailure(e) { " + failureStyle + "; }" }, lines: [1], file: "src/util.ts" },
+  { name: "H5 shadowing", code: "function report(e) { " + failureStyle + "; } function run(report) { try {} catch(e) { report(e); } }", lines: [] },
+  { name: "H6 catch string", code: 'const s = "catch {";\n' + failureStyle, lines: [] },
+  { name: "H6 style string", code: 'try {} catch(e) { const s = "style: Toast.Style.Failure"; }', lines: [] },
+  { name: "promise catch callback", code: "run().catch(e => {\n" + failureStyle + "; });", lines: [2] },
+];
+for (const fixture of failureCases) test(`failure-toast AST: ${fixture.name}`, async () => {
+  await withTempDir(async (dir) => {
+    const r = await pf(withTs(makeExt(join(dir, "ext"), { files: { "src/a.tsx": fixture.code, ...fixture.extra } })));
+    const result = r.by["failure-toast-helper"];
+    assert.equal(result.verdict, fixture.lines.length ? "WARN" : "PASS");
+    assert.deepEqual(result.details.map(d => [d.file, d.line]), fixture.lines.map(line => [fixture.file ?? "src/a.tsx", line]));
+    for (const d of result.details) assert.match(d.text, /\(in a catch block\)|\(\w+, called from a catch at src\/a.tsx:\d+\)/);
+  });
+});
+
+test("failure-toast AST: syntax error warns and clean siblings are still inspected", async () => {
+  await withTempDir(async (dir) => {
+    const r = await pf(withTs(makeExt(join(dir, "ext"), { files: { "src/bad.ts": "const x = 1;\nconst broken = ;", "src/good.ts": "try {} catch(e) { " + failureStyle + "; }" } })));
+    const result = r.by["failure-toast-helper"];
+    assert.equal(result.verdict, "WARN");
+    assert.match(result.message, /not fully inspected/);
+    assert.ok(result.details.some(d => d.file === "src/bad.ts" && d.line === 2));
+    assert.ok(result.details.some(d => d.file === "src/good.ts" && d.line === 1));
+  });
+});
+
+test("failure-toast fallback: PASS explicitly names the text scan with or without a loadable compiler", async () => {
+  await withTempDir(async (dir) => {
+    for (const extensionTypescript of [false, true]) {
+      const r = await preflight(makeExt(join(dir, String(extensionTypescript))), { extensionTypescript });
+      assert.equal(r.verdict("failure-toast-helper"), "PASS");
+      assert.match(r.by["failure-toast-helper"].message, /text scan.*--extension-typescript/);
+    }
+  });
+});
+
 test("command-renamed: with --published, a vanished name fails when a new one appears, warns when only removed; a retitle is fine; malformed published manifests warn", async () => {
   await withTempDir(async (dir) => {
     const two = [{ name: "index", title: "Search Items", mode: "view" }, { name: "list", title: "List Items", mode: "view" }];
@@ -1412,5 +1499,145 @@ test("nested-review-config (W9 finding 6): a .greptile/ or greptile.json at any 
     assert.equal((await preflight(makeExt(join(dir, "ign"), { files: { "src/greptile.json": "{}", ".gitignore": "greptile.json\n" } }), { preset: null })).verdict("nested-review-config"), "PASS");
     const pub = makeExt(join(dir, "pub"), { files: { "src/.greptile/config.json": "{}" } });
     assert.equal((await preflight(makeExt(join(dir, "same"), { files: { "src/.greptile/config.json": "{}" } }), { preset: null, published: pub })).verdict("nested-review-config"), "PASS");
+  });
+});
+
+test("failure-toast AST: catch parameters and named function expressions have their own scope", async () => {
+  await withTempDir(async (dir) => {
+    for (const [name, code] of [
+      ["catch", `function report(e) { ${failureStyle}; } try {} catch(report) { report(); } try {} catch(e) { report(e); }`],
+      ["expression", `function report(e) { ${failureStyle}; } const other = function report() {}; try {} catch(e) { report(e); }`],
+    ]) {
+      const r = await pf(tsExt(dir, name, { "src/a.ts": code }));
+      assert.equal(r.verdict("failure-toast-helper"), "WARN", name);
+      assert.equal(r.by["failure-toast-helper"].details.length, 1, name);
+    }
+  });
+});
+
+test("failure-toast AST: export forms, module extensions and index resolution", async () => {
+  await withTempDir(async (dir) => {
+    for (const [i, module, code, specifier] of [
+      [0, "util.ts", `export default function(e) { ${failureStyle}; }`, 'import fail from "./util";'],
+      [1, "util/index.tsx", `const local = (e) => ${failureStyle}; export { local as report };`, 'import { report as fail } from "./util";'],
+      [2, "util.mts", `export const fail = function(e): { a: string } { ${failureStyle}; };`, 'import { fail } from "./util.mts";'],
+      [3, "util.cts", `export function fail(e) { ${failureStyle}; }`, 'import { fail } from "./util";'],
+    ]) {
+      const r = await pf(tsExt(dir, String(i), { [`src/${module}`]: String(code), "src/a.ts": `${specifier} try {} catch(e) { fail(e); fail(e); }` }));
+      const result = r.by["failure-toast-helper"];
+      assert.equal(result.verdict, "WARN", String(i));
+      assert.deepEqual(result.details.map(d => [d.file, d.line]), [[`src/${module}`, 1]]);
+    }
+  });
+});
+
+test("failure-toast AST: unwrapped properties, nested scopes, one hop and excluded paths", async () => {
+  await withTempDir(async (dir) => {
+    const code = [
+      'function report() { showToast({ "style": ((Toast.Style.Failure as any) satisfies any) }); }',
+      'try {} catch(e) { report(); report(); toast.style = Toast.Style.Failure; }',
+      'function outer() { const report = () => {}; try {} catch(e) { report(); } }',
+      'run().catch((e) => showToast({ style: Toast.Style.Failure }));',
+      'run().then(ok, e => showToast({ style: Toast.Style.Failure }));',
+      'function second() { showToast({ style: Toast.Style.Failure }); }',
+      'function first() { second(); } try {} catch(e) { first(); }',
+      'const obj = { report() { showToast({ style: Toast.Style.Failure }); } }; try {} catch(e) { obj.report(); }',
+      'showToast({ style: Toast.Style.Failure, title: "Saved at the Wrong Size" });',
+    ].join("\n");
+    const r = await pf(tsExt(dir, "ext", { "src/a.ts": code }));
+    assert.deepEqual(r.by["failure-toast-helper"].details.map(d => d.line).sort((a, b) => Number(a) - Number(b)), [1, 4]);
+  });
+});
+
+
+for (const [label, declaration, toast] of [
+  ["named", 'export { showFailure } from "./toast";', `export function showFailure(e) {\n  ${failureStyle};\n}`],
+  ["star", 'export * as ns from "./ignored"; export * from "./toast";', `export function showFailure(e) {\n  ${failureStyle};\n}`],
+  ["aliased", 'export { original as showFailure } from "./toast";', `export function original(e) {\n  ${failureStyle};\n}`],
+  ["default", 'export { default as showFailure } from "./toast";', `export default function(e) {\n  ${failureStyle};\n}`],
+]) test(`failure-toast follow-up: ${label} barrel and non-failure wrapper`, async () => {
+  await withTempDir(async (dir) => {
+    for (const failure of [true, false]) {
+      const r = await pf(tsExt(dir, String(failure), {
+        "src/a.ts": 'import { showFailure as fail } from "./utils";\ntry {} catch(e) { fail(e); }',
+        "src/utils/index.ts": declaration,
+        "src/utils/toast.ts": failure ? toast : toast.replace(failureStyle, "showFailureToast(e)"),
+        "src/utils/ignored.ts": `export function showFailure(e) { ${failureStyle}; }`,
+      }));
+      const result = r.by["failure-toast-helper"];
+      assert.equal(result.verdict, failure ? "WARN" : "PASS");
+      assert.deepEqual(result.details.map(d => [d.file, d.line]), failure ? [["src/utils/toast.ts", 2]] : []);
+      if (failure) assert.match(result.details[0].text, /fail, called from a catch at src\/a.ts:2/);
+    }
+  });
+});
+
+test("failure-toast follow-up: barrel depth bound, cycles and export exclusions", async () => {
+  await withTempDir(async (dir) => {
+    // Eight re-export edges succeed; a ninth edge is beyond the documented bound.
+    for (const depth of [8, 9]) {
+      /** @type {Record<string, string>} */
+      const files = {
+        "src/a.ts": 'import { fail } from "./b0"; try {} catch(e) { fail(e); }',
+        [`src/b${depth}.ts`]: `export function fail(e) { ${failureStyle}; }`,
+      };
+      for (let i = 0; i < depth; i++) files[`src/b${i}.ts`] = `export { fail } from "./b${i + 1}";`;
+      const r = await pf(tsExt(dir, String(depth), files));
+      assert.equal(r.verdict("failure-toast-helper"), depth === 8 ? "WARN" : "PASS");
+    }
+    for (const [name, barrel] of [
+      ["cycle", 'export * from "./other";'],
+      ["local precedence", 'export function fail(e) {} export * from "./toast";'],
+      ["local class precedence", 'export class fail {} export * from "./toast";'],
+      ["type declaration", 'export type { fail } from "./toast";'],
+      ["type specifier", 'export { type fail } from "./toast";'],
+      ["namespace", 'export * as fail from "./toast";'],
+      ["outside src", 'export { fail } from "../outside";'],
+      ["package", 'export { fail } from "package";'],
+    ]) {
+      const r = await pf(tsExt(dir, name, {
+        "src/a.ts": 'import { fail } from "./barrel"; try {} catch(e) { fail(e); }',
+        "src/barrel.ts": barrel,
+        "src/other.ts": 'export * from "./barrel";',
+        "src/toast.ts": `export function fail(e) { ${failureStyle}; }`,
+        "outside.ts": `export function fail(e) { ${failureStyle}; }`,
+      }));
+      assert.equal(r.verdict("failure-toast-helper"), "PASS", name);
+    }
+  });
+});
+
+test("failure-toast follow-up: local catch reference excludes other methods and shadows", async () => {
+  await withTempDir(async (dir) => {
+    for (const [name, invocation, expected] of [
+      ["catch", "p.catch(showFailure);", "WARN"],
+      ["then", "p.then(showFailure); p.then(ok, showFailure);", "PASS"],
+      ["forEach", "arr.forEach(showFailure);", "PASS"],
+      ["shadow", "function run(showFailure) { p.catch(showFailure); }", "PASS"],
+    ]) {
+      const r = await pf(tsExt(dir, name, {
+        "src/a.ts": `function showFailure(e) {\n  ${failureStyle};\n}\n${invocation}`,
+      }));
+      const result = r.by["failure-toast-helper"];
+      assert.equal(result.verdict, expected, name);
+      assert.deepEqual(result.details.map(d => d.line), expected === "WARN" ? [2] : []);
+      if (expected === "WARN") assert.match(result.details[0].text, /showFailure, called from a catch at src\/a.ts:4/);
+    }
+  });
+});
+
+test("failure-toast follow-up: aliased imported catch reference including a barrel", async () => {
+  await withTempDir(async (dir) => {
+    for (const module of ["./toast", "./utils"]) {
+      const r = await pf(tsExt(dir, module.slice(2), {
+        "src/a.ts": `import { showFailure as fail } from "${module}";\np.catch(fail);`,
+        "src/utils/index.ts": 'export { showFailure } from "../toast";',
+        "src/toast.ts": `export const showFailure = e => {\n  ${failureStyle};\n};`,
+      }));
+      const result = r.by["failure-toast-helper"];
+      assert.equal(result.verdict, "WARN", module);
+      assert.deepEqual(result.details.map(d => [d.file, d.line]), [["src/toast.ts", 2]]);
+      assert.match(result.details[0].text, /fail, called from a catch at src\/a.ts:2/);
+    }
   });
 });
