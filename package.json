@@ -1,6 +1,6 @@
 {
   "name": "@chrismessina/raycast-harness",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Tested, explicit-verdict checks for building and shipping Raycast extensions. One CLI (rx) replaces the shell procedures agents used to re-type.",
   "license": "Apache-2.0",
   "author": "Chris Messina <chris.messina@gmail.com> (https://github.com/chrismessina)",

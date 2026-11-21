@@ -1,6 +1,8 @@
 # Changelog
 
-## Unreleased
+## 0.3.0
+
+A screenshot whose color profile changed can now ship after an eye check, and a 16-bit screenshot always fails with the command that converts it.
 
 ### Changed
 
