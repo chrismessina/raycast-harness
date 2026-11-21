@@ -40,17 +40,30 @@ opening a pull request you agree your contribution is licensed that way.
 Bump the version (`package.json`, `package-lock.json`, the version in
 `docs/commands.md` and the tarball name in `docs/guide.md`), rename the
 CHANGELOG's `## Unreleased` to `## <version>`, and commit that on `main`. Then
-run npm's release command. Its `prepublishOnly` script refuses when the
-CHANGELOG's section for the version is missing or not in the shape below, the
-tree is dirty, or HEAD is not on `main`. Its `postpublish` script pushes `main`, pushes a signed `v<version>`
-tag, and creates the GitHub release from that CHANGELOG section. If a step
-fails after the npm upload, run `node scripts/github-release.mjs` again; it
-skips what is already done.
+run npm's release command from the repository root, and leave the checkout
+alone until it finishes.
+
+- **Before the upload**, `prepublishOnly` refuses when origin's `main` has
+  commits you lack, the tree is dirty, HEAD is not on `main`, a `v<version>`
+  tag points elsewhere, or the version's CHANGELOG section is missing or not in
+  the shape below. A dry run runs this check and nothing else.
+- **After the upload**, `postpublish` waits for npm to list the version, then
+  tags the commit npm recorded for it (`gitHead`) as `v<version>` (signed),
+  pushes `main` and the tag, and creates the GitHub release from that commit's
+  CHANGELOG section.
+- **A staged upload** is not listed until you approve it, and approval runs no
+  scripts, so `postpublish` reports GitHub completion as pending. After
+  approving, run `node scripts/github-release.mjs <version>`.
+- **After any failure**, run `node scripts/github-release.mjs <version>`. It
+  works from npm's record, not the checkout, and skips what is already done.
+
+A tarball upload (`npm publish <file>.tgz`) runs neither script and may record
+no commit, so it is unsupported: release from the directory.
 
 ### Writing the CHANGELOG
 
-The release notes are the CHANGELOG section, so write them for someone
-skimming a release page. `prepublishOnly` enforces the shape
+The release notes are the CHANGELOG section, copied byte for byte, so write
+them for someone skimming a release page. `prepublishOnly` enforces the shape
 (`changelogProblems()` in `scripts/github-release.mjs`):
 
 - At most one summary paragraph (200 characters) naming what the release is
@@ -59,6 +72,13 @@ skimming a release page. `prepublishOnly` enforces the shape
   in that order, leaving out empty groups.
 - Each item has a budget that grows with what the reader must do about it:
   Breaking 240 characters (say what to change), New 160, Changed 140, Fixed 120.
+- Each paragraph, including an item's text, on one line with no wrapping:
+  GitHub shows every line break in a release body. Nested lists, tables, code
+  blocks and hard breaks (`\` or trailing spaces) keep their lines. Older
+  sections keep their wrapping; only the version being released is checked.
+- URLs inline, and no footnotes: a definition outside the section would be
+  left behind.
+- A plain release version (`1.2.3`); the check refuses a prerelease.
 
 One item per change a user would notice, not per commit. Name the check or
 command in code, say what it now does, and stop. Mechanism, library names,

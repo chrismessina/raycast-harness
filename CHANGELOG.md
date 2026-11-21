@@ -2,29 +2,22 @@
 
 ## 0.2.0
 
-README checks now read a README the way the Store renders it, and three new checks cover the
-Store description, contributor sections and `CONTRIBUTING.md`.
+README checks now read a README the way the Store renders it, and three new checks cover the Store description, contributor sections and `CONTRIBUTING.md`.
 
 ### Breaking
 
-- `rx preflight` and `rx shortcuts check` no longer run the extension's own `typescript` unless
-  you pass `--extension-typescript`. `rx gates` passes it, and `rx audit record` now accepts it.
+- `rx preflight` and `rx shortcuts check` no longer run the extension's own `typescript` unless you pass `--extension-typescript`. `rx gates` passes it, and `rx audit record` now accepts it.
 
 ### New
 
-- `readme-dev-sections` (FAIL): contributor sections such as Development or Clone & Run don't
-  belong on the Store page.
-- `store-description` (WARN): a new or changed description is 40–155 characters, ends with a
-  period, skips boilerplate, and names only listed platforms.
-- `contributing-mirror` (FAIL, preset): a `CONTRIBUTING.md` the Store copy lacks must be
-  gitignored, so it stays in your mirror.
-- `rx stale` reports a published file you deleted as `DELETED` (WARN); the audit clears it with
-  `remove-published`.
+- `readme-dev-sections` (FAIL): contributor sections such as Development or Clone & Run don't belong on the Store page.
+- `store-description` (WARN): a new or changed description is 40–155 characters, ends with a period, skips boilerplate, and names only listed platforms.
+- `contributing-mirror` (FAIL, preset): a `CONTRIBUTING.md` the Store copy lacks must be gitignored, so it stays in your mirror.
+- `rx stale` reports a published file you deleted as `DELETED` (WARN); the audit clears it with `remove-published`.
 
 ### Changed
 
-- README checks parse CommonMark, GFM and HTML as the Store does, fixing a dozen edge cases. Adds
-  eight dependencies.
+- README checks parse CommonMark, GFM and HTML as the Store does, fixing a dozen edge cases. Adds eight dependencies.
 - `shortcut-reserved` uses the hosting view's defaults, so `↵` on a Form's submit action passes.
 - `agent-scaffolding` and `dev-material` flag only files the Store copy doesn't already have.
 - Greptile rules are at `092555d`: 3 new, 12 changed. `changelog-hardcoded-date` is advisory.
