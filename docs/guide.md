@@ -38,7 +38,7 @@ npx @chrismessina/raycast-harness preflight          # from an extension root
 From a local tarball (a candidate build before it is published), install it into a directory of its own and call its binary:
 
 ```sh
-npm install --prefix ~/rx-try ./chrismessina-raycast-harness-0.3.0.tgz
+npm install --prefix ~/rx-try ./chrismessina-raycast-harness-0.4.0.tgz
 ~/rx-try/node_modules/.bin/rx --version
 ```
 

@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.4.0
+
+Two new preflight checks catch the AppleScript and failure-toast patterns Greptile flags, before the Store PR opens.
+
+### New
+
+- `script-utils` (FAIL): run AppleScript and JXA with `runAppleScript` from `@raycast/utils`, not `osascript` via `child_process` or the `run-applescript` package.
+- `failure-toast-helper` (WARN): show a caught error with `showFailureToast`, not a hand-built Failure toast, including through a wrapper the catch calls.
+
 ## 0.3.0
 
 A screenshot whose color profile changed can now ship after an eye check, and a 16-bit screenshot always fails with the command that converts it.
