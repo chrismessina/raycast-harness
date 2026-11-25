@@ -10,7 +10,7 @@
 
 import { existsSync, readFileSync, readdirSync, realpathSync, statSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
-import { PLACEHOLDER, isHeading, parseChangelog, sameEntry } from "../changelog/parse.mjs";
+import { parseChangelog, sameEntry, stampProblem } from "../changelog/parse.mjs";
 import { RxError } from "../errors.mjs";
 import { run as exec } from "../exec.mjs";
 import { git, topLevel } from "../git.mjs";
@@ -262,15 +262,5 @@ async function notAStamp(cwd, commit, path) {
   const after = await blob(commit);
   if (before === null) return `adds ${path} (no parent copy)`;
   if (after === null) return `deletes ${path}`;
-  const a = before.split("\n");
-  const b = after.split("\n");
-  if (a.length !== b.length) return `changes the line count of ${path} (${a.length} → ${b.length}), not just a date`;
-  const changed = a.map((l, i) => (l === b[i] ? -1 : i)).filter((i) => i !== -1);
-  if (changed.length === 0) return `leaves ${path} unchanged`;
-  if (changed.length !== 1) return `changes ${changed.length} lines of ${path}, not just a date`;
-  const i = changed[0];
-  const date = b[i].match(/\d{4}-\d{2}-\d{2}/)?.[0];
-  if (!isHeading(a[i]) || !a[i].includes(PLACEHOLDER) || !date || a[i].replace(PLACEHOLDER, date) !== b[i])
-    return `changes line ${i + 1} of ${path} (${JSON.stringify(a[i].trim())} → ${JSON.stringify(b[i].trim())}), not a ${PLACEHOLDER} date stamp`;
-  return null;
+  return stampProblem(before, after, path).problem;
 }

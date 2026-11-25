@@ -4,7 +4,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, readdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { execFileSync } from "node:child_process";
 import { CHECK_IDS } from "../src/preflight/catalog.mjs";
@@ -314,7 +314,8 @@ test("read-only commands leave no .git/rx behind", async () => {
 test("changelog-updated: with --published, an unchanged top entry fails and a new one passes; without it N/A", async () => {
   await withTempDir(async (dir) => {
     const published = makeExt(join(dir, "pub"), { files: { "CHANGELOG.md": "# Changelog\n\n## [Initial Version] - 2026-01-02\n" } });
-    const same = makeExt(join(dir, "same"), { files: { "CHANGELOG.md": "# Changelog\n\n## [Initial Version] - 2026-01-02\n" } });
+    // README differs, so the payload is not identical to the published copy (identical is N/A: nothing to ship).
+    const same = makeExt(join(dir, "same"), { files: { "CHANGELOG.md": "# Changelog\n\n## [Initial Version] - 2026-01-02\n", "README.md": "# Good\n\nEdited.\n\n![Shot](media/shot.png)\n" } });
     assert.ok((await preflight(same, { published })).fails.includes("changelog-updated"));
     assert.equal((await preflight(makeExt(join(dir, "new")), { published })).verdict("changelog-updated"), "PASS");
     assert.equal((await preflight(makeExt(join(dir, "alone")))).verdict("changelog-updated"), "N/A");
@@ -1639,5 +1640,37 @@ test("failure-toast follow-up: aliased imported catch reference including a barr
       assert.deepEqual(result.details.map(d => [d.file, d.line]), [["src/toast.ts", 2]]);
       assert.match(result.details[0].text, /fail, called from a catch at src\/a.ts:2/);
     }
+  });
+});
+
+const SHIPPED_LOG = { "CHANGELOG.md": "# Changelog\n\n## [Update] - 2026-02-03\n\n- Shipped\n\n## [Initial Version] - 2026-01-02\n" };
+const NOTHING = "nothing to ship: the payload is identical to the published copy";
+
+test("nothing to ship: identical to the published copy makes changelog-placeholder and changelog-updated N/A; one changed byte, or no --published, brings FAIL back", async () => {
+  await withTempDir(async (dir) => {
+    const pub = makeExt(join(dir, "pub"), { files: SHIPPED_LOG });
+    const same = await preflight(ext(dir, { files: SHIPPED_LOG }), { published: pub });
+    for (const id of ["changelog-placeholder", "changelog-updated"]) {
+      assert.equal(same.verdict(id), "N/A", id);
+      assert.equal(same.by[id].message, NOTHING);
+    }
+    assert.equal(same.verdict("changelog-order"), "PASS");
+    const src = 'import { List, getPreferenceValues } from "@raycast/api";\nconst p = getPreferenceValues<Preferences>();\n// edit\n';
+    const edited = await preflight(makeExt(join(dir, "edited"), { files: { ...SHIPPED_LOG, "src/index.tsx": src } }), { published: pub });
+    assert.equal(edited.verdict("changelog-placeholder"), "FAIL");
+    assert.equal(edited.verdict("changelog-updated"), "FAIL");
+    const solo = await preflight(ext(dir, { files: SHIPPED_LOG }));
+    assert.equal(solo.verdict("changelog-placeholder"), "FAIL");
+    assert.notEqual(solo.by["changelog-updated"].message, NOTHING);
+  });
+});
+
+test("nothing to ship: a differing executable bit on one file brings the changelog checks back", async () => {
+  await withTempDir(async (dir) => {
+    const pub = makeExt(join(dir, "pub"), { files: SHIPPED_LOG });
+    const local = ext(dir, { files: SHIPPED_LOG });
+    chmodSync(join(local, "src", "index.tsx"), 0o755);
+    const r = await preflight(local, { published: pub });
+    assert.equal(r.verdict("changelog-placeholder"), "FAIL");
   });
 });

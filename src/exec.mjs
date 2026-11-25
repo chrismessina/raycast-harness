@@ -20,6 +20,27 @@ import { RxError } from "./errors.mjs";
  * @returns {Promise<ExecResult>}
  */
 export function run(cmd, args, opts = {}) {
+  return /** @type {Promise<ExecResult>} */ (spawnChild(cmd, args, opts, "utf8"));
+}
+
+/**
+ * `run` with stdout kept as the exact bytes the child wrote (no decoding, no trimming): for
+ * `git cat-file blob`, whose output is a file's content and may be binary. Same rejections as `run`.
+ * @param {string} cmd
+ * @param {string[]} args
+ * @param {Parameters<typeof run>[2]} [opts]
+ * @returns {Promise<{ code: number, stdout: Buffer, stderr: string }>}
+ */
+export function runBuffer(cmd, args, opts = {}) {
+  return /** @type {Promise<{ code: number, stdout: Buffer, stderr: string }>} */ (spawnChild(cmd, args, opts, "buffer"));
+}
+
+/**
+ * @param {string} cmd @param {string[]} args @param {Parameters<typeof run>[2]} opts
+ * @param {"utf8" | "buffer"} encoding
+ * @returns {Promise<{ code: number, stdout: string | Buffer, stderr: string }>}
+ */
+function spawnChild(cmd, args, opts = {}, encoding) {
   const id = opts.id ?? "tooling";
   const what = `${cmd} ${args.join(" ")}`.trim();
   return new Promise((resolvePromise, reject) => {
@@ -33,7 +54,7 @@ export function run(cmd, args, opts = {}) {
         env: opts.env ?? process.env,
         timeout: opts.timeoutMs ?? 120_000,
         maxBuffer: opts.maxBuffer ?? 64 * 1024 * 1024,
-        encoding: "utf8",
+        encoding,
         windowsHide: true,
         ...(opts.signal ? { signal: opts.signal } : {}),
       },
@@ -51,7 +72,8 @@ export function run(cmd, args, opts = {}) {
         if (e && typeof e.code !== "number")
           return done(() => reject(new RxError(`${what}: ${e.message}`, { id })));
         const code = e ? Number(e.code) : 0;
-        done(() => resolvePromise({ code, stdout: String(stdout ?? ""), stderr: String(stderr ?? "") }));
+        const out = encoding === "buffer" ? (Buffer.isBuffer(stdout) ? stdout : Buffer.from(stdout ?? "")) : String(stdout ?? "");
+        done(() => resolvePromise({ code, stdout: out, stderr: String(stderr ?? "") }));
       },
     );
     if (child.stdin) {

@@ -9,6 +9,7 @@ import { join } from "node:path";
 import { PLACEHOLDER, bodyHash, parseChangelog, placeholderProblems, sameEntry } from "../changelog/parse.mjs";
 import { RxError } from "../errors.mjs";
 import { git } from "../git.mjs";
+import { NOTHING_TO_SHIP, nothingToShip } from "../payload-identity.mjs";
 import { withPublishedCopy } from "../published-copy.mjs";
 
 export const BULLET_MAX = 280;
@@ -51,7 +52,7 @@ export async function run({ results, root, args }) {
 
   // Every input is read and validated before anything is written: the published copy, the
   // redactions (above), and with --merge both sides of the merge.
-  const published = await readPublished(publishedDir);
+  const { text: published, identical } = await readPublished(dir, publishedDir);
 
   let merged = false;
   /** @type {string} */
@@ -74,7 +75,10 @@ export async function run({ results, root, args }) {
 
   // Placeholder: the shared predicate (src/changelog/parse.mjs), also used by rx preflight.
   const ph = placeholderProblems(text);
-  if (ph.problems.length) results.fail("changelog-placeholder", ph.problems[0], ph.conflictMarkers ? [] : placeholderLines(text));
+  // The identity was read with the published history, in one hold of the copy. A --merge run has
+  // rewritten CHANGELOG.md since, so that identity no longer describes this payload.
+  if (identical && !merged) results.na("changelog-placeholder", NOTHING_TO_SHIP);
+  else if (ph.problems.length) results.fail("changelog-placeholder", ph.problems[0], ph.conflictMarkers ? [] : placeholderLines(text));
   else results.pass("changelog-placeholder", `one ${PLACEHOLDER}, in ${log.entries[0].heading}`);
 
   // History versus the published copy.
@@ -139,15 +143,20 @@ function readText(file) {
 }
 
 /**
- * The published CHANGELOG.md: null when there is no --published or the copy has none (N/A later);
- * `ERROR input` when it exists but cannot be read. Read through the published-copy service, so a
- * copy inside the shared upstream cache is read under its lock.
- * @param {string | null} publishedDir
- * @returns {Promise<string | null>}
+ * The published CHANGELOG.md (`text`: null when there is no --published or the copy has none, N/A
+ * later; `ERROR input` when it exists but cannot be read) and whether the payload is identical to
+ * the copy (`identical`, nothingToShip). Both are read in one call of the published-copy service,
+ * so a copy inside the shared upstream cache is read under one hold of its lock and both reads see
+ * the same cache state.
+ * @param {string} root @param {string | null} publishedDir
+ * @returns {Promise<{ text: string | null, identical: boolean }>}
  */
-async function readPublished(publishedDir) {
-  if (!publishedDir) return null;
-  return withPublishedCopy({ directory: publishedDir }, async (copy) => (copy.exists("CHANGELOG.md") ? readText(copy.path("CHANGELOG.md")) : null));
+async function readPublished(root, publishedDir) {
+  if (!publishedDir) return { text: null, identical: false };
+  return withPublishedCopy({ directory: publishedDir }, async (copy) => ({
+    text: copy.exists("CHANGELOG.md") ? readText(copy.path("CHANGELOG.md")) : null,
+    identical: copy.directory !== null && nothingToShip(root, copy.directory),
+  }));
 }
 
 /** @param {string} text */

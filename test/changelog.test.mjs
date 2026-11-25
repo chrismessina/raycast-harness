@@ -1,9 +1,10 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { chmodSync, cpSync, existsSync, mkdirSync, readFileSync, readdirSync, symlinkSync, writeFileSync } from "node:fs";
+import { nothingToShip } from "../src/payload-identity.mjs";
 import { join } from "node:path";
 import { fakeExtension, rx, withTempDir } from "./helpers.mjs";
-import { bodyHash, parseChangelog, placeholderProblems, sameEntry } from "../src/changelog/parse.mjs";
+import { bodyHash, parseChangelog, placeholderProblems, sameEntry, stampProblem } from "../src/changelog/parse.mjs";
 import { FIXTURES, commit, g, initRepo, startMerge } from "./upstream-fixtures.mjs";
 
 const FIX = join(FIXTURES, "changelog");
@@ -242,4 +243,123 @@ test("--merge reads and validates --published before writing: an unreadable publ
     assert.equal(by(r2)["changelog-merge"].verdict, "PASS");
     assert.equal(by(r2)["changelog-history"].verdict, "N/A");
   });
+});
+
+test("stampProblem: accepts exactly one placeholder heading becoming a date, line untrimmed", () => {
+  const before = "# T\n\n## [A] - {PR_MERGE_DATE}\n\n- one\n";
+  const r = stampProblem(before, before.replace("{PR_MERGE_DATE}", "2026-11-23"));
+  assert.deepEqual(r, { problem: null, line: 2, unstamped: "## [A] - {PR_MERGE_DATE}", stamped: "## [A] - 2026-11-23" });
+});
+
+test("stampProblem: CRLF content keeps the \\r as part of the line", () => {
+  const before = "# T\r\n\r\n## [A] - {PR_MERGE_DATE}\r\n\r\n- one\r\n";
+  const r = stampProblem(before, before.replace("{PR_MERGE_DATE}", "2026-11-23"));
+  assert.deepEqual(r, { problem: null, line: 2, unstamped: "## [A] - {PR_MERGE_DATE}\r", stamped: "## [A] - 2026-11-23\r" });
+});
+
+test("rx changelog: identical to the published copy is N/A nothing to ship under --published, FAIL without it or with a difference", async () => {
+  await withTempDir(async (dir) => {
+    const ext = fakeExtension(dir, "ext");
+    writeFileSync(join(ext, "CHANGELOG.md"), "# Changelog\n\n## [Update] - 2026-02-03\n\n- Shipped\n");
+    cpSync(ext, join(dir, "pub"), { recursive: true });
+    const same = await rx(["changelog", "--published", join(dir, "pub"), "--json"], { cwd: ext });
+    assert.equal(by(same)["changelog-placeholder"].verdict, "N/A", same.stdout);
+    assert.equal(by(same)["changelog-placeholder"].message, "nothing to ship: the payload is identical to the published copy");
+    const solo = await rx(["changelog", "--json"], { cwd: ext });
+    assert.equal(by(solo)["changelog-placeholder"].verdict, "FAIL", solo.stdout);
+    writeFileSync(join(ext, "extra.txt"), "x");
+    const diff = await rx(["changelog", "--published", join(dir, "pub"), "--json"], { cwd: ext });
+    assert.equal(by(diff)["changelog-placeholder"].verdict, "FAIL", diff.stdout);
+  });
+});
+
+test("nothingToShip: identical true; extra file either side, symlink, mode, content, empty false; skip list ignored", async () => {
+  await withTempDir(async (dir) => {
+    const a = join(dir, "a"), b = join(dir, "b");
+    for (const d of [a, b]) {
+      mkdirSync(join(d, "src"), { recursive: true });
+      writeFileSync(join(d, "src", "x.ts"), "x");
+    }
+    mkdirSync(join(a, "node_modules"));
+    writeFileSync(join(a, "node_modules", "junk.js"), "junk");
+    assert.equal(nothingToShip(a, b), true, "node_modules is on the ray publish skip list");
+    writeFileSync(join(a, "more.txt"), "m");
+    assert.equal(nothingToShip(a, b), false, "extra local file");
+    assert.equal(nothingToShip(b, a), false, "extra published file");
+    writeFileSync(join(b, "more.txt"), "m");
+    assert.equal(nothingToShip(a, b), true);
+    writeFileSync(join(b, "more.txt"), "n");
+    assert.equal(nothingToShip(a, b), false, "bytes differ");
+    writeFileSync(join(b, "more.txt"), "m");
+    chmodSync(join(b, "more.txt"), 0o755);
+    assert.equal(nothingToShip(a, b), false, "executable bit differs");
+    chmodSync(join(b, "more.txt"), 0o644);
+    symlinkSync("x.ts", join(a, "src", "ln"));
+    symlinkSync("x.ts", join(b, "src", "ln"));
+    assert.equal(nothingToShip(a, b), false, "a symlink on both sides");
+    mkdirSync(join(dir, "e1"));
+    mkdirSync(join(dir, "e2"));
+    assert.equal(nothingToShip(join(dir, "e1"), join(dir, "e2")), false, "empty payloads");
+  });
+});
+
+test("nothingToShip: the executable bit is git's (owner execute): 0755 vs 0655 differ, 0644 vs 0654 match", async () => {
+  await withTempDir(async (dir) => {
+    const a = join(dir, "a"), b = join(dir, "b");
+    for (const d of [a, b]) {
+      mkdirSync(join(d, "src"), { recursive: true });
+      writeFileSync(join(d, "src", "x.ts"), "x");
+    }
+    chmodSync(join(a, "src", "x.ts"), 0o755);
+    chmodSync(join(b, "src", "x.ts"), 0o655);
+    assert.equal(nothingToShip(a, b), false, "0755 is 100755 in git, 0655 is 100644");
+    chmodSync(join(a, "src", "x.ts"), 0o644);
+    chmodSync(join(b, "src", "x.ts"), 0o654);
+    assert.equal(nothingToShip(a, b), true, "both are 100644 in git");
+  });
+});
+
+test("nothingToShip: a skip-list path only on the published side is ignored; an unreadable file is false, not a throw", async () => {
+  await withTempDir(async (dir) => {
+    const a = join(dir, "a"), b = join(dir, "b");
+    for (const d of [a, b]) {
+      mkdirSync(join(d, "src"), { recursive: true });
+      writeFileSync(join(d, "src", "x.ts"), "x");
+    }
+    mkdirSync(join(b, "node_modules"));
+    writeFileSync(join(b, "node_modules", "junk.js"), "junk");
+    assert.equal(nothingToShip(a, b), true, "node_modules on the published side only");
+
+    chmodSync(join(b, "src", "x.ts"), 0o000);
+    try {
+      assert.equal(nothingToShip(a, b), false, "an unreadable published file fails closed");
+    } finally {
+      chmodSync(join(b, "src", "x.ts"), 0o644);
+    }
+  });
+});
+
+test("stampProblem: rejects anything that is not exactly the stamp", () => {
+  const before = "# T\n\n## [A] - {PR_MERGE_DATE}\n\n- one\n";
+  const stamped = before.replace("{PR_MERGE_DATE}", "2026-11-23");
+  const why = (/** @type {string} */ b, /** @type {string} */ a) => {
+    const r = stampProblem(b, a);
+    assert.equal(r.line, null);
+    return r.problem;
+  };
+  assert.equal(why(before, before), "leaves <path> unchanged");
+  assert.equal(why(before, stamped + "- two\n"), "changes the line count of <path> (6 → 7), not just a date");
+  assert.equal(why(before, stamped.replace("# T", "# U")), "changes 2 lines of <path>, not just a date");
+  assert.equal(why(before, before.replace("- one", "- uno")), 'changes line 5 of <path> ("- one" → "- uno"), not a {PR_MERGE_DATE} date stamp');
+  assert.equal(why(before, before.replace("## [A] - {PR_MERGE_DATE}", "## [B] - {PR_MERGE_DATE}")), 'changes line 3 of <path> ("## [A] - {PR_MERGE_DATE}" → "## [B] - {PR_MERGE_DATE}"), not a {PR_MERGE_DATE} date stamp');
+  assert.equal(why(before, before.replace("{PR_MERGE_DATE}", "2026-1-5")), 'changes line 3 of <path> ("## [A] - {PR_MERGE_DATE}" → "## [A] - 2026-1-5"), not a {PR_MERGE_DATE} date stamp');
+});
+
+test("stampProblem: a literal <path> in the changed line stays verbatim; subject names the file", () => {
+  const before = "# T\n\n## Fix <path> handling - {PR_MERGE_DATE}\n";
+  const after = before.replace("handling", "parsing");
+  assert.equal(
+    stampProblem(before, after, "CHANGELOG.md").problem,
+    'changes line 3 of CHANGELOG.md ("## Fix <path> handling - {PR_MERGE_DATE}" → "## Fix <path> parsing - {PR_MERGE_DATE}"), not a {PR_MERGE_DATE} date stamp',
+  );
 });

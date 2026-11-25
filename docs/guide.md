@@ -124,7 +124,7 @@ rx preflight --preset "$PRESET"    # plus the house rules
 rx changelog                       # placeholder, bullets
 ```
 
-A just-merged extension with no pending change FAILs `changelog-placeholder`, because the next entry must carry `{PR_MERGE_DATE}`. That is expected until you start the next change. Without `--published`, `changelog-updated`, `command-renamed` and `changelog-history` report `N/A no published copy given; pass --published <dir> (rx stale prints it)`. That names the missing flag; it says nothing about whether the extension is published.
+After a merge, run `rx post-merge` first: it adopts the merge-stamped CHANGELOG and the recompressed screenshots, so the tree matches what shipped. An extension identical to its published copy has nothing to ship, so with `--published` `changelog-placeholder` and `changelog-updated` report `N/A nothing to ship: the payload is identical to the published copy`; any change brings them back, and the next entry must carry `{PR_MERGE_DATE}`. Without `--published`, `changelog-updated`, `command-renamed` and `changelog-history` report `N/A no published copy given; pass --published <dir> (rx stale prints it)`. That names the missing flag; it says nothing about whether the extension is published.
 
 ### See what changed against the published copy
 

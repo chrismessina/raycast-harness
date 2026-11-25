@@ -64,20 +64,21 @@ export function keyIdOf(key) {
  * The sentence for a private rx directory (the key's, or `generations/`) whose mode lets group or
  * other in, or null when it is fine or does not exist yet.
  * @param {string} dir
+ * @param {string} [label] what the directory is, in the message (default "attestation key directory")
  * @returns {string | null}
  */
-export function privateDirProblem(dir) {
+export function privateDirProblem(dir, label = "attestation key directory") {
   /** @type {import("node:fs").Stats} */
   let st;
   try {
     st = lstatSync(dir);
   } catch (e) {
     if (/** @type {NodeJS.ErrnoException} */ (e).code === "ENOENT") return null;
-    return `the rx attestation key directory ${dir} cannot be read (${/** @type {Error} */ (e).message})`;
+    return `the rx ${label} ${dir} cannot be read (${/** @type {Error} */ (e).message})`;
   }
-  if (!st.isDirectory()) return `the rx attestation key directory ${dir} is not a directory; remove it by hand`;
+  if (!st.isDirectory()) return `the rx ${label} ${dir} is not a directory; remove it by hand`;
   const mode = st.mode & 0o777;
-  if (mode & 0o077) return `the rx attestation key directory ${dir} has mode ${mode.toString(8).padStart(4, "0")}; it must not be accessible to group or other, and rx does not change a directory it did not create: run chmod 700 ${dir}`;
+  if (mode & 0o077) return `the rx ${label} ${dir} has mode ${mode.toString(8).padStart(4, "0")}; it must not be accessible to group or other, and rx does not change a directory it did not create: run chmod 700 ${dir}`;
   return null;
 }
 
@@ -85,10 +86,11 @@ export function privateDirProblem(dir) {
  * Create a private rx directory (0700, exact) or accept an existing one that is private. An
  * existing directory with any group or other bit is ERROR attest-key; it is never chmodded.
  * @param {string} dir
+ * @param {string} [label] passed to privateDirProblem for its messages
  * @returns {boolean} whether rx created it now
  */
-export function ensurePrivateDir(dir) {
-  const before = privateDirProblem(dir);
+export function ensurePrivateDir(dir, label) {
+  const before = privateDirProblem(dir, label);
   if (before) throw new RxError(before, { id: "attest-key" });
   const made = mkdirSync(dir, { recursive: true, mode: 0o700 });
   let created = false;
@@ -100,7 +102,7 @@ export function ensurePrivateDir(dir) {
     }
     created = true;
   }
-  const after = privateDirProblem(dir);
+  const after = privateDirProblem(dir, label);
   if (after) throw new RxError(after, { id: "attest-key" });
   return created;
 }

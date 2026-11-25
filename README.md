@@ -54,6 +54,7 @@ Silence is never a pass. Unknown arguments are an `ERROR`. `--json` (an alias of
 | `rx audit` | records the judgment evidence the receipt cannot hold |
 | `rx pr` | verifies a Store PR's author, branch, base and files; edits its body without clobbering hand edits |
 | `rx holdout` | moves untracked local-only files out of the payload and verifies their return |
+| `rx post-merge` | after a Store merge: adopts what raycastbot rewrote on the PR branch, commits only those files signed with rx's own key, and pushes that one commit |
 | `rx publication` | `record`: writes the plain record of which PR and remote head a publish produced, for `rx greptile can-reply --claims-fix` |
 | `rx greptile` | fetches review rounds, waits for the next one, authorizes a reply, and keeps Greptile's review rules current (`outdated`, `update`) |
 | `rx shortcuts` | `runtime`: the installed app's `Keyboard.Shortcut.Common` table into the cache; `check`: panels and toast actions against it |

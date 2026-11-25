@@ -18,6 +18,7 @@ import { ignoredPredicate } from "./gitignore.mjs";
 import { handBuiltFailureToasts, handRolledScripts } from "./helper-usage.mjs";
 import { shortcutPlatformCase } from "./platform-keys.mjs";
 import { loadTypeScript } from "../typescript.mjs";
+import { NOTHING_TO_SHIP, nothingToShip } from "../payload-identity.mjs";
 import { PUBLISH_SKIPS, isSkipped, listPayload } from "../payload.mjs";
 import { extractEmbeds, headings, isExternal, targetPath } from "./markdown.mjs";
 
@@ -296,11 +297,18 @@ export async function runPreflight({ root, publishedDir, preset, extensionTypesc
 
     // changelog-placeholder (Q10): the one predicate shared with `rx changelog` (src/changelog/parse.mjs):
     // occurrences anywhere in the file, placement on the top heading, conflict markers.
+    // With nothing to ship (identical to the published copy) both checks are N/A instead of being
+    // evaluated: the Collector keeps a FAIL over an N/A, so they must not run.
+    const idle = publishedDir !== null && nothingToShip(root, publishedDir);
     const ph = placeholderProblems(log);
-    if (ph.problems.length) c.fail("changelog-placeholder", ph.problems.join("; "), placeholderLines(log));
-    c.pass("changelog-placeholder", `one ${P}, in the top entry's heading`);
+    if (idle) c.na("changelog-placeholder", NOTHING_TO_SHIP);
+    else {
+      if (ph.problems.length) c.fail("changelog-placeholder", ph.problems.join("; "), placeholderLines(log));
+      c.pass("changelog-placeholder", `one ${P}, in the top entry's heading`);
+    }
 
-    if (publishedDir === null) c.na("changelog-updated", NO_PUBLISHED_COPY);
+    if (idle) c.na("changelog-updated", NOTHING_TO_SHIP);
+    else if (publishedDir === null) c.na("changelog-updated", NO_PUBLISHED_COPY);
     else {
       const pub = read(join(publishedDir, "CHANGELOG.md"));
       const pubTop = pub === null ? null : changelogHeadings(pub)[0]?.raw;

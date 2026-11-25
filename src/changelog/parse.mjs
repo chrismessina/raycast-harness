@@ -104,3 +104,28 @@ export function placeholderProblems(text) {
   else if (!topHasPlaceholder) problems.push(`${PLACEHOLDER} is not in the top entry's heading`);
   return { count, topHasPlaceholder, conflictMarkers, problems };
 }
+
+/**
+ * Is the change from `before` to `after` exactly raycastbot's merge-time date stamp: one `## `
+ * heading whose `{PR_MERGE_DATE}` became a `YYYY-MM-DD` date, every other byte identical?
+ * A problem names the file as `subject` (default the literal `<path>`).
+ * @param {string} before @param {string} after @param {string} [subject]
+ * @returns {{ problem: string, line: null } | { problem: null, line: number, unstamped: string, stamped: string }}
+ *   `line` is the 0-based index of the changed line (split on "\n"); `unstamped`/`stamped` are that
+ *   line before and after, exactly as split (no trimming).
+ */
+export function stampProblem(before, after, subject = "<path>") {
+  const a = before.split("\n");
+  const b = after.split("\n");
+  /** @param {string} problem */
+  const no = (problem) => ({ problem, line: /** @type {null} */ (null) });
+  if (a.length !== b.length) return no(`changes the line count of ${subject} (${a.length} → ${b.length}), not just a date`);
+  const changed = a.map((l, i) => (l === b[i] ? -1 : i)).filter((i) => i !== -1);
+  if (changed.length === 0) return no(`leaves ${subject} unchanged`);
+  if (changed.length !== 1) return no(`changes ${changed.length} lines of ${subject}, not just a date`);
+  const i = changed[0];
+  const date = b[i].match(/\d{4}-\d{2}-\d{2}/)?.[0];
+  if (!isHeading(a[i]) || !a[i].includes(PLACEHOLDER) || !date || a[i].replace(PLACEHOLDER, date) !== b[i])
+    return no(`changes line ${i + 1} of ${subject} (${JSON.stringify(a[i].trim())} → ${JSON.stringify(b[i].trim())}), not a ${PLACEHOLDER} date stamp`);
+  return { problem: null, line: i, unstamped: a[i], stamped: b[i] };
+}

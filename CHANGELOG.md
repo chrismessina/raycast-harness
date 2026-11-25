@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+After a Store merge, `rx post-merge` brings the checkout up to what shipped, so the next change starts clean.
+
+### New
+
+- `rx post-merge`: adopts what raycastbot rewrote before the squash (CHANGELOG stamp, screenshots), commits it signed with rx's own key, and pushes it.
+
+### Changed
+
+- `changelog-placeholder` and `changelog-updated` are N/A when the payload is identical to the published copy: nothing to ship.
+
 ## 0.4.0
 
 Two new preflight checks catch the AppleScript and failure-toast patterns Greptile flags, before the Store PR opens.

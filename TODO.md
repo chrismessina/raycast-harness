@@ -61,8 +61,6 @@ Each should land as its own change, with the existing tests as proof and an adve
   ship skill; it does not sandbox a process that sets out to evade it.
 - `rx api-diff` waits the full 60 seconds when the npm registry is unreachable.
 - `rx audit show` reports a replayed receipt as WARN and exits 0; the guard blocks it.
-- A published extension has no clean baseline run: a just-merged extension FAILs
-  `changelog-placeholder` until it has a pending entry.
 - The `review-pr` skill does not call `rx pr files` for a contributor's PR. (`rx pr verify` checks
   Chris's own PRs and does not fit.)
 - When a provider's top answer is below 0.7, `rx judge ask` text output does not name the provider that returned the probabilities; `--json` does. (A PASS and a provider-error fallback already name it.)

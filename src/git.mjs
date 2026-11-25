@@ -5,10 +5,10 @@ import { run, runOk } from "./exec.mjs";
 
 /**
  * @param {string[]} args
- * @param {{ cwd: string, input?: string, allowFail?: boolean }} opts
+ * @param {{ cwd: string, input?: string | Buffer, allowFail?: boolean, env?: NodeJS.ProcessEnv }} opts `env` replaces the environment (default: this process's)
  */
-export async function git(args, { cwd, input, allowFail = false }) {
-  const r = await (allowFail ? run("git", args, { cwd, input }) : runOk("git", args, { cwd, input, id: "git" }));
+export async function git(args, { cwd, input, allowFail = false, env }) {
+  const r = await (allowFail ? run("git", args, { cwd, input, env }) : runOk("git", args, { cwd, input, env, id: "git" }));
   return { ...r, stdout: r.stdout.replace(/\n$/, "") };
 }
 

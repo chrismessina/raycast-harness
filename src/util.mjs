@@ -20,3 +20,12 @@ export function isDirectory(p) {
 export function isUnder(path, dir) {
   return path === dir || path.startsWith(`${dir}/`);
 }
+
+/**
+ * Git's executable bit for a regular file: the owner execute bit (S_IXUSR, 0o100). Group or other
+ * execute bits alone do not make a file 100755 in git.
+ * @param {number} mode an lstat/stat mode
+ */
+export function ownerExecutable(mode) {
+  return (mode & 0o100) !== 0;
+}
