@@ -16,7 +16,7 @@ const ID = "11111111-2222-3333-4444-555555555555";
 const ENTRY = { id: ID, packageName: NAME, version: VERSION, shasum: SUM };
 
 /**
- * @param {{ ci?: string[], stage?: unknown[][], listed?: (string | null)[], originMain?: string, upload?: number, approve?: number, headAfterUpload?: string }} o
+ * @param {{ ci?: string[], stage?: unknown[][], listed?: (string | null)[], originMain?: string, upload?: number, approve?: number, headAfterUpload?: string, dirty?: string }} o
  *   `stage` and `listed` are consumed one answer per call (the last answer repeats); `listed` is the
  *   gitHead npm reports for the version, or null when npm does not list it.
  */
@@ -39,6 +39,7 @@ function fake(o = {}) {
     run(/** @type {string} */ cmd, /** @type {string[]} */ args) {
       const line = `${cmd} ${args.join(" ")}`;
       calls.push(line);
+      if (line === "git status --porcelain") return o.dirty ?? "";
       if (line.includes("github-release.mjs --check")) return "ready\n";
       if (line === "git rev-parse HEAD") return `${uploaded && o.headAfterUpload ? o.headAfterUpload : SHA}\n`;
       if (line === "git rev-parse origin/main") return `${o.originMain ?? "b".repeat(40)}\n`;
@@ -160,6 +161,12 @@ test("release: a dry run is refused before anything runs; a failed upload or app
   const same = fake({ originMain: SHA });
   await go(same);
   assert.ok(!ran(same, /git push/), "origin/main already at HEAD is not pushed again");
+});
+
+test("release: uncommitted changes (a version bump not yet committed) stop it first, saying to commit the release", async () => {
+  const f = fake({ dirty: " M package.json\n" });
+  await assert.rejects(go(f), /commit the release first/);
+  assert.deepEqual(f.calls, ["git status --porcelain"], "nothing else ran");
 });
 
 test("stagedFor / pickStaged / ciRun: exact name and version; only a lone entry with HEAD's bytes is picked; the run is matched by commit", () => {

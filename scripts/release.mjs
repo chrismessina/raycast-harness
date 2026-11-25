@@ -101,6 +101,10 @@ export async function release({ name, version, argv = [], env = {} }, deps, { ci
   if (argv.includes("--dry-run") || env.npm_config_dry_run === "true")
     throw new Error("npm run release does not rehearse; for a dry run of the upload use `npm publish --dry-run`, which runs only the check");
 
+  // npm uploads HEAD, and the check reads the version from HEAD's package.json; with the bump still
+  // uncommitted the two disagree and the check names the wrong tag. Say what to do instead.
+  if (run("git", ["status", "--porcelain"]).trim()) throw new Error(`commit the release first: the working tree has uncommitted changes, and npm uploads only what HEAD holds (package.json here says ${version})`);
+
   log(`release 1/6: checking ${at}`);
   run("node", ["scripts/github-release.mjs", "--check"]);
   const sha = run("git", ["rev-parse", "HEAD"]).trim();
