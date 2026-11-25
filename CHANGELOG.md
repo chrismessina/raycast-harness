@@ -12,6 +12,10 @@ After a Store merge, `rx post-merge` brings the checkout up to what shipped, so 
 
 - `changelog-placeholder` and `changelog-updated` are N/A when the payload is identical to the published copy: nothing to ship.
 
+### Fixed
+
+- `rx stale` and the `rx gates` fingerprint read a file's executable bit as git does (the owner's), so `0654` is not a mode change.
+
 ## 0.4.0
 
 Two new preflight checks catch the AppleScript and failure-toast patterns Greptile flags, before the Store PR opens.

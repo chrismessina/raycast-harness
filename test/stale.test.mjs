@@ -214,6 +214,21 @@ test("stale: an uncommitted executable-bit change on identical bytes is UNHANDLE
   });
 });
 
+test("stale: a group-only execute bit is not a mode change (git reads the owner's x bit alone)", async () => {
+  await withTempDir(async (dir) => {
+    process.env.XDG_CACHE_HOME = join(dir, "cache");
+    const files = extensionFiles("zeta", { "scripts/run.sh": "#!/bin/sh\necho run\n" });
+    const up = await fakeUpstream(dir, { zeta: files });
+    _setUpstreamForTests({ url: up.url, probe: async () => true });
+    const local = await initRepo(join(dir, "zeta"));
+    await commit(local, files, "same as published");
+    chmodSync(join(local, "scripts", "run.sh"), 0o654); // git still records 100644
+    const r = await rx(["stale", "--json"], { cwd: local });
+    assert.equal(r.code, 0, r.stdout);
+    assert.equal(r.json.data.files.find((/** @type {any} */ f) => f.path === "scripts/run.sh").class, "MINE");
+  });
+});
+
 test("stale holds the upstream cache lock from the fetch through the comparison", async () => {
   await withTempDir(async (dir) => {
     process.env.XDG_CACHE_HOME = join(dir, "cache");

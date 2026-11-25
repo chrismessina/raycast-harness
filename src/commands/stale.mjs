@@ -32,7 +32,7 @@ import { withPublishedCopy, writeStaleBaseline } from "../published-copy.mjs";
 import { blobId, skipSegment } from "../upstream.mjs";
 import { repoStatePathReadOnly } from "../state.mjs";
 import { readPresetFields } from "./holdout.mjs";
-import { isUnder } from "../util.mjs";
+import { isUnder, ownerExecutable } from "../util.mjs";
 
 /** @type {import("../cli.mjs").CommandSpec} */
 export const spec = {
@@ -272,7 +272,7 @@ export async function classify(dir, publishedDir, localOnly = { localOnly: [], h
 
 /** A working file's git tree mode: 100755 when any execute bit is set, else 100644. @param {number} mode */
 function gitMode(mode) {
-  return (mode & 0o111) !== 0 ? "100755" : "100644";
+  return ownerExecutable(mode) ? "100755" : "100644";
 }
 
 /**

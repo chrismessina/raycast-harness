@@ -72,6 +72,12 @@ test("fingerprint: each mutation the plan names changes the payload fingerprint"
     await mutation("deletion", () => rmSync(join(root, "docs", "a.md")), () => writeFileSync(join(root, "docs", "a.md"), "a\n"));
     await mutation("rename", () => renameSync(join(root, "docs", "a.md"), join(root, "docs", "b.md")), () => renameSync(join(root, "docs", "b.md"), join(root, "docs", "a.md")));
     await mutation("mode change", () => chmodSync(join(root, "scripts", "run.sh"), 0o755), () => chmodSync(join(root, "scripts", "run.sh"), 0o644));
+    await mutation("owner execute bit only", () => chmodSync(join(root, "scripts", "run.sh"), 0o744), () => chmodSync(join(root, "scripts", "run.sh"), 0o644));
+    // git records a file as executable by the owner's x bit alone (S_IXUSR), so a group or other
+    // x bit changes nothing that ships: the fingerprint must not move for it.
+    chmodSync(join(root, "scripts", "run.sh"), 0o654);
+    assert.equal((await fp()).payload, base.payload, "a group-only execute bit is not a mode change to git");
+    chmodSync(join(root, "scripts", "run.sh"), 0o644);
     await mutation("new ignored file", () => writeFileSync(join(root, "notes.local"), "ignored\n"), () => rmSync(join(root, "notes.local")));
     await mutation("new untracked file", () => writeFileSync(join(root, "untracked.txt"), "new\n"), () => rmSync(join(root, "untracked.txt")));
     await mutation("new symlink", () => symlinkSync("package.json", join(root, "link")), () => rmSync(join(root, "link")));

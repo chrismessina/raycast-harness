@@ -43,6 +43,7 @@ import { git, isWorkTree } from "./git.mjs";
 import { gitIgnoredSet, shippedGitignores } from "./preflight/gitignore.mjs";
 import { listPayload, readPayloadBytes } from "./payload.mjs";
 import { readStaleBaseline } from "./published-copy.mjs";
+import { ownerExecutable } from "./util.mjs";
 
 /**
  * @typedef {{
@@ -89,7 +90,7 @@ export function payloadFingerprint(root, leaveOut = new Set()) {
   for (const e of entries) {
     frame(hash, e.path);
     frame(hash, e.type);
-    frame(hash, (e.mode & 0o111) !== 0 ? "x" : "-");
+    frame(hash, ownerExecutable(e.mode) ? "x" : "-");
     frame(hash, e.target ?? "");
     if (e.type === "dir") {
       frame(hash, "");
@@ -99,7 +100,7 @@ export function payloadFingerprint(root, leaveOut = new Set()) {
       // ray copies the target's bytes AND its mode (copyFileSync), so the dereferenced
       // executable bit is part of what ships; a dangling link records the failure text.
       try {
-        frame(hash, (statSync(join(root, e.path)).mode & 0o111) !== 0 ? "target:x" : "target:-");
+        frame(hash, ownerExecutable(statSync(join(root, e.path)).mode) ? "target:x" : "target:-");
       } catch (err) {
         frame(hash, `target:unreadable:${/** @type {Error} */ (err).message}`);
       }
