@@ -44,7 +44,8 @@
     "lint": "eslint .",
     "check": "npm run typecheck && npm run lint && npm test",
     "prepublishOnly": "node scripts/github-release.mjs --check",
-    "postpublish": "node scripts/github-release.mjs"
+    "postpublish": "node scripts/github-release.mjs",
+    "release": "node scripts/release.mjs"
   },
   "dependencies": {
     "hast-util-raw": "9.1.0",

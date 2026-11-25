@@ -4,6 +4,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { changelogProblems, compareVersions, isVersion, releaseNotes } from "../scripts/github-release.mjs";
@@ -69,4 +70,14 @@ test("compareVersions: numeric release order", () => {
 test("changelogProblems: the shipped CHANGELOG's current section passes", () => {
   const pkg = JSON.parse(readFileSync(join(REPO, "package.json"), "utf8"));
   assert.deepEqual(changelogProblems(readFileSync(join(REPO, "CHANGELOG.md"), "utf8"), pkg.version), []);
+});
+
+test("postpublish under npm run release (RX_RELEASE=1) defers: it prints why and exits 0 without asking npm anything", () => {
+  const r = spawnSync(process.execPath, [join(REPO, "scripts", "github-release.mjs")], {
+    encoding: "utf8",
+    // A PATH with no npm, git or gh: any attempt to reach them would fail the run.
+    env: { PATH: "/nonexistent", npm_lifecycle_event: "postpublish", npm_package_name: "@chrismessina/raycast-harness", npm_package_version: "9.9.9", RX_RELEASE: "1" },
+  });
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /npm run release finishes this after CI and the approval/);
 });

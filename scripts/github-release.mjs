@@ -233,10 +233,14 @@ async function registryRecord(name, version, deadline) {
   }
 }
 
-/** @param {string} name @param {string} version @param {boolean} hook */
-async function finish(name, version, hook) {
+/**
+ * @param {string} name @param {string} version @param {boolean} hook
+ * @param {number} [waitMs] how long to wait for npm to list the version (60 s; `npm run release` waits longer after an approval)
+ * @param {string} [expected] the commit `npm run release` uploaded and CI passed; npm's gitHead must equal it
+ */
+export async function finish(name, version, hook, waitMs = 60_000, expected) {
   const tag = `v${version}`;
-  const record = await registryRecord(name, version, Date.now() + 60_000);
+  const record = await registryRecord(name, version, Date.now() + waitMs);
   if (!("gitHead" in record)) {
     const why = "missing" in record ? `${name}@${version} is not on npm yet (a staged upload waiting for approval, or one that failed)` : `npm could not be checked (${record.error})`;
     const msg = `${why}. GitHub completion is pending: once npm lists it, run \`node scripts/github-release.mjs ${version}\``;
@@ -244,6 +248,7 @@ async function finish(name, version, hook) {
     throw new Error(msg);
   }
   const commit = record.gitHead;
+  if (expected && commit !== expected) throw new Error(`npm recorded ${version} from ${commit.slice(0, 7)}, but the release uploaded and tested ${expected.slice(0, 7)}; nothing was tagged`);
   if (!attempt("git", ["cat-file", "-e", `${commit}^{commit}`]).ok) throw new Error(`npm recorded commit ${commit.slice(0, 7)}, which this checkout does not have; fetch it`);
   // Everything that can fail without writing runs before the first write.
   const notes = releaseNotes(fileAt(commit, "CHANGELOG.md"), version, name);
@@ -278,6 +283,12 @@ async function main() {
     return;
   }
   const hook = process.env.npm_lifecycle_event === "postpublish";
+  // `npm run release` (scripts/release.mjs) runs the upload itself and finishes after CI and the
+  // staged approval; the hook would only wait 60 s and report pending.
+  if (hook && process.env.RX_RELEASE === "1") {
+    console.log("github-release: npm run release finishes this after CI and the approval");
+    return;
+  }
   const pkg = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
   const name = (hook && process.env.npm_package_name) || pkg.name;
   const version = args[0] ?? (hook ? process.env.npm_package_version : undefined);

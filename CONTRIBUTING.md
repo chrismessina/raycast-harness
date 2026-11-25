@@ -40,22 +40,56 @@ opening a pull request you agree your contribution is licensed that way.
 Bump the version (`package.json`, `package-lock.json`, the version in
 `docs/commands.md` and the tarball name in `docs/guide.md`), rename the
 CHANGELOG's `## Unreleased` to `## <version>`, and commit that on `main`. Then
-run npm's release command from the repository root, and leave the checkout
-alone until it finishes.
+run `npm run release` from the repository root. Stay at the terminal, because it
+asks for 2FA at the approval, and npm may also ask during the upload. Leave the
+checkout alone until it finishes.
 
-- **Before the upload**, `prepublishOnly` refuses when origin's `main` has
-  commits you lack, the tree is dirty, HEAD is not on `main`, a `v<version>`
-  tag points elsewhere, or the version's CHANGELOG section is missing or not in
-  the shape below. A dry run runs this check and nothing else.
-- **After the upload**, `postpublish` waits for npm to list the version, then
-  tags the commit npm recorded for it (`gitHead`) as `v<version>` (signed),
-  pushes `main` and the tag, and creates the GitHub release from that commit's
-  CHANGELOG section.
-- **A staged upload** is not listed until you approve it, and approval runs no
-  scripts, so `postpublish` reports GitHub completion as pending. After
-  approving, run `node scripts/github-release.mjs <version>`.
-- **After any failure**, run `node scripts/github-release.mjs <version>`. It
-  works from npm's record, not the checkout, and skips what is already done.
+The maintainer's npm account stages uploads: a staged upload is not listed until
+someone approves it with 2FA. A rejected staged version can never be reused, so
+nothing is approved before CI passes on the commit npm packed.
+`scripts/release.mjs` runs the steps in this order, and stops at the first
+failure:
+
+1. **Check.** It refuses a dry run. `node scripts/github-release.mjs --check`
+   refuses when origin's `main` has commits you lack, the tree is dirty, HEAD is
+   not on `main`, a `v<version>` tag points elsewhere, or the version's
+   CHANGELOG section is missing or not in the shape below. `prepublishOnly` runs
+   the same check. The script then records HEAD and the `shasum` of HEAD's
+   tarball (`npm pack --dry-run --json`), which are the bytes npm uploads.
+2. **Upload.** This step runs only when npm has no staged or listed upload of
+   this version yet. It runs `npm publish`, whose `postpublish` hook sees
+   `RX_RELEASE=1` and leaves the rest to this script. Afterward HEAD must not
+   have moved, and the staged entry's shasum must be HEAD's.
+3. **Push.** It fast-forwards origin's `main` to HEAD.
+4. **CI.** For a staged upload, it waits for the CI workflow on that commit. If
+   CI fails, the version stays staged and unapproved: reject it, fix the
+   problem, and release the next patch version. A version npm already lists has
+   nothing left to approve, so this step and the next are skipped.
+5. **Approve.** It runs `npm stage approve <id>` in your terminal for the one
+   staged entry whose shasum is HEAD's, through a pinned `npx npm@11.19.1`, so
+   the npm on PATH does not matter. That is the 2FA prompt. A version that is
+   already listed (one that skipped staging) is not approved again.
+6. **Finish.** It waits up to ten minutes for npm to list the version, and it
+   refuses when npm recorded a different commit (`gitHead`) than HEAD. It then
+   tags that commit as `v<version>` (signed), pushes the tag, and creates the
+   GitHub release from that commit's CHANGELOG section.
+
+- **After a failure before the approval**, fix the cause and run
+  `npm run release` again. It finds an upload that is already staged with
+  HEAD's bytes. It does not upload a second time, and it still approves only
+  after CI passes. If CI failed, do not approve. Reject the staged version
+  (`npx npm@11.19.1 stage reject <id>`, which the error prints), fix the
+  problem, and release the next patch version, because a rejected number
+  cannot be reused.
+- **After a failure once npm lists the version** (the tag, the push or the
+  GitHub release failed), run `node scripts/github-release.mjs <version>`. It
+  works from npm's record, not the checkout, so it still finishes after `main`
+  has moved on, and it skips what is already done. `npm run release` also
+  finishes it while HEAD is still that commit.
+- **A bare `npm publish`** uploads, and its `postpublish` hook waits 60 seconds
+  for npm to list the version. A staged upload therefore ends with GitHub
+  completion reported as pending. Run `npm run release` to finish it: it
+  resumes at the push and waits for CI before approving.
 
 A tarball upload (`npm publish <file>.tgz`) runs neither script and may record
 no commit, so it is unsupported: release from the directory.
