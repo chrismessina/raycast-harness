@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.5.0
 
 After a Store merge, `rx post-merge` brings the checkout up to what shipped, so the next change starts clean.
 
@@ -14,7 +14,7 @@ After a Store merge, `rx post-merge` brings the checkout up to what shipped, so 
 
 ### Fixed
 
-- `rx stale` and the `rx gates` fingerprint read a file's executable bit as git does (the owner's), so `0654` is not a mode change.
+- `rx stale` and the `rx gates` fingerprint read the executable bit as git does: `0654` is not a mode change.
 
 ## 0.4.0
 
