@@ -61,6 +61,135 @@ test("changelog-history (Codex R5): trailing spaces or a CR added to a published
   });
 });
 
+// brew's published CHANGELOG (raycast/extensions#33983) repeats two headings, each with a
+// different body. Shape: 14 at the 1st and 4th entries, 24 at the 2nd and 3rd.
+const DUP_PUBLISHED = [
+  "# Brew Changelog",
+  "",
+  "## [Improvements] - 2024-06-14",
+  "",
+  "- First June 14 body",
+  "",
+  "## [Improvements] - 2024-06-24",
+  "",
+  "- First June 24 body",
+  "",
+  "## [Improvements] - 2024-06-24",
+  "",
+  "- Second June 24 body",
+  "",
+  "## [Improvements] - 2024-06-14",
+  "",
+  "- Second June 14 body",
+  "",
+  "## [Initial Version] - 2024-01-01",
+  "",
+  "- First release",
+  "",
+].join("\n");
+const withNewTop = (/** @type {string} */ text) => text.replace("# Brew Changelog\n\n", "# Brew Changelog\n\n## [New] - {PR_MERGE_DATE}\n\n- New\n\n");
+
+test("changelog-history: a heading the published copy repeats pairs occurrence by occurrence (brew #33983 false FAIL)", async () => {
+  await withTempDir(async (dir) => {
+    const pub = join(dir, "pub");
+    mkdirSync(pub);
+    writeFileSync(join(pub, "CHANGELOG.md"), DUP_PUBLISHED);
+    const ext = fakeExtension(dir, "ext");
+    writeFileSync(join(ext, "CHANGELOG.md"), withNewTop(DUP_PUBLISHED));
+    const r = await rx(["changelog", "--published", pub, "--json"], { cwd: ext });
+    const got = by(r);
+    assert.equal(got["changelog-history"].verdict, "PASS", JSON.stringify(got["changelog-history"]));
+    assert.match(got["changelog-history"].message, /^5 published entries unchanged/);
+    assert.equal(r.code, 0, r.stdout);
+    assert.deepEqual(r.json.data.entries.map((/** @type {any} */ e) => e.changed), [false, false, false, false, false, false]);
+  });
+});
+
+test("changelog-history: an edit to the SECOND occurrence of a repeated heading FAILs on that occurrence's line", async () => {
+  await withTempDir(async (dir) => {
+    const pub = join(dir, "pub");
+    mkdirSync(pub);
+    writeFileSync(join(pub, "CHANGELOG.md"), DUP_PUBLISHED);
+    const ext = fakeExtension(dir, "ext");
+    const local = withNewTop(DUP_PUBLISHED).replace("- Second June 14 body", "- Second June 14 body, edited");
+    writeFileSync(join(ext, "CHANGELOG.md"), local);
+    const r = await rx(["changelog", "--published", pub, "--json"], { cwd: ext });
+    const got = by(r);
+    const lines = local.split("\n");
+    const first14 = lines.indexOf("## [Improvements] - 2024-06-14") + 1;
+    const second14 = lines.lastIndexOf("## [Improvements] - 2024-06-14") + 1;
+    assert.ok(second14 > first14);
+    assert.equal(got["changelog-history"].verdict, "FAIL", JSON.stringify(got["changelog-history"]));
+    assert.deepEqual(got["changelog-history"].details.map((/** @type {any} */ d) => d.line), [second14], JSON.stringify(got["changelog-history"].details));
+    assert.match(got["changelog-history"].details[0].text, /no redaction authorizes it/);
+    assert.deepEqual(r.json.data.entries.map((/** @type {any} */ e) => e.changed), [false, false, false, false, true, false], "changed is per occurrence");
+  });
+});
+
+test("changelog-history: a repeated published heading with only one local occurrence left is missing locally", async () => {
+  await withTempDir(async (dir) => {
+    const pub = join(dir, "pub");
+    mkdirSync(pub);
+    writeFileSync(join(pub, "CHANGELOG.md"), DUP_PUBLISHED);
+    const ext = fakeExtension(dir, "ext");
+    writeFileSync(join(ext, "CHANGELOG.md"), withNewTop(DUP_PUBLISHED).replace("## [Improvements] - 2024-06-14\n\n- Second June 14 body\n\n", ""));
+    const got = by(await rx(["changelog", "--published", pub, "--json"], { cwd: ext }));
+    assert.equal(got["changelog-history"].verdict, "FAIL");
+    assert.deepEqual(got["changelog-history"].details.map((/** @type {any} */ d) => d.text), ["published entry missing locally: ## [Improvements] - 2024-06-14"]);
+  });
+});
+
+test("changelog-history (CDUP-1): one redaction record authorizes one occurrence; identical occurrences changed alike need one record each", async () => {
+  await withTempDir(async (dir) => {
+    const pub = join(dir, "pub");
+    mkdirSync(pub);
+    const twin = "## [Improvements] - 2024-06-14\n\n- Leaked line\n\n";
+    const published = `# Brew Changelog\n\n${twin}${twin}## [Initial Version] - 2024-01-01\n\n- First release\n`;
+    writeFileSync(join(pub, "CHANGELOG.md"), published);
+    const local = withNewTop(published.replaceAll("- Leaked line", "- Redacted line"));
+    const record = { heading: "## [Improvements] - 2024-06-14", originalHash: bodyHash("- Leaked line"), replacementHash: bodyHash("- Redacted line"), forbiddenLine: "- Leaked line" };
+    const ext = fakeExtension(dir, "ext");
+    writeFileSync(join(ext, "CHANGELOG.md"), local);
+    const lines = local.split("\n");
+    const second = lines.lastIndexOf("## [Improvements] - 2024-06-14") + 1;
+
+    writeFileSync(join(dir, "one.json"), JSON.stringify([record]));
+    const one = await rx(["changelog", "--published", pub, "--redactions", join(dir, "one.json"), "--json"], { cwd: ext });
+    const h1 = by(one)["changelog-history"];
+    assert.equal(h1.verdict, "FAIL", `one record must not authorize two bodies: ${JSON.stringify(h1)}`);
+    assert.deepEqual(h1.details.map((/** @type {any} */ d) => d.line), [second]);
+    assert.deepEqual(one.json.data.entries.map((/** @type {any} */ e) => [e.changed, e.redacted]), [[false, false], [true, true], [true, false], [false, false]]);
+
+    writeFileSync(join(dir, "two.json"), JSON.stringify([record, record]));
+    const two = by(await rx(["changelog", "--published", pub, "--redactions", join(dir, "two.json"), "--json"], { cwd: ext }))["changelog-history"];
+    assert.equal(two.verdict, "PASS", JSON.stringify(two));
+    assert.match(two.message, /2 recorded redactions/);
+  });
+});
+
+test("changelog --merge: a first MERGE_HEAD heading that HEAD repeats is an ambiguous boundary (ERROR, nothing written)", async () => {
+  await withTempDir(async (dir) => {
+    const repo = await initRepo(join(dir, "ext"));
+    const pkg = JSON.stringify({ name: "ext", commands: [] });
+    const theirs = DUP_PUBLISHED.replace("# Brew Changelog\n\n", "# Brew Changelog\n\n## [Contributor] - 2024-07-01\n\n- Theirs\n\n");
+    const ours = withNewTop(DUP_PUBLISHED);
+    await commit(repo, { "package.json": pkg, "CHANGELOG.md": DUP_PUBLISHED }, "base");
+    await g(repo, ["branch", "theirs"]);
+    // HEAD carries the contributor's heading twice, so the boundary cannot be placed.
+    await commit(repo, { "CHANGELOG.md": ours.replace("## [Improvements] - 2024-06-14\n\n- First", "## [Contributor] - 2024-07-01\n\n- Ours A\n\n## [Contributor] - 2024-07-01\n\n- Ours B\n\n## [Improvements] - 2024-06-14\n\n- First") }, "ours");
+    await g(repo, ["checkout", "-q", "theirs"]);
+    await commit(repo, { "CHANGELOG.md": theirs }, "theirs");
+    await g(repo, ["checkout", "-q", "main"]);
+    assert.equal(await startMerge(repo, "theirs"), 1, "the fixture must conflict");
+    const before = readFileSync(join(repo, "CHANGELOG.md"), "utf8");
+    const r = await rx(["changelog", "--merge", "--json"], { cwd: repo });
+    const got = by(r);
+    assert.equal(got["changelog-merge"].verdict, "ERROR", r.stdout);
+    assert.match(got["changelog-merge"].message, /matches 2 headings of HEAD/);
+    assert.equal(readFileSync(join(repo, "CHANGELOG.md"), "utf8"), before, "nothing written");
+  });
+});
+
 test("changelog-history (F5): an authorized historical redaction passes; an unrelated edit and an unstamped entry fail", async () => {
   const expected = JSON.parse(readFileSync(join(FIX, "redaction", "expected.json"), "utf8"));
   const published = join(FIX, "redaction", "published");

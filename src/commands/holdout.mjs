@@ -51,7 +51,7 @@ export const spec = {
       },
       checks: {
         "holdout-out": { description: "untracked local-only entries moved (PASS with one detail per path; N/A when nothing matches)", levels: ["PASS", "N/A"] },
-        "holdout-tracked": "no local-only path is tracked in this checkout's index (FAIL names each one with its fix: git rm --cached <path>, the file stays on disk, and list it in the extension's .gitignore; ERROR, before anything moves or an inventory is written, when git cannot read the index)",
+        "holdout-tracked": "no local-only path is tracked in this checkout's index (FAIL names each one with its fix: git rm --cached <path>, the file stays on disk, and list it in the extension's .gitignore, or, if the preset's owner decides it ships, list it in ship.keep; ERROR, before anything moves or an inventory is written, when git cannot read the index)",
         "holdout-inventory": { description: "inventory written and non-empty whenever a movable local-only path exists (ERROR otherwise, or when a holdout is already in progress)", levels: ["PASS", "ERROR"] },
       },
       data: { moved: "[{ source, destination, type, hash }]", restored: "[] (always empty for out)", skipped: "[{ path, reason }]" },
@@ -326,7 +326,7 @@ async function out({ args, cwd, results, log }, root, inventoryPath, filesDir) {
   const recorded = [...moved, ...held];
   if (recorded.length !== planned.length) writeInventory(inventoryPath, { ...inv, entries: recorded });
 
-  if (tracked.length) results.fail("holdout-tracked", `${tracked.length} local-only path(s) are tracked in this checkout's index; untrack each with git rm --cached and list it in the extension's .gitignore`, tracked);
+  if (tracked.length) results.fail("holdout-tracked", `${tracked.length} local-only path(s) are tracked in this checkout's index; untrack each with git rm --cached and list it in the extension's .gitignore, or, if the preset's owner decides it ships, list it in the preset's ship.keep for this extension`, tracked);
   else results.pass("holdout-tracked", "no local-only path is tracked");
 
   if (moved.length) results.pass("holdout-out", `${moved.length} untracked local-only entr${moved.length === 1 ? "y" : "ies"} moved to ${filesDir}`, moved.map((e) => ({ file: e.source, text: `${e.type} ${e.hash}` })));

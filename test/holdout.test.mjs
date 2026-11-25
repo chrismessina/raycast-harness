@@ -536,6 +536,7 @@ test("holdout-tracked names the fix for a tracked AGENTS.md: git rm --cached it 
     const t = by(r.json)["holdout-tracked"];
     assert.equal(t.verdict, "FAIL");
     assert.match(t.message, /tracked in this checkout's index; untrack each with git rm --cached and list it in the extension's \.gitignore/);
+    assert.match(t.message, /, or, if the preset's owner decides it ships, list it in the preset's ship\.keep for this extension$/, "untracking is not the only way out");
     const detail = Object.fromEntries(t.details.map((/** @type {any} */ d) => [d.file, d.text]));
     const q = (/** @type {string} */ v) => v.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     assert.match(detail["AGENTS.md"], new RegExp(`run \`git -C ${q(ext)} rm --cached -- AGENTS\\.md\` \\(the file stays on disk\\), list AGENTS\\.md in that checkout's \\.gitignore`));

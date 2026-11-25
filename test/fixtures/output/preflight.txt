@@ -25,6 +25,7 @@ N/A    title-case               no preset (core enforces only Store facts)
 N/A    agent-scaffolding        no preset (core enforces only Store facts)
 N/A    dev-material             no preset (core enforces only Store facts)
 N/A    contributing-mirror      no preset (core enforces only Store facts)
+N/A    keep-gitignored          no preset (core enforces only Store facts)
 N/A    generated-files          no preset (core enforces only Store facts)
 PASS   screenshot-count         1 of at most 6 screenshots
 PASS   screenshot-format        every file under metadata/ is a .png

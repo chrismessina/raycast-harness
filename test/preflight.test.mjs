@@ -1347,6 +1347,117 @@ test("contributing-mirror: a self-authored CONTRIBUTING.md stays in the mirror (
   });
 });
 
+test("keep-gitignored: a ship.keep path the extension's own .gitignore excludes FAILs (the fork-side git add would drop it); global excludes never count", async () => {
+  await withTempDir(async (dir) => {
+    const presetFile = join(dir, "p.json");
+    const base = JSON.parse(readFileSync(HOUSE_PRESET, "utf8"));
+    base.rules.push({ id: "keep-gitignored", title: "Test house: a kept path ships", anchor: "house-anchors.md#agents-md", tag: "verify", applies: true, severity: "block", bindings: [{ kind: "rx", check: "keep-gitignored", coverage: "full" }] });
+    base.ship = { keep: [{ path: "AGENTS.md", extensions: ["keeps-agents"], reason: "test" }, { path: "notes", extensions: ["keeps-agents"], reason: "test" }] };
+    writeFileSync(presetFile, JSON.stringify(base));
+    const run = (/** @type {string} */ name, /** @type {Record<string, any>} */ over, /** @type {Record<string, any>} */ opts = {}) => preflight(makeExt(join(dir, name), { pkg: { name: "keeps-agents" }, ...over }), { preset: presetFile, ...opts });
+
+    const dropped = await run("dropped", { files: { "AGENTS.md": "# Agents\n", ".gitignore": "node_modules\nAGENTS.md\n" } }, { published: makeExt(join(dir, "pub-none"), {}) });
+    assert.equal(dropped.verdict("keep-gitignored"), "FAIL", JSON.stringify(dropped.by["keep-gitignored"]));
+    assert.match(dropped.by["keep-gitignored"].message, /remove it from the extension's \.gitignore/);
+    assert.deepEqual(dropped.by["keep-gitignored"].details.map((/** @type {any} */ d) => d.file), ["AGENTS.md"]);
+    const nested = await run("nested", { files: { "AGENTS.md": "# Agents\n", "notes/a.md": "a\n", "notes/.gitignore": "a.md\n" } }, { published: makeExt(join(dir, "pub-none2"), {}) });
+    assert.equal(nested.verdict("keep-gitignored"), "FAIL", "a nested .gitignore the extension ships counts");
+    assert.deepEqual(nested.by["keep-gitignored"].details.map((/** @type {any} */ d) => d.file), ["notes/a.md"]);
+    const ships = await run("ships", { files: { "AGENTS.md": "# Agents\n", ".gitignore": "node_modules\n" } }, { published: makeExt(join(dir, "pub-none3"), {}) });
+    assert.equal(ships.verdict("keep-gitignored"), "PASS", JSON.stringify(ships.by["keep-gitignored"]));
+    assert.match(ships.by["keep-gitignored"].message, /AGENTS\.md/);
+    const tracked = await run("tracked", { files: { "AGENTS.md": "# Agents, edited\n", ".gitignore": "AGENTS.md\n" } }, { published: makeExt(join(dir, "pub-has"), { files: { "AGENTS.md": "# Agents\n" } }) });
+    assert.equal(tracked.verdict("keep-gitignored"), "PASS", "a path the fork already tracks is staged despite the ignore rule");
+    // A global excludes file and .git/info/exclude are not what the fork-side git add reads.
+    const globalIgnore = join(dir, "global-ignore");
+    writeFileSync(globalIgnore, "AGENTS.md\n");
+    const infoExclude = makeExt(join(dir, "info"), { pkg: { name: "keeps-agents" }, files: { "AGENTS.md": "# Agents\n", ".git/info/exclude": "AGENTS.md\n" } });
+    const prev = process.env.GIT_CONFIG_GLOBAL;
+    const cfg = join(dir, "gitconfig");
+    writeFileSync(cfg, `[core]\n\texcludesFile = ${globalIgnore}\n`);
+    process.env.GIT_CONFIG_GLOBAL = cfg;
+    try {
+      const r = await preflight(infoExclude, { preset: presetFile, published: makeExt(join(dir, "pub-none4"), {}) });
+      assert.equal(r.verdict("keep-gitignored"), "PASS", JSON.stringify(r.by["keep-gitignored"]));
+    } finally {
+      if (prev === undefined) delete process.env.GIT_CONFIG_GLOBAL;
+      else process.env.GIT_CONFIG_GLOBAL = prev;
+    }
+    const absent = await run("absent", {});
+    assert.equal(absent.verdict("keep-gitignored"), "N/A");
+    const other = await preflight(makeExt(join(dir, "other"), { pkg: { name: "other" }, files: { "AGENTS.md": "x\n", ".gitignore": "AGENTS.md\n" } }), { preset: presetFile });
+    assert.equal(other.verdict("keep-gitignored"), "N/A", "a keep entry for another extension is not this one's");
+  });
+});
+
+test("CDUP-2: a published DIRECTORY at a path is not the fork tracking a file there; keep-gitignored sees the ignored kept file as dropped", async () => {
+  await withTempDir(async (dir) => {
+    const presetFile = join(dir, "p.json");
+    const base = JSON.parse(readFileSync(HOUSE_PRESET, "utf8"));
+    base.rules.push({ id: "keep-gitignored", title: "Test house: a kept path ships", anchor: "house-anchors.md#agents-md", tag: "verify", applies: true, severity: "block", bindings: [{ kind: "rx", check: "keep-gitignored", coverage: "full" }] });
+    base.ship = { keep: [{ path: "notes", extensions: ["keeps-notes"], reason: "test" }] };
+    writeFileSync(presetFile, JSON.stringify(base));
+    const pubDir = makeExt(join(dir, "pub-dir"), { files: { "notes/a.md": "a\n" } });
+
+    const kept = await preflight(makeExt(join(dir, "kept"), { pkg: { name: "keeps-notes" }, files: { notes: "a file now\n", ".gitignore": "node_modules\n/notes\n" } }), { preset: presetFile, published: pubDir });
+    assert.equal(kept.verdict("keep-gitignored"), "FAIL", JSON.stringify(kept.by["keep-gitignored"]));
+    assert.deepEqual(kept.by["keep-gitignored"].details.map((/** @type {any} */ d) => d.file), ["notes"]);
+    // A published regular file at the path is tracked upstream, so the ignore rule cannot drop the update.
+    const pubFile = makeExt(join(dir, "pub-file"), { files: { notes: "old\n" } });
+    const tracked = await preflight(makeExt(join(dir, "tracked"), { pkg: { name: "keeps-notes" }, files: { notes: "a file now\n", ".gitignore": "node_modules\n/notes\n" } }), { preset: presetFile, published: pubFile });
+    assert.equal(tracked.verdict("keep-gitignored"), "PASS", JSON.stringify(tracked.by["keep-gitignored"]));
+  });
+});
+
+test("CDUP-2: readme-links agrees: a link to an ignored file is unshipped when the published copy holds a directory at that path", async () => {
+  await withTempDir(async (dir) => {
+    const readme = "# Good\n\n![Shot](media/shot.png)\n\nSee [the guide](guide.md).\n";
+    const linkPubDir = makeExt(join(dir, "link-pub-dir"), { files: { "guide.md/x.md": "x\n" } });
+    const linked = await preflight(makeExt(join(dir, "linked"), { files: { "README.md": readme, "guide.md": "# Guide\n", ".gitignore": "node_modules\n/guide.md\n" } }), { published: linkPubDir });
+    assert.equal(linked.verdict("readme-links"), "FAIL", JSON.stringify(linked.by["readme-links"]));
+    assert.match(linked.by["readme-links"].details[0].text, /does not ship \(a \.gitignore the extension ships excludes it\)/);
+    const linkPubFile = makeExt(join(dir, "link-pub-file"), { files: { "guide.md": "# Old guide\n" } });
+    const linkedTracked = await preflight(makeExt(join(dir, "linked-tracked"), { files: { "README.md": readme, "guide.md": "# Guide\n", ".gitignore": "node_modules\n/guide.md\n" } }), { published: linkPubFile });
+    assert.equal(linkedTracked.verdict("readme-links"), "PASS", JSON.stringify(linkedTracked.by["readme-links"]));
+  });
+});
+
+test("CDUP-3: agent-scaffolding: a published DIRECTORY AGENTS.md/ does not make a local AGENTS.md file already published; it is added and WARNs", async () => {
+  await withTempDir(async (dir) => {
+    const pub = makeExt(join(dir, "pub"), { files: { "AGENTS.md/child.md": "x\n" } });
+    const r = await preflight(makeExt(join(dir, "local"), { files: { "AGENTS.md": "# Agents\n" } }), { published: pub });
+    assert.equal(r.verdict("agent-scaffolding"), "WARN", JSON.stringify(r.by["agent-scaffolding"]));
+    assert.deepEqual(r.by["agent-scaffolding"].details.map((/** @type {any} */ d) => d.file), ["AGENTS.md"]);
+    const pubFile = makeExt(join(dir, "pub-file"), { files: { "AGENTS.md": "# Old\n" } });
+    assert.equal((await preflight(makeExt(join(dir, "local2"), { files: { "AGENTS.md": "# Agents\n" } }), { published: pubFile })).verdict("agent-scaffolding"), "PASS", "a published file at the path is the owner's call");
+  });
+});
+
+test("CDUP-3: dev-material: a published DIRECTORY LICENSE/ does not make a local LICENSE file already published; it is added and WARNs", async () => {
+  await withTempDir(async (dir) => {
+    const pub = makeExt(join(dir, "pub"), { files: { "LICENSE/child.md": "x\n" } });
+    const r = await preflight(makeExt(join(dir, "local"), { files: { LICENSE: "MIT\n" } }), { published: pub });
+    assert.equal(r.verdict("dev-material"), "WARN", JSON.stringify(r.by["dev-material"]));
+    assert.deepEqual(r.by["dev-material"].details.map((/** @type {any} */ d) => d.file), ["LICENSE"]);
+    const pubFile = makeExt(join(dir, "pub-file"), { files: { LICENSE: "MIT\n" } });
+    assert.equal((await preflight(makeExt(join(dir, "local2"), { files: { LICENSE: "MIT, edited\n" } }), { published: pubFile })).verdict("dev-material"), "PASS");
+  });
+});
+
+test("CDUP-3: contributing-mirror: a published DIRECTORY CONTRIBUTING.md/ is not a grandfathered CONTRIBUTING.md; the shipping file FAILs", async () => {
+  await withTempDir(async (dir) => {
+    const presetFile = join(dir, "p.json");
+    const base = JSON.parse(readFileSync(HOUSE_PRESET, "utf8"));
+    base.rules.push({ id: "contributing-mirror", title: "Test house: CONTRIBUTING.md stays in the mirror", anchor: "house-anchors.md#agents-md", tag: "verify", applies: { selfAuthored: true }, severity: "block", bindings: [{ kind: "rx", check: "contributing-mirror", coverage: "full" }] });
+    writeFileSync(presetFile, JSON.stringify(base));
+    const contributing = "# Contributing\n\nnpm install, then npm run dev.\n";
+    const pub = makeExt(join(dir, "pub"), { files: { "CONTRIBUTING.md/child.md": "x\n" } });
+    const r = await preflight(makeExt(join(dir, "local"), { files: { "CONTRIBUTING.md": contributing } }), { preset: presetFile, published: pub });
+    assert.equal(r.verdict("contributing-mirror"), "FAIL", JSON.stringify(r.by["contributing-mirror"]));
+    assert.doesNotMatch(r.by["contributing-mirror"].message, /grandfathered/);
+  });
+});
+
 test("store-description: a new or changed description WARNs on length, the closing period, shared filler and a platform the manifest does not list; an unchanged one is not judged", async () => {
   await withTempDir(async (dir) => {
     const good = "Search, open and manage items in Example, and copy their links from the list.";
@@ -1438,6 +1549,9 @@ test("screenshots (W9 round 2 finding C): a published menu-bar-only extension wi
     const pubWithShots = makeExt(join(dir, "pub-shots"), { pkg: { commands: [menu] } });
     assert.ok(readdirSync(join(pubWithShots, "metadata")).some((f) => f.endsWith(".png")), "fixture: the published copy has a screenshot");
     assert.equal((await preflight(makeExt(join(dir, "menu-deleted"), { pkg: { commands: [menu] }, files: noShots }), { published: pubWithShots })).verdict("screenshots"), "FAIL", "deleted the published screenshots");
+    // A directory whose name ends in .png is not a screenshot the published copy had: still WARN.
+    const pubPngDir = makeExt(join(dir, "pub-pngdir"), { pkg: { commands: [menu] }, files: { ...noShots, "metadata/old.png/child.md": "x\n" } });
+    assert.equal((await preflight(makeExt(join(dir, "menu-pngdir"), { pkg: { commands: [menu] }, files: noShots }), { published: pubPngDir })).verdict("screenshots"), "WARN", "a .png-named directory is not a screenshot");
     const pubView = makeExt(join(dir, "pub-view"), { pkg: { commands: [menu, view] }, files: noShots });
     assert.equal((await preflight(makeExt(join(dir, "view-pub"), { pkg: { commands: [menu, view] }, files: noShots }), { published: pubView })).verdict("screenshots"), "FAIL", "a view command keeps today's behavior");
   });

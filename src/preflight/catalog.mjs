@@ -37,6 +37,7 @@ export const CHECKS = {
   "agent-scaffolding": { class: "preset", level: "WARN", description: "no agent or planning file the published copy lacks would ship (an edit to one already there is the owner's call); preset ship.keep exempts named paths" },
   "dev-material": { class: "preset", level: "WARN", description: "no repo-only file (LICENSE, contributor docs, docs/, tools/) the published copy lacks would ship" },
   "contributing-mirror": { class: "preset", level: "FAIL", description: "a CONTRIBUTING.md stays in the mirror: the extension's .gitignore keeps it out of the Store PR, unless the published copy already ships one" },
+  "keep-gitignored": { class: "preset", level: "FAIL", description: "every file under a path the preset's ship.keep ships for this extension reaches the Store PR: no .gitignore the extension ships excludes it, unless the published copy already holds a file (not a directory) at that path" },
   "generated-files": { class: "preset", level: "FAIL", description: "no build output (dist/, .build/) would ship; a stray .DS_Store WARNs" },
   // new core
   "screenshot-count": { class: "core", level: "FAIL", description: "at most 6 screenshots in metadata/" },

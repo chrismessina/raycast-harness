@@ -24,7 +24,7 @@ import { checklistItems, lineDiff, missingChecklist, splice, validateEdits } fro
 import { parsePrNumber, parseRepo, transport } from "../pr/transport.mjs";
 import { cachePath } from "../state.mjs";
 import { isUnder } from "../util.mjs";
-import { readPresetFields } from "./holdout.mjs";
+import { keepPathsFor, readPresetFields } from "./holdout.mjs";
 
 const DEFAULT_REPO = "raycast/extensions";
 const TEMPLATE_PATH = `repos/${DEFAULT_REPO}/contents/.github/pull_request_template.md`;
@@ -60,11 +60,11 @@ export const spec = {
       positionals: [{ name: "N", required: true, help: "pull request number in raycast/extensions" }],
       flags: {
         "--extension": { type: "string", required: true, value: "<name>", help: "extension folder name" },
-        "--preset": { type: "string", value: "<file>", help: "preset JSON, validated against the preset schema; reads holdout.localOnly for the pr-local-only check" },
+        "--preset": { type: "string", value: "<file>", help: "preset JSON, validated against the preset schema; reads holdout.localOnly and ship.keep for the pr-local-only check" },
       },
       checks: {
         "pr-files": "every changed path is under extensions/<extension>/ (details: each file with its GitHub status)",
-        "pr-local-only": { description: "with --preset: every changed path the preset's holdout.localOnly lists (AGENTS.md, CONCEPTS.md, CLAUDE.md, HANDOFF.md, .env, …, under extensions/<extension>/) has status removed (PASS names the removals; FAIL any other status); N/A without --preset", levels: ["PASS", "FAIL", "N/A"] },
+        "pr-local-only": { description: "with --preset: every changed path the preset's holdout.localOnly lists (AGENTS.md, CONCEPTS.md, CLAUDE.md, HANDOFF.md, .env, …, under extensions/<extension>/) has status removed, except a path the preset's ship.keep ships for this extension (PASS names the removals and the kept paths; FAIL any other status); N/A without --preset", levels: ["PASS", "FAIL", "N/A"] },
       },
       data: {
         files: "[{ path, status, previous }] one per changed file: status is GitHub's (added, removed, modified, renamed, copied, changed, unchanged); previous is the rename source, else null",
@@ -135,7 +135,7 @@ async function files({ args, results, cwd }) {
   const n = parsePrNumber(args.positionals.N);
   const ext = String(args.flags["--extension"]);
   const prefix = `extensions/${ext}/`;
-  const localOnly = typeof args.flags["--preset"] === "string" ? readPresetFields(resolve(cwd, args.flags["--preset"])).localOnly : null;
+  const preset = typeof args.flags["--preset"] === "string" ? readPresetFields(resolve(cwd, args.flags["--preset"])) : null;
   // Every page: a stray path on page 2 must not pass.
   const list = await transport().getJsonPages(`repos/${DEFAULT_REPO}/pulls/${n}/files?per_page=100`);
   if (!Array.isArray(list)) throw new RxError(`pulls/${n}/files did not return a list`, { id: "github" });
@@ -168,14 +168,21 @@ async function files({ args, results, cwd }) {
   }
 
   // The 2026-11-03 ruling: a local-only file (AGENTS.md, CONCEPTS.md, CLAUDE.md, HANDOFF.md, and
-  // the rest of the preset's holdout.localOnly) may appear in a Store PR only as a deletion.
-  if (localOnly === null) results.na("pr-local-only", "no --preset: the local-only file list is the preset's holdout.localOnly");
+  // the rest of the preset's holdout.localOnly) may appear in a Store PR only as a deletion, unless
+  // the preset's ship.keep ships it for this extension (Chris's exception, e.g. reader-mode's AGENTS.md).
+  if (preset === null) results.na("pr-local-only", "no --preset: the local-only file list is the preset's holdout.localOnly");
   else {
-    const hits = changed.filter((c) => c.path.startsWith(prefix) && localOnly.some((p) => isUnder(c.path, `${prefix}${p}`)));
+    const keep = keepPathsFor(preset.keep, ext);
+    const local = changed.filter((c) => c.path.startsWith(prefix) && preset.localOnly.some((p) => isUnder(c.path, `${prefix}${p}`)));
+    const isKept = (/** @type {{ path: string }} */ c) => keep.some((k) => isUnder(c.path, `${prefix}${k}`));
+    const kept = local.filter(isKept);
+    const hits = local.filter((c) => !isKept(c));
     const shipped = hits.filter((c) => c.status !== "removed");
+    const keptNote = kept.length ? `; kept on purpose: ${kept.map((c) => c.path.slice(prefix.length)).join(", ")}` : "";
+    const keptDetails = kept.map((c) => ({ file: c.path, text: `${describe(c)}, kept by ship.keep` }));
     if (shipped.length) results.fail("pr-local-only", `${shipped.length} local-only file(s) the PR adds or changes; they stay in the mirror, listed in the extension's .gitignore, and are held out by rx holdout out`, shipped.map((c) => ({ file: c.path, text: describe(c) })));
-    else if (hits.length) results.pass("pr-local-only", `${hits.length} local-only file(s) in the PR, every one removed`, hits.map((c) => ({ file: c.path, text: c.status })));
-    else results.pass("pr-local-only", "no local-only file in the PR");
+    else if (hits.length) results.pass("pr-local-only", `${hits.length} local-only file(s) in the PR, every one removed${keptNote}`, [...hits.map((c) => ({ file: c.path, text: c.status })), ...keptDetails]);
+    else results.pass("pr-local-only", `no local-only file in the PR${keptNote}`, keptDetails);
   }
   return { data: { files: changed, paths, stray } };
 }

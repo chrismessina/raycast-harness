@@ -81,9 +81,15 @@ export async function run({ results, root, args }) {
   else if (ph.problems.length) results.fail("changelog-placeholder", ph.problems[0], ph.conflictMarkers ? [] : placeholderLines(text));
   else results.pass("changelog-placeholder", `one ${PLACEHOLDER}, in ${log.entries[0].heading}`);
 
-  // History versus the published copy.
-  /** @type {Map<string, { changed: boolean, redacted: boolean }>} */
+  // History versus the published copy. Pairing is by occurrence: a heading the published copy
+  // repeats (brew has two `## [Improvements] - 2024-06-14` with different bodies) pairs its n-th
+  // published occurrence with the n-th local one, so `status` is keyed by the local entry itself.
+  /** @type {Map<import("../changelog/parse.mjs").Entry, { changed: boolean, redacted: boolean }>} */
   const status = new Map();
+  /** @type {Set<import("../changelog/parse.mjs").Entry>} */
+  const paired = new Set();
+  /** @type {Set<Redaction>} */
+  const usedRedactions = new Set();
   if (!publishedDir) results.na("changelog-history", "no published copy given; pass --published <dir> (rx stale prints it) to compare dated history");
   else if (published === null) results.na("changelog-history", `published copy has no CHANGELOG.md (${join(publishedDir, "CHANGELOG.md")})`);
   else {
@@ -92,9 +98,10 @@ export async function run({ results, root, args }) {
     const problems = [];
     let redactedCount = 0;
     for (const pe of pub.entries) {
-      const matches = log.entries.filter((le) => le.title === pe.title);
+      const matches = log.entries.filter((le) => le.title === pe.title && !paired.has(le));
       const le = matches.find((m) => m.date === pe.date) ?? matches.find((m) => sameEntry(m, pe));
       if (!le) { problems.push({ file: "CHANGELOG.md", text: `published entry missing locally: ${pe.heading}` }); continue; }
+      paired.add(le);
       if (le.heading !== pe.heading) {
         problems.push({ file: "CHANGELOG.md", line: le.line, text: `heading differs from published: ${le.heading} (published: ${pe.heading})${le.date === PLACEHOLDER && pe.date !== PLACEHOLDER ? "; stamp the merged date" : ""}` });
         continue;
@@ -103,12 +110,14 @@ export async function run({ results, root, args }) {
         problems.push({ file: "CHANGELOG.md", line: le.line, text: `heading differs from published byte for byte (whitespace or line ending): ${JSON.stringify(le.rawHeading)} (published: ${JSON.stringify(pe.rawHeading)})` });
         continue;
       }
-      if (le.body === pe.body) { status.set(le.heading, { changed: false, redacted: false }); continue; }
+      if (le.body === pe.body) { status.set(le, { changed: false, redacted: false }); continue; }
       const oh = bodyHash(pe.body);
       const rh = bodyHash(le.body);
-      const auth = redactions.find((r) => r.heading === le.heading && r.originalHash === oh && r.replacementHash === rh);
-      if (auth) { redactedCount++; status.set(le.heading, { changed: true, redacted: true }); continue; }
-      status.set(le.heading, { changed: true, redacted: false });
+      // Each record authorizes exactly one changed body: a used record is consumed, so two identical
+      // occurrences changed alike need two records (CDUP-1).
+      const auth = redactions.find((r) => !usedRedactions.has(r) && r.heading === le.heading && r.originalHash === oh && r.replacementHash === rh);
+      if (auth) { usedRedactions.add(auth); redactedCount++; status.set(le, { changed: true, redacted: true }); continue; }
+      status.set(le, { changed: true, redacted: false });
       problems.push({ file: "CHANGELOG.md", line: le.line, text: `body differs from published and no redaction authorizes it (published ${oh.slice(0, 19)}, local ${rh.slice(0, 19)}): ${le.heading}` });
     }
     if (problems.length) results.fail("changelog-history", `${problems.length} dated ${problems.length === 1 ? "entry differs" : "entries differ"} from the published copy`, problems);
@@ -127,7 +136,7 @@ export async function run({ results, root, args }) {
     data: {
       placeholders: log.placeholders,
       topHeading: log.entries[0]?.heading ?? null,
-      entries: log.entries.map((e) => ({ heading: e.heading, date: e.date, bullets: e.bullets.length, changed: status.get(e.heading)?.changed ?? false, redacted: status.get(e.heading)?.redacted ?? false })),
+      entries: log.entries.map((e) => ({ heading: e.heading, date: e.date, bullets: e.bullets.length, changed: status.get(e)?.changed ?? false, redacted: status.get(e)?.redacted ?? false })),
       merged,
     },
   };

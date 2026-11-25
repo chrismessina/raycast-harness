@@ -35,6 +35,7 @@
       "agent-scaffolding": "preset",
       "dev-material": "preset",
       "contributing-mirror": "preset",
+      "keep-gitignored": "preset",
       "generated-files": "preset",
       "screenshot-count": "core",
       "screenshot-format": "core",
@@ -218,6 +219,12 @@
     },
     {
       "id": "contributing-mirror",
+      "verdict": "N/A",
+      "message": "no preset (core enforces only Store facts)",
+      "details": []
+    },
+    {
+      "id": "keep-gitignored",
       "verdict": "N/A",
       "message": "no preset (core enforces only Store facts)",
       "details": []

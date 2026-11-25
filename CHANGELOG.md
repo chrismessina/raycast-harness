@@ -1,5 +1,21 @@
 # Changelog
 
+## Unreleased
+
+Files the preset keeps on purpose now pass end to end, and a CHANGELOG that repeats a heading no longer fails its history check.
+
+### New
+
+- `keep-gitignored` (FAIL): a `ship.keep` file that the extension's own `.gitignore` excludes would be dropped from the Store PR.
+
+### Changed
+
+- `pr-local-only` passes a local-only file the preset's `ship.keep` keeps for this extension, and names it.
+
+### Fixed
+
+- `changelog-history` pairs repeated headings by occurrence, so a published CHANGELOG with duplicates no longer FAILs.
+
 ## 0.5.0
 
 After a Store merge, `rx post-merge` brings the checkout up to what shipped, so the next change starts clean.

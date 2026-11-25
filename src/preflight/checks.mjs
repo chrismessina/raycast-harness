@@ -3,7 +3,7 @@
 // plan ids. Every id in catalog.mjs comes out exactly once per run (docs/commands.md §1: silence
 // is never a pass).
 
-import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
+import { existsSync, lstatSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import * as changelogParse from "../changelog/parse.mjs";
@@ -14,10 +14,12 @@ import {
   allPreferences, buildApplyContext, commandsOf, filesUnder, grepSources, isObj, loadSources, pngSize, read,
   readLockfile, readPublished,
 } from "./context.mjs";
+import { keepPathsFor } from "../commands/holdout.mjs";
 import { ignoredPredicate } from "./gitignore.mjs";
 import { handBuiltFailureToasts, handRolledScripts } from "./helper-usage.mjs";
 import { shortcutPlatformCase } from "./platform-keys.mjs";
 import { loadTypeScript } from "../typescript.mjs";
+import { isDirectory } from "../util.mjs";
 import { NOTHING_TO_SHIP, nothingToShip } from "../payload-identity.mjs";
 import { PUBLISH_SKIPS, isSkipped, listPayload } from "../payload.mjs";
 import { extractEmbeds, headings, isExternal, targetPath } from "./markdown.mjs";
@@ -200,7 +202,7 @@ export async function runPreflight({ root, publishedDir, preset, extensionTypesc
     for (const s of sets) for (const key of keys) if (!(key in s.options)) throw new RxError(`preset binding for ${id} (rule ${s.rules.join(", ")}) lacks options.${key}`, { id: "input" });
     return sets;
   };
-  const keep = (preset?.preset.ship?.keep ?? []).filter((k) => k.extensions.includes(String(pkg.name))).map((k) => k.path);
+  const keep = keepPathsFor(preset?.preset.ship?.keep ?? [], String(pkg.name));
 
   // schema — Raycast docs
   if (pkg.$schema !== STORE.schemaUrl) c.fail("schema", `package.json "$schema" must be "${STORE.schemaUrl}"`);
@@ -360,7 +362,8 @@ export async function runPreflight({ root, publishedDir, preset, extensionTypesc
     // whose only such commands are menu-bar ones is a WARN, a view one a FAIL.
     const menuBarOnly = !commands.some((cmd) => cmd.mode === "view");
     // …unless the published copy had screenshots and this change removes them all: that stays a FAIL.
-    const publishedShots = publishedDir !== null && existsSync(join(publishedDir, "metadata")) && readdirSync(join(publishedDir, "metadata")).some((f) => f.toLowerCase().endsWith(".png"));
+    // A screenshot is a file: a directory named `old.png`, or a `metadata` that is itself a file, is none.
+    const publishedShots = publishedDir !== null && isDirectory(join(publishedDir, "metadata")) && readdirSync(join(publishedDir, "metadata")).some((f) => f.toLowerCase().endsWith(".png") && publishedTracks(publishedDir, `metadata/${f}`));
     if (!pngs.length && menuBarOnly && publishedDir !== null && !publishedShots) c.warn("screenshots", "a menu-bar command has no screenshot in metadata/; the Store asks screenshots of new extensions, so this published one is not blocked, but consider adding one");
     else if (!pngs.length) c.fail("screenshots", "a view or menu-bar command needs at least one screenshot in metadata/");
     c.pass("screenshots", `${pngs.length} screenshot${pngs.length === 1 ? "" : "s"} in metadata/`);
@@ -633,12 +636,31 @@ function iconSize(root, pkg, commands, c) {
 }
 
 /**
+ * Does the published copy (what raycast/extensions tracks) hold a FILE at exactly `rel`? True for
+ * a regular file or a symlink, both of which git tracks as one entry at that path; false for a
+ * directory (git tracks its children, not a file at `rel`), a missing path, or no published copy.
+ * The one predicate for every "already published here" question (CDUP-2, CDUP-3), so no check
+ * mistakes a published directory for the file a PR changes. For a directory candidate, ask it of
+ * each file under the directory.
+ * @param {string | null} publishedDir @param {string} rel
+ */
+export function publishedTracks(publishedDir, rel) {
+  if (publishedDir === null) return false;
+  try {
+    const st = lstatSync(join(publishedDir, rel));
+    return st.isFile() || st.isSymbolicLink();
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Why a file the extension holds would not reach the Store PR, or null when it would. It ships
  * when `ray publish` copies it (src/payload.mjs: no segment on the skip list) and the fork-side
  * `git add` stages it: no .gitignore the extension ships excludes it (src/preflight/gitignore.mjs,
- * nested files included), or the published copy already has it (an ignore rule cannot hold back
- * an update to a tracked path). Git decides the ignore rules for `files`, the paths the caller
- * will ask about.
+ * nested files included), or the published copy already tracks it (publishedTracks: an ignore
+ * rule cannot hold back an update to a tracked path). Git decides the ignore rules for `files`,
+ * the paths the caller will ask about.
  * @param {string} root @param {string | null} publishedDir @param {string[]} files
  * @returns {Promise<(rel: string) => string | null>}
  */
@@ -647,7 +669,7 @@ async function notShippedReason(root, publishedDir, files) {
   return (rel) => {
     const skip = rel.split("/").find((seg) => PUBLISH_SKIPS.includes(seg));
     if (skip) return `ray publish never copies ${skip}`;
-    if (!ignored(rel, false) || (publishedDir !== null && existsSync(join(publishedDir, rel)))) return null;
+    if (!ignored(rel, false) || publishedTracks(publishedDir, rel)) return null;
     return "a .gitignore the extension ships excludes it";
   };
 }
@@ -801,7 +823,7 @@ async function fileChecks(root, publishedDir, c, enabled, keep) {
   const scaffoldPaths = [...G.agentScaffolding, ...readdirSync(root).filter((f) => /^CONTEXT.*\.md$/i.test(f))].filter((p) => !keep.includes(p));
   const devMaterial = G.devMaterial.filter((/** @type {string} */ p) => !keep.includes(p));
   const strayPaths = G.strays;
-  const candidates = [...nestedPaths, ...scaffoldPaths, ...devMaterial, ...G.generatedDirs, ...strayPaths, CONTRIBUTING].flatMap((rel) => filesUnder(root, rel));
+  const candidates = [...nestedPaths, ...scaffoldPaths, ...devMaterial, ...G.generatedDirs, ...strayPaths, CONTRIBUTING, ...keep].flatMap((rel) => filesUnder(root, rel));
   const reason = await notShippedReason(root, publishedDir, candidates);
   const shipping = (/** @type {string} */ rel) => filesUnder(root, rel).filter((f) => reason(f) === null);
   const flagged = (/** @type {string} */ rel) => {
@@ -823,7 +845,7 @@ async function fileChecks(root, publishedDir, c, enabled, keep) {
     const files = shipping(rel);
     if (!files.length) return false;
     if (publishedDir === null) return true;
-    return files.some((f) => !existsSync(join(/** @type {string} */ (publishedDir), f)));
+    return files.some((f) => !publishedTracks(publishedDir, f));
   };
   const addedScope = publishedDir !== null ? "added versus the published copy" : "present (pass --published to see which this PR adds)";
   const details = (/** @type {string[]} */ paths) => paths.map((p) => ({ file: p, text: p }));
@@ -850,10 +872,20 @@ async function fileChecks(root, publishedDir, c, enabled, keep) {
     // grandfathered (brew, reader-mode). Which extensions this applies to is the preset's call.
     const present = existsSync(join(root, CONTRIBUTING));
     if (!present) c.na("contributing-mirror", `no ${CONTRIBUTING}`);
-    else if (publishedDir !== null && existsSync(join(publishedDir, CONTRIBUTING))) c.pass("contributing-mirror", `${CONTRIBUTING} is grandfathered: the published copy already ships one`);
+    else if (publishedTracks(publishedDir, CONTRIBUTING)) c.pass("contributing-mirror", `${CONTRIBUTING} is grandfathered: the published copy already ships one`);
     else if (!shipping(CONTRIBUTING).length) c.pass("contributing-mirror", `${CONTRIBUTING} stays in the mirror: the extension's .gitignore keeps it out of the Store PR`);
     else if (publishedDir === null) c.warn("contributing-mirror", `${CONTRIBUTING} would ship; list it in the extension's .gitignore, unless the published copy already ships one (pass --published to tell)`, details([CONTRIBUTING]));
     else c.fail("contributing-mirror", `${CONTRIBUTING} would ship into the Store PR; list it in the extension's .gitignore (it stays tracked in the mirror)`, details([CONTRIBUTING]));
+  }
+  if (enabled("keep-gitignored")) {
+    // A path the owner ships on purpose (ship.keep) that the extension's own .gitignore excludes is
+    // silently left out by the fork-side `git add`. notShippedReason
+    // reads only the shipped .gitignore files, never global excludes or .git/info/exclude.
+    const keptFiles = keep.flatMap((rel) => filesUnder(root, rel));
+    const dropped = keptFiles.flatMap((f) => { const why = reason(f); return why ? [{ file: f, text: why }] : []; });
+    if (!keptFiles.length) c.na("keep-gitignored", keep.length ? `no kept path is present (${keep.join(", ")})` : "ship.keep names no path for this extension");
+    else if (dropped.length) c.fail("keep-gitignored", `${dropped.length} kept file(s) would be left out of the Store PR although ship.keep ships them; remove it from the extension's .gitignore: ${dropped.map((d) => d.file).join(", ")}`, dropped);
+    else c.pass("keep-gitignored", `every kept file reaches the Store PR: ${keptFiles.join(", ")}`);
   }
   if (enabled("generated-files")) {
     const builds = G.generatedDirs.filter(flagged);

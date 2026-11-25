@@ -559,3 +559,33 @@ test("pr files --preset: pr-local-only FAILs when AGENTS.md, CONCEPTS.md, CLAUDE
     assert.equal(clean.by["pr-local-only"].verdict, "PASS");
   });
 });
+
+test("pr files --preset: a path ship.keep ships for this extension passes pr-local-only and is named; the same path for another extension still FAILs", async () => {
+  await withTempDir(async (dir) => {
+    const preset = join(dir, "preset.json");
+    writeFileSync(preset, JSON.stringify({
+      schema: 1, owner: "octo-author", rules: [],
+      holdout: { localOnly: ["AGENTS.md", "CONCEPTS.md", "HANDOFF.md"] },
+      ship: { keep: [{ path: "AGENTS.md", extensions: ["sample-ext"], reason: "test" }, { path: "CONCEPTS.md", extensions: ["other-ext"], reason: "test" }] },
+    }));
+    const run = (/** @type {any[]} */ list) => withFake(fakeGitHub({ files: [list] }).t, ["pr", "files", PR, "--extension", "sample-ext", "--preset", preset]);
+    const kept = await run([
+      { filename: "extensions/sample-ext/src/index.tsx", status: "modified" },
+      { filename: "extensions/sample-ext/AGENTS.md", status: "modified" },
+      { filename: "extensions/sample-ext/HANDOFF.md", status: "removed" },
+    ]);
+    assert.equal(kept.code, 0, kept.stdout);
+    assert.equal(kept.by["pr-local-only"].verdict, "PASS", JSON.stringify(kept.by["pr-local-only"]));
+    assert.match(kept.by["pr-local-only"].message, /1 local-only file\(s\) in the PR, every one removed; kept on purpose: AGENTS\.md$/);
+    assert.deepEqual(kept.by["pr-local-only"].details.map((/** @type {any} */ d) => `${d.file}: ${d.text}`), [
+      "extensions/sample-ext/HANDOFF.md: removed",
+      "extensions/sample-ext/AGENTS.md: modified, kept by ship.keep",
+    ]);
+    const onlyKept = await run([{ filename: "extensions/sample-ext/AGENTS.md", status: "added" }]);
+    assert.equal(onlyKept.by["pr-local-only"].verdict, "PASS");
+    assert.equal(onlyKept.by["pr-local-only"].message, "no local-only file in the PR; kept on purpose: AGENTS.md");
+    const otherExt = await run([{ filename: "extensions/sample-ext/CONCEPTS.md", status: "added" }]);
+    assert.equal(otherExt.code, 1, otherExt.stdout);
+    assert.equal(otherExt.by["pr-local-only"].verdict, "FAIL", "a keep entry for another extension exempts nothing here");
+  });
+});
