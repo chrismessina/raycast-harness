@@ -95,7 +95,7 @@ export function ciRun(runs, sha) {
  * @param {Deps} deps
  * @param {{ ciAppearMs?: number, stageAppearMs?: number }} [timing]
  */
-export async function release({ name, version, argv = [], env = {} }, deps, { ciAppearMs = 300_000, stageAppearMs = 120_000 } = {}) {
+export async function release({ name, version, argv = [], env = {} }, deps, { ciAppearMs = 300_000, stageAppearMs = 600_000 } = {}) {
   const { log, run, interactive, sleep, now } = deps;
   const at = `${name}@${version}`;
   if (argv.includes("--dry-run") || env.npm_config_dry_run === "true")
@@ -130,8 +130,11 @@ export async function release({ name, version, argv = [], env = {} }, deps, { ci
         log(`release 2/6: ${at} skipped staging and is already listed`);
         break;
       }
-      if (now() > deadline) throw new Error(`${at} is neither staged nor listed on npm after the upload; check npmjs.com, then run npm run release again`);
-      await sleep(5_000);
+      if (now() > deadline) throw new Error(`${at} is neither staged nor listed on npm ten minutes after the upload; check npmjs.com, then run npm run release again`);
+      // npm says "may take a few minutes to become available"; an upload that skips staging can take
+      // that long to be listed (0.6.0 took more than two).
+      log(`release 2/6: waiting for npm to stage or list ${at}…`);
+      await sleep(15_000);
     }
   }
 
