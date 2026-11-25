@@ -677,7 +677,7 @@ test("post-merge-signing: a key GitHub does not list → FAIL with the two gh co
     const r = await pm(fx);
     assert.equal(r.code, 1);
     assert.equal(r.by["post-merge-signing"].verdict, "FAIL");
-    assert.equal(r.by["post-merge-signing"].message, "the rx signing key is not registered on GitHub as a signing key");
+    assert.equal(r.by["post-merge-signing"].message, "the rx signing key is not registered on GitHub as a signing key; run these yourself in a terminal (an agent cannot: the first is interactive, and rx guard blocks commands that name the key's path)");
     assert.deepEqual(r.by["post-merge-signing"].details.map((/** @type {any} */ d) => d.text), [
       "gh auth refresh -h github.com -s admin:ssh_signing_key",
       `gh ssh-key add ${signingKeyPaths().publicKey} --type signing --title "rx post-merge signing"`,

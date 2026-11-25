@@ -30,7 +30,7 @@ export async function checkSigning({ top, dryRun }) {
     const email = (await git(["config", "user.email"], { cwd: top, allowFail: true })).stdout.trim() || "<your git user.email>";
     return {
       verdict: "FAIL",
-      message: "the rx signing key is not registered on GitHub as a signing key",
+      message: "the rx signing key is not registered on GitHub as a signing key; run these yourself in a terminal (an agent cannot: the first is interactive, and rx guard blocks commands that name the key's path)",
       details: [
         { text: "gh auth refresh -h github.com -s admin:ssh_signing_key" },
         { text: `gh ssh-key add ${publicKeyPath} --type signing --title "rx post-merge signing"` },
