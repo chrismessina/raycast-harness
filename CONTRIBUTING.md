@@ -37,10 +37,59 @@ opening a pull request you agree your contribution is licensed that way.
 
 ## Releasing
 
-Bump the version (`package.json`, `package-lock.json`, the version in
-`docs/commands.md` and the tarball name in `docs/guide.md`), rename the
-CHANGELOG's `## Unreleased` to `## <version>`, and commit that on `main`. Then
-run `npm run release` from the repository root. Stay at the terminal, because it
+Write the release's `## Unreleased` CHANGELOG section (shape below) and push it to
+`main`. Then start the release workflow:
+
+```sh
+gh workflow run release.yml -f version=<x.y.z>
+gh run list --workflow release.yml --limit 2   # the prepare run, then the publish run it starts
+gh run watch <run id> --exit-status            # watch the publish run: that is where npm is reached
+```
+
+A release takes two runs. The prepare run ends by dispatching the publish run, so
+watching only the first one tells you nothing about npm. Start one release at a
+time. A release's runs share one concurrency group, and GitHub keeps at most one
+run pending in a group, so a second dispatch while a run is pending replaces the
+pending run.
+
+`.github/workflows/release.yml` does the rest on a macOS runner. Each run does one
+phase, which `scripts/ci-release.mjs plan` chooses from what `main` and npm
+hold, and a run stops at its first failure:
+
+1. **Prepare.** This phase runs when `package.json` is older and the CHANGELOG
+   has `## Unreleased`. `scripts/bump.mjs` writes the version everywhere it is
+   carried: `package.json`, `package-lock.json`, the version in
+   `docs/commands.md`, the tarball name in `docs/guide.md`, and the CHANGELOG
+   heading. `npm run check` then tests the bumped tree. `scripts/ci-commit.mjs`
+   commits it to `main` through the GitHub API, so GitHub signs it, and refuses
+   if `main` has moved. Last, the run dispatches a fresh run at that commit.
+2. **Publish.** This phase runs at the release commit, when npm does not list the
+   version yet. `npm run check` tests that exact commit, then `npm publish` runs
+   through npm trusted publishing (OIDC). No token is stored anywhere, and the
+   version's provenance names this commit. `prepublishOnly` runs the release
+   check below first.
+3. **Finish.** This phase runs once npm lists the version from that commit.
+   `node scripts/github-release.mjs <version> --ci` creates the tag through the
+   API (a lightweight tag on the GitHub-signed commit) and the GitHub release.
+
+**After any failure**, fix the cause and run the same `gh workflow run` again.
+The plan sees what the last run left behind (nothing yet, a release commit with
+no upload, or an upload with no tag), and continues from there. It never bumps
+twice, and it never uploads over a version npm already lists.
+
+**One-time setup per package (on npmjs.com, by the owner).** Go to the package's
+Settings → Trusted publishing → GitHub Actions. Organization or user:
+`chrismessina`. Repository: `raycast-harness`. Workflow filename: `release.yml`.
+Allowed actions: `npm publish`; direct, not staged, because the workflow's tests
+are the gate. Then, under Publishing access, choose "Require two-factor
+authentication and disallow tokens"; trusted publishing still works with it. The
+new configuration expires unless its first upload succeeds within two days.
+
+### Releasing from this machine
+
+`npm run release` is the fallback when CI cannot run. Bump with
+`node scripts/bump.mjs <version>`, and commit that on `main`. Then run
+`npm run release` from the repository root. Stay at the terminal, because it
 asks for 2FA at the approval, and npm may also ask during the upload. Leave the
 checkout alone until it finishes.
 

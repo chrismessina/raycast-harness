@@ -1,0 +1,84 @@
+name: Release
+
+# Releases rx with nothing on the maintainer's machine. Start it with
+#   gh workflow run release.yml -f version=x.y.z
+# Each run does one phase, chosen by scripts/ci-release.mjs from what main and npm hold:
+#   prepare  bump, test, commit the release through the GitHub API (GitHub signs it), then
+#            dispatch a fresh run at that commit;
+#   publish  test the release commit itself, upload it to npm through trusted publishing (OIDC,
+#            no token, provenance naming this commit), then finish;
+#   finish   the tag (through the API) and the GitHub release.
+# Re-running with the same version resumes from what the last run left. npmjs.com's trusted
+# publisher for this package names this repository and `release.yml`, and allows `npm publish`
+# (direct, not staged): the tests in the publish run are the gate. See CONTRIBUTING.
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "The version to release (x.y.z); CHANGELOG.md must have a ## Unreleased section"
+        required: true
+
+permissions:
+  contents: write # the release commit, the tag and the GitHub release
+  id-token: write # npm trusted publishing and provenance
+  actions: write # the prepare run dispatches the publish run
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    # macOS: rx reads Raycast.app's Info.plist with plutil, which exists only there.
+    runs-on: macos-latest
+    env:
+      VERSION: ${{ inputs.version }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      # The commit this run was dispatched at (GITHUB_SHA), on a local `main` so the release check
+      # (which requires HEAD on main, with origin/main its ancestor) accepts it.
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - run: git checkout -q -B main "$GITHUB_SHA"
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+          cache: npm
+      # Trusted publishing needs npm 11.5.1 or later; pinned so a release never meets a new npm.
+      - run: npm install -g npm@11.19.1
+      - run: npm ci
+      - name: Choose the phase
+        id: plan
+        run: node scripts/ci-release.mjs plan "$VERSION" >> "$GITHUB_OUTPUT"
+
+      # prepare
+      - name: Bump the version
+        if: steps.plan.outputs.phase == 'prepare'
+        run: node scripts/bump.mjs "$VERSION"
+      - name: Type-check, lint and test the bumped tree
+        if: steps.plan.outputs.phase == 'prepare'
+        run: npm run check
+      - name: Commit the release (GitHub signs it), then dispatch the publish run at it
+        if: steps.plan.outputs.phase == 'prepare'
+        run: |
+          sha="$(node scripts/ci-commit.mjs "Release $VERSION")"
+          echo "release commit: $sha"
+          gh workflow run release.yml --ref main -f version="$VERSION"
+
+      # publish
+      - name: Type-check, lint and test the release commit
+        if: steps.plan.outputs.phase == 'publish'
+        run: npm run check
+      # prepublishOnly re-runs the release check on this commit; RX_RELEASE=1 keeps postpublish
+      # from finishing, which the next step does with the tag made through the API.
+      - name: Upload to npm (trusted publishing)
+        if: steps.plan.outputs.phase == 'publish'
+        run: RX_RELEASE=1 npm publish
+
+      # publish and finish
+      - name: Tag and create the GitHub release
+        if: steps.plan.outputs.phase == 'publish' || steps.plan.outputs.phase == 'finish'
+        run: node scripts/github-release.mjs "$VERSION" --ci

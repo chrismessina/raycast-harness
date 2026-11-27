@@ -237,8 +237,10 @@ async function registryRecord(name, version, deadline) {
  * @param {string} name @param {string} version @param {boolean} hook
  * @param {number} [waitMs] how long to wait for npm to list the version (60 s; `npm run release` waits longer after an approval)
  * @param {string} [expected] the commit `npm run release` uploaded and CI passed; npm's gitHead must equal it
+ * @param {boolean} [ci] the release workflow: it holds no signing key, so the tag is a lightweight
+ *   ref created through the GitHub API on the (GitHub-signed) release commit, not a local signed tag
  */
-export async function finish(name, version, hook, waitMs = 60_000, expected) {
+export async function finish(name, version, hook, waitMs = 60_000, expected, ci = false) {
   const tag = `v${version}`;
   const record = await registryRecord(name, version, Date.now() + waitMs);
   if (!("gitHead" in record)) {
@@ -262,10 +264,11 @@ export async function finish(name, version, hook, waitMs = 60_000, expected) {
   }
   const local = localTag(tag);
   if (local && local !== commit) throw new Error(`tag ${tag} points at ${local.slice(0, 7)}, but npm's ${version} is ${commit.slice(0, 7)}`);
-  if (!local) run("git", ["tag", "-s", tag, "-m", `rx ${version}`, commit]);
+  if (!local && !ci) run("git", ["tag", "-s", tag, "-m", `rx ${version}`, commit]);
   const remote = remoteTag(tag);
   if (remote && remote !== commit) throw new Error(`origin's tag ${tag} points at ${remote.slice(0, 7)}, but npm's ${version} is ${commit.slice(0, 7)}`);
-  if (!remote) run("git", ["push", "origin", `refs/tags/${tag}`]);
+  if (!remote && ci) run("gh", ["api", "repos/{owner}/{repo}/git/refs", "-f", `ref=refs/tags/${tag}`, "-f", `sha=${commit}`]);
+  else if (!remote) run("git", ["push", "origin", `refs/tags/${tag}`]);
 
   if (attempt("gh", ["release", "view", tag, "--json", "tagName"]).ok) {
     console.log(`github-release: ${tag} is complete`);
@@ -291,9 +294,11 @@ async function main() {
   }
   const pkg = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
   const name = (hook && process.env.npm_package_name) || pkg.name;
-  const version = args[0] ?? (hook ? process.env.npm_package_version : undefined);
+  const version = args.find((a) => !a.startsWith("--")) ?? (hook ? process.env.npm_package_version : undefined);
   if (!version || !isVersion(version)) throw new Error(`name the exact version to finish, such as 0.2.0${version ? ` (not "${version}")` : ""}: node scripts/github-release.mjs <version>`);
-  await finish(name, version, hook);
+  const ci = args.includes("--ci");
+  // A direct upload from CI can take minutes to be listed (0.6.0 took more than two).
+  await finish(name, version, hook, ci ? 600_000 : 60_000, undefined, ci);
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
