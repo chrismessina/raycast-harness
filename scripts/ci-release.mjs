@@ -22,6 +22,17 @@ import { fileURLToPath } from "node:url";
 import { compareVersions, isVersion } from "./github-release.mjs";
 
 /**
+ * Why this run may not release, or null. A run dispatched on another branch, or at a commit that is
+ * not the current tip of origin/main, would otherwise test and upload something main never had.
+ * @param {{ ref: string | undefined, head: string, originMain: string }} r
+ */
+export function refProblem({ ref, head, originMain }) {
+  if (ref !== "refs/heads/main") return `the release runs only on main, and this run was dispatched on ${ref ?? "no ref"}`;
+  if (head !== originMain) return `this run is at ${head.slice(0, 7)}, but origin/main is now ${originMain.slice(0, 7)}; dispatch the release again`;
+  return null;
+}
+
+/**
  * @param {{ version: string, headVersion: string, hasUnreleased: boolean, head: string, npmGitHead: string | null, npmInHistory?: boolean }} s
  *   `npmGitHead` is npm's gitHead for `version`, or null when npm does not list it; `npmInHistory`
  *   says that commit is an ancestor of HEAD.
@@ -48,6 +59,12 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
     if (cmd !== "plan") throw new Error("usage: node scripts/ci-release.mjs plan <version>");
     const pkg = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
     const head = execFileSync("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf8" }).trim();
+    if (process.env.GITHUB_ACTIONS === "true") {
+      execFileSync("git", ["fetch", "-q", "origin", "main"], { cwd: root });
+      const originMain = execFileSync("git", ["rev-parse", "origin/main"], { cwd: root, encoding: "utf8" }).trim();
+      const problem = refProblem({ ref: process.env.GITHUB_REF, head, originMain });
+      if (problem) throw new Error(problem);
+    }
     let npmGitHead = null;
     try {
       const out = execFileSync("npm", ["view", `${pkg.name}@${version}`, "gitHead", "--json"], { cwd: root, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();

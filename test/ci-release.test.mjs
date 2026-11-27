@@ -3,7 +3,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { plan } from "../scripts/ci-release.mjs";
+import { plan, refProblem } from "../scripts/ci-release.mjs";
 
 const HEAD = "a".repeat(40);
 const base = { version: "1.3.0", headVersion: "1.2.0", hasUnreleased: true, head: HEAD, npmGitHead: null };
@@ -21,4 +21,11 @@ test("plan: stops on a version npm lists from another commit, nothing pending, a
   assert.throws(() => plan({ ...base, hasUnreleased: false }), /no ## Unreleased section/);
   assert.throws(() => plan({ ...base, version: "1.1.0" }), /below package\.json's 1\.2\.0/);
   assert.throws(() => plan({ ...base, version: "v1.3.0" }), /not a release version/);
+});
+
+test("refProblem: only a run dispatched on main, at origin/main's current tip, may release", () => {
+  assert.equal(refProblem({ ref: "refs/heads/main", head: HEAD, originMain: HEAD }), null);
+  assert.match(String(refProblem({ ref: "refs/heads/feature", head: HEAD, originMain: HEAD })), /runs only on main, and this run was dispatched on refs\/heads\/feature/);
+  assert.match(String(refProblem({ ref: "refs/heads/main", head: HEAD, originMain: "b".repeat(40) })), /origin\/main is now bbbbbbb/);
+  assert.match(String(refProblem({ ref: undefined, head: HEAD, originMain: HEAD })), /no ref/);
 });

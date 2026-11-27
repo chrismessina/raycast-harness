@@ -30,6 +30,9 @@ concurrency:
 
 jobs:
   release:
+    # Only from main: a dispatch on any other branch would test and upload code main never had.
+    # scripts/ci-release.mjs also requires HEAD to be origin/main's current tip.
+    if: github.ref == 'refs/heads/main'
     # macOS: rx reads Raycast.app's Info.plist with plutil, which exists only there.
     runs-on: macos-latest
     env:
