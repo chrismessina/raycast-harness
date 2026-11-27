@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.6.1
 
 rx is now released from GitHub Actions, so each version on npm carries provenance tying it to its source commit and build.
 
