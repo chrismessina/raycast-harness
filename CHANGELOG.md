@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+rx is now released from GitHub Actions, so each version on npm carries provenance tying it to its source commit and build.
+
+### Changed
+
+- Releases upload through npm trusted publishing from GitHub Actions; npm shows each version's provenance.
+
 ## 0.6.0
 
 Files the preset keeps on purpose now pass end to end, and a CHANGELOG that repeats a heading no longer fails its history check.
