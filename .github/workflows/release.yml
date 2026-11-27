@@ -79,7 +79,9 @@ jobs:
       # from finishing, which the next step does with the tag made through the API.
       - name: Upload to npm (trusted publishing)
         if: steps.plan.outputs.phase == 'publish'
-        run: RX_RELEASE=1 npm publish
+        # --loglevel verbose prints npm's trusted-publishing (oidc) steps, which otherwise fail
+        # silently and surface only as a 404 on the upload. npm redacts the tokens.
+        run: RX_RELEASE=1 npm publish --loglevel verbose
 
       # publish and finish
       - name: Tag and create the GitHub release
