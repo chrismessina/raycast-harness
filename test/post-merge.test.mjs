@@ -757,7 +757,11 @@ test("apply: the commit is rx-signed and verifies despite a broken gpg.ssh.progr
 
     assert.equal(await remoteMain(fx), sha);
     assert.equal((await g(fx.bare, ["tag", "-l"])).stdout, "", "no tag was sent");
-    assert.equal(await rev(fx, "refs/remotes/origin/main"), tracking, "no remote-tracking ref moved");
+    // rx moves no remote-tracking ref itself. Some git versions (Homebrew's on GitHub's runners, not
+    // Apple's 2.54) update it to the pushed commit when the push URL is the remote's own URL; that
+    // records where the remote now is. Anything else would be wrong.
+    const after = await rev(fx, "refs/remotes/origin/main");
+    assert.ok(after === tracking || after === sha, `the tracking ref is unchanged or at the pushed commit, not ${after}`);
   });
 });
 
